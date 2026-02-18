@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kerr Black Hole — Geodesic Ray Tracer</title>
+<title>Kerr–Newman Black Hole — Geodesic Ray Tracer</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Cormorant+Garamond:wght@300;400;600&display=swap');
 
@@ -168,8 +168,8 @@
 <canvas id="canvas"></canvas>
 
 <div class="title-block">
-  <h1>Kerr Spacetime</h1>
-  <div class="sub">Null geodesic ray tracer — GPU accelerated</div>
+  <h1>Kerr–Newman Spacetime</h1>
+  <div class="sub">Null geodesic ray tracer — GPU accelerated — M = 1</div>
 </div>
 
 <div id="ann-container">
@@ -214,6 +214,10 @@
     <input type="range" id="spin" min="0" max="0.998" step="0.002" value="0.6">
   </div>
   <div class="control-row">
+    <div class="control-label"><span>Electric Charge</span><span class="control-value" id="charge-val">Q = 0.000</span></div>
+    <input type="range" id="charge" min="0" max="0.998" step="0.002" value="0">
+  </div>
+  <div class="control-row">
     <div class="control-label"><span>Inclination</span><span class="control-value" id="incl-val">&theta; = 80.0&deg;</span></div>
     <input type="range" id="incl" min="3" max="89" step="0.5" value="80">
   </div>
@@ -255,7 +259,7 @@
   <div class="control-row">
     <div class="control-label"><span>Integrator</span><span class="control-value" id="integ-label">Separated</span></div>
     <select class="ctrl-select" id="sel-integrator">
-      <option value="separated" selected>Separated eqs (μ-form)</option>
+      <option value="separated" selected>Separated eqs — fast</option>
       <option value="hamiltonian">Full Hamiltonian RK4</option>
     </select>
     <div id="hamiltonian-warn" class="warn-badge" style="display:none">Heavy — may fail on mobile / integrated GPU</div>
@@ -284,6 +288,7 @@
 
 <div class="readout">
   <span class="hl">r<sub>+</sub></span> = <span id="rp">1.800</span> M<br>
+  <span class="hl">Q</span> = <span id="Qval">0.000</span><br>
   <span class="hl">r<sub>isco</sub></span> = <span id="risco">4.233</span> M<br>
   <span class="hl">integrator</span> <span id="integ-info">separated</span><br>
   <span class="hl">res</span> <span id="res">---</span><br>
@@ -312,7 +317,7 @@ function buildFragSrc(opts) {
     let src = `precision highp float;
 varying vec2 v_uv;
 uniform vec2 u_res;
-uniform float u_a,u_incl,u_fov,u_disk,u_grid,u_temp,u_phi0;
+uniform float u_a,u_incl,u_fov,u_disk,u_grid,u_temp,u_phi0,u_Q,u_isco;
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -325,36 +330,36 @@ uniform float u_a,u_incl,u_fov,u_disk,u_grid,u_temp,u_phi0;
 #define BG_MODE ${BG_MODE}
 
 // -------------------------------------------------------
-//  POLE HANDLING STRATEGY (mu = cos theta substitution)
+//  POLE HANDLING STRATEGY
 //
-//  Boyer-Lindquist coords have a coordinate singularity
-//  at theta = 0, pi  (the poles). Three quantities diverge:
-//    Theta(th)   has  -b^2 cos^2th / sin^2th
-//    dphi/dlam   has  b / sin^2th
-//    (and dth/dlam inherits via sqrt(Theta))
+//  Two independent problems cause visual artifacts at
+//  the celestial sphere poles:
 //
-//  Substituting mu = cos(theta), the theta potential becomes:
-//    Theta_mu = q^2 + (a^2 - q^2 - b^2) mu^2 - a^2 mu^4
-//  which is a smooth quartic polynomial with NO singularity.
+//  A. INTEGRATOR: dφ/dλ has b/sin²θ which diverges at θ=0,π.
+//     Fix: smooth additive regularization sin²θ → sin²θ + ε.
+//     This bounds dφ everywhere. The physics error is confined
+//     to a ~1° cap around each pole — an invisibly small solid
+//     angle. No adaptive step-sizing needed (which would starve
+//     the step budget and hide the disk).
 //
-//  The phi equation still has b/(1-mu^2), but physical rays
-//  with b != 0 never reach mu = +/-1 since Theta_mu(+/-1) = -b^2 < 0.
-//  Near a theta turning point, b/(1-mu_tp^2) ~ (q^2+a^2)/b
-//  which is large but the TIME SPENT there is proportional to |b|,
-//  so the total phi accumulated per pole passage is O(1).
+//  B. BACKGROUND: Any pattern using (θ,φ) coordinates shows
+//     artifacts because φ is undefined at θ=0,π. Even if the
+//     integrator is perfect, adjacent rays escaping near a pole
+//     can have wildly different φ values.
 //
-//  We handle residual numerical issues with:
-//   1. dphi-adaptive stepping: he = min(he, MAX_PHI/|dphi|)
-//      This automatically sub-divides near theta turning points.
-//   2. Safety clamp: 1-mu^2 floored at 1e-10 (not reached physically)
-//   3. Turning point detection at start-of-step ONLY (no double flips)
+//     Fix: ALL background functions take a Cartesian direction
+//     vec3 d = (sinθ cosφ, sinθ sinφ, cosθ) and NEVER use θ or φ
+//     directly. Cube-map projection gives smooth face-local (u,v)
+//     everywhere. At the poles, sinθ→0, so any φ-error is
+//     multiplied by ~0 and vanishes from the direction vector.
+//     This makes the background rendering robust to integrator
+//     φ-noise near the poles.
 // -------------------------------------------------------
 
-// Max azimuthal change per step (rad). Controls adaptive substep.
-#define MAX_DPHI 0.8
-
-// Max mu change per step. Prevents overshooting theta turning points.
-#define MAX_DMU 0.08
+// Smooth regularization epsilon. sin²θ + S2_EPS never reaches 0.
+// dφ/dλ is bounded by b/(S2_EPS * Σ) ~ few hundred — large but finite.
+// Physics error confined to θ < arcsin(√ε) ≈ 1.1° from poles.
+#define S2_EPS 0.0004
 
 float hash(vec2 p){
     p=fract(p*vec2(443.8,441.4));
@@ -362,33 +367,28 @@ float hash(vec2 p){
     return fract(p.x*p.y);
 }
 
-float isco(float a){
-    float z1=1.+pow(1.-a*a,1./3.)*(pow(1.+a,1./3.)+pow(max(1.-a,0.),1./3.));
-    float z2=sqrt(3.*a*a+z1*z1);
-    return 3.+z2-sqrt((3.-z1)*(3.+z1+2.*z2));
-}
+// ISCO passed as uniform u_isco (computed numerically in JS for Kerr-Newman)
 
 // ===========================================================
-//  CUBE-MAP BACKGROUND
-//  Project (theta,phi) onto 6 cube faces via Cartesian (x,y,z).
-//  The pole faces (+Z,-Z) use (x,y) as local coords, which are
-//  smooth at the poles: x=sin(th)cos(ph), y=sin(th)sin(ph)
-//  both -> 0 smoothly. No phi-dependence at the singularity.
+//  CUBE-MAP PROJECTION  (Cartesian direction → face + UV)
+//
+//  The key property: at the poles d=(0,0,±1), the +Z/-Z faces
+//  use (x,y) as local coords. Both x=sinθ cosφ and y=sinθ sinφ
+//  are smooth and ~0 at the pole, regardless of φ.
+//  → φ-error × sinθ → 0.  No artifacts possible.
 // ===========================================================
 
-void cubeMap(float th, float ph, out float face, out vec2 uv) {
-    float sth = sin(th), cth = cos(th);
-    float x = sth * cos(ph), y = sth * sin(ph), z = cth;
-    float ax = abs(x), ay = abs(y), az = abs(z);
+void cubeMap(vec3 d, out float face, out vec2 uv) {
+    float ax = abs(d.x), ay = abs(d.y), az = abs(d.z);
     if (az >= ax && az >= ay) {
-        face = z > 0.0 ? 0.0 : 1.0;
-        uv = vec2(x, y) / az;
+        face = d.z > 0.0 ? 0.0 : 1.0;
+        uv = vec2(d.x, d.y) / az;
     } else if (ax >= ay) {
-        face = x > 0.0 ? 2.0 : 3.0;
-        uv = vec2(y, z) / ax;
+        face = d.x > 0.0 ? 2.0 : 3.0;
+        uv = vec2(d.y, d.z) / ax;
     } else {
-        face = y > 0.0 ? 4.0 : 5.0;
-        uv = vec2(x, z) / ay;
+        face = d.y > 0.0 ? 4.0 : 5.0;
+        uv = vec2(d.x, d.z) / ay;
     }
 }
 
@@ -399,8 +399,7 @@ float cubeChecker(vec2 uv, float div) {
 
 float cubeGrid(vec2 uv, float div) {
     vec2 f = fract((uv * 0.5 + 0.5) * div);
-    float ex = abs(f.x - 0.5) * 2.0, ey = abs(f.y - 0.5) * 2.0;
-    return smoothstep(0.88, 0.96, max(ex, ey));
+    return smoothstep(0.88, 0.96, max(abs(f.x-0.5)*2.0, abs(f.y-0.5)*2.0));
 }
 
 vec3 faceColor(float face) {
@@ -413,88 +412,101 @@ vec3 faceColor(float face) {
 }
 
 // ===========================================================
-//  BACKGROUND RENDERING
+//  BACKGROUND FUNCTIONS
+//  All take vec3 d (unit direction). Never use theta or phi.
 // ===========================================================
 
-vec3 bgStars(float th, float ph) {
-    vec3 c = vec3(0.007, 0.008, 0.018);
-    float mw = exp(-8.0 * pow(th - PI * 0.5, 2.0));
-    c += vec3(0.018, 0.014, 0.028) * mw;
-    c += vec3(0.018, 0.006, 0.022) * hash(floor(vec2(th, ph) * 5.0)) * mw * 0.5;
-    c += vec3(0.004, 0.012, 0.022) * hash(floor(vec2(th + 40.0, ph + 60.0) * 3.0)) * 0.25;
+vec3 bgStars(vec3 d) {
     float face; vec2 uv;
-    cubeMap(th, ph, face, uv);
+    cubeMap(d, face, uv);
+    vec2 fuv = uv * 0.5 + 0.5;  // [0,1] on each face
+
+    // Milky Way band: bright near equator (d.z ≈ 0)
+    float mw = exp(-8.0 * d.z * d.z);
+
+    // Nebula noise — all cube-face-local, no (θ,φ) anywhere
+    vec3 c = vec3(0.007, 0.008, 0.018);
+    c += vec3(0.018, 0.014, 0.028) * mw;
+    vec2 ns1 = floor(fuv * 5.0 + face * 7.0);
+    c += vec3(0.018, 0.006, 0.022) * hash(ns1) * mw * 0.5;
+    vec2 ns2 = floor(fuv * 3.0 + face * 13.0 + 40.0);
+    c += vec3(0.004, 0.012, 0.022) * hash(ns2) * 0.25;
+
+    // Stars — cube-face-local cells
     for (int L = 0; L < STAR_LAYERS; L++) {
         float sc = 10.0 + float(L) * 14.0;
-        vec2 cell = floor((uv * 0.5 + 0.5) * sc);
+        vec2 cell = floor(fuv * sc);
         vec2 seed = cell + face * 100.0 + float(L) * 47.0;
         float h = hash(seed);
         if (h > 0.88) {
-            vec2 sp = (cell + 0.3 + 0.4 * vec2(hash(seed + 0.5), hash(seed + 1.5))) / sc;
-            float d = length((uv * 0.5 + 0.5) - sp) * sc;
-            float s = exp(-d * d * 5.0);
+            vec2 sp = (cell + 0.3 + 0.4 * vec2(hash(seed+0.5), hash(seed+1.5))) / sc;
+            float dist = length(fuv - sp) * sc;
+            float s = exp(-dist * dist * 5.0);
             float t = hash(seed + 77.0);
-            vec3 sc2 = t < 0.2 ? vec3(1, 0.7, 0.4) : t < 0.55 ? vec3(1, 0.95, 0.8) :
-                       t < 0.8 ? vec3(0.8, 0.9, 1) : vec3(0.6, 0.75, 1);
+            vec3 sc2 = t < 0.2 ? vec3(1,0.7,0.4) : t < 0.55 ? vec3(1,0.95,0.8) :
+                       t < 0.8 ? vec3(0.8,0.9,1) : vec3(0.6,0.75,1);
             c += sc2 * s * (0.4 + 2.0 * hash(seed + 33.0));
         }
     }
     return c;
 }
 
-vec3 bgChecker(float th, float ph) {
+vec3 bgChecker(vec3 d) {
     float face; vec2 uv;
-    cubeMap(th, ph, face, uv);
+    cubeMap(d, face, uv);
     float check = cubeChecker(uv, 6.0);
-    vec3 colA = vec3(0.05, 0.045, 0.065);
-    vec3 colB = vec3(0.09, 0.07, 0.045);
-    vec3 base = mix(colA, colB, check);
+    vec3 base = mix(vec3(0.05,0.045,0.065), vec3(0.09,0.07,0.045), check);
     base += faceColor(face) * (0.4 + 0.15 * check);
-    base += vec3(0.18, 0.15, 0.10) * cubeGrid(uv, 6.0);
+    base += vec3(0.18,0.15,0.10) * cubeGrid(uv, 6.0);
+    // Face-edge seams (where cube faces meet)
     float edgeDist = 1.0 - max(abs(uv.x), abs(uv.y));
-    base += vec3(0.06, 0.05, 0.04) * (1.0 - smoothstep(0.0, 0.04, edgeDist));
-    float eq = 1.0 - smoothstep(0.0, 0.015, abs(th - PI * 0.5));
-    base += vec3(0.22, 0.14, 0.05) * eq;
-    float pm = 1.0 - smoothstep(0.0, 0.01, min(abs(ph), abs(ph - TAU)));
-    pm *= smoothstep(0.0, 0.3, min(th, PI - th));
-    base += vec3(0.12, 0.08, 0.18) * pm;
+    base += vec3(0.06,0.05,0.04) * (1.0 - smoothstep(0.0, 0.04, edgeDist));
+    // Equator highlight (z ≈ 0) — smooth in Cartesian
+    base += vec3(0.22,0.14,0.05) * (1.0 - smoothstep(0.0, 0.04, abs(d.z)));
     return base;
 }
 
-vec3 bgColorMap(float th, float ph) {
-    float sth = sin(th), cth = cos(th);
-    float x = sth * cos(ph), y = sth * sin(ph), z = cth;
+vec3 bgColorMap(vec3 d) {
+    // Direct axis → channel mapping. Inherently pole-safe.
     vec3 col;
-    col.r = 0.08 + 0.35 * (x * 0.5 + 0.5);
-    col.g = 0.08 + 0.35 * (y * 0.5 + 0.5);
-    col.b = 0.08 + 0.35 * max(-z, 0.0);
-    col += vec3(0.08, 0.04, 0.02) * max(z, 0.0);
+    col.r = 0.08 + 0.35 * (d.x * 0.5 + 0.5);
+    col.g = 0.08 + 0.35 * (d.y * 0.5 + 0.5);
+    col.b = 0.08 + 0.35 * max(-d.z, 0.0);
+    col += vec3(0.08,0.04,0.02) * max(d.z, 0.0);
     col = pow(col, vec3(0.8));
+    // Grid overlay
     float face; vec2 uv;
-    cubeMap(th, ph, face, uv);
-    col += vec3(0.12, 0.10, 0.08) * cubeGrid(uv, 6.0);
-    float eq = 1.0 - smoothstep(0.0, 0.015, abs(th - PI * 0.5));
-    col += vec3(0.15, 0.12, 0.05) * eq;
+    cubeMap(d, face, uv);
+    col += vec3(0.12,0.10,0.08) * cubeGrid(uv, 6.0);
+    // Equator
+    col += vec3(0.15,0.12,0.05) * (1.0 - smoothstep(0.0, 0.04, abs(d.z)));
     return col;
 }
 
-vec3 background(float th, float ph) {
+vec3 background(vec3 d) {
     vec3 c;
 #if BG_MODE == 0
-    c = bgStars(th, ph);
+    c = bgStars(d);
 #elif BG_MODE == 1
-    c = bgChecker(th, ph);
+    c = bgChecker(d);
 #else
-    c = bgColorMap(th, ph);
+    c = bgColorMap(d);
 #endif
+    // Extra grid for stars mode
     if (u_grid > 0.5 && BG_MODE == 0) {
         float face; vec2 uv;
-        cubeMap(th, ph, face, uv);
-        c += vec3(0.055, 0.04, 0.028) * cubeGrid(uv, 6.0);
-        float eq = 1.0 - smoothstep(0.0, 0.012, abs(th - PI * 0.5));
-        c += vec3(0.07, 0.035, 0.02) * eq;
+        cubeMap(d, face, uv);
+        c += vec3(0.055,0.04,0.028) * cubeGrid(uv, 6.0);
+        c += vec3(0.07,0.035,0.02) * (1.0 - smoothstep(0.0, 0.03, abs(d.z)));
     }
     return c;
+}
+
+// Convert (theta, phi) to unit direction vector.
+// At the poles, sinθ→0, so φ-error vanishes from the result.
+vec3 sphereDir(float th, float ph) {
+    float sth = sin(th);
+    return vec3(sth * cos(ph), sth * sin(ph), cos(th));
 }
 
 // ===========================================================
@@ -502,13 +514,13 @@ vec3 background(float th, float ph) {
 // ===========================================================
 
 vec3 disk(float r, float ph, float a) {
-    float ri = isco(a);
+    float ri = u_isco;
     if (r < ri * 0.85 || r > RDISK) return vec3(0);
     float x = r / ri;
     float tp = pow(x, -0.75) * u_temp;
     float I = pow(tp, 4.0) / (r * 0.3);
-    I *= smoothstep(ri * 0.85, ri * 1.3, r);
-    I *= smoothstep(RDISK, RDISK * 0.55, r);
+    I *= smoothstep(ri*0.85, ri*1.3, r);
+    I *= smoothstep(RDISK, RDISK*0.55, r);
     float vo = 1.0 / sqrt(r);
     float dop = 1.0 + 0.65 * vo * sin(ph);
     float boost = pow(max(dop, 0.1), 3.0);
@@ -531,7 +543,7 @@ vec3 disk(float r, float ph, float a) {
         src += `
 // ===========================================================
 //  FULL HAMILTONIAN INTEGRATOR (RK4)
-//  Uses theta directly but with dphi-adaptive stepping.
+//  Uses smooth sin²θ+ε regularization for pole safety.
 // ===========================================================
 
 void geoRHS(
@@ -541,45 +553,55 @@ void geoRHS(
     out float dpr, out float dpth
 ) {
     float sth = sin(th), cth = cos(th);
-    float s2 = sth*sth + 1e-10, c2 = cth*cth;
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
     float a2 = a*a, r2 = r*r;
+    float Q2 = u_Q*u_Q;
     float sig = r2 + a2*c2;
-    float del = r2 - 2.0*r + a2;
+    float del = r2 - 2.0*r + a2 + Q2;
     float sdel = max(del, 1e-6);
     float rpa2 = r2 + a2;
+    // KN cross-term factor: w = 2Mr - Q^2 (M=1)
+    // For Kerr (Q=0): w = 2r. Identity: w = (r^2+a^2) - Delta.
+    float w = 2.0*r - Q2;
     float A_ = rpa2*rpa2 - sdel*a2*s2;
     float isig = 1.0/sig;
-    float is2 = 1.0/s2;
     float SD = sig*sdel;
     float iSD = 1.0/SD;
+    float is2 = 1.0/s2;
 
     float grr = sdel*isig, gthth = isig;
-    float gff = (sig - 2.0*r)*iSD*is2;
-    float gtf = -2.0*a*r*iSD;
+    // KN inverse metric: g^phiphi = (Sigma-w)/(Sigma*Delta*sin^2)
+    //                     g^tphi  = -a*w/(Sigma*Delta)
+    float gff = (sig - w)*iSD*is2;
+    float gtf = -a*w*iSD;
 
     dr = grr*pr; dth = gthth*pth; dphi = gff*b - gtf;
 
-    float dsig_r = 2.0*r; float ddel_r = 2.0*r - 2.0;
-    float dA_r = 4.0*r*rpa2 - ddel_r*a2*s2;
-    float dSD_r = dsig_r*sdel + sig*ddel_r;
-    float dgtt_r = -(dA_r*SD - A_*dSD_r)/(SD*SD);
-    float dgtf_r = -(2.0*a*SD - 2.0*a*r*dSD_r)/(SD*SD);
-    float dgrr_r = (ddel_r*sig - sdel*dsig_r)/(sig*sig);
-    float dgthth_r = -dsig_r*isig*isig;
-    float num_ff = sig - 2.0*r; float den_ff = SD*s2;
-    float dgff_r = ((dsig_r-2.0)*den_ff - num_ff*dSD_r*s2)/(den_ff*den_ff);
-    dpr = -0.5*(dgtt_r - 2.0*b*dgtf_r + dgrr_r*pr*pr + dgthth_r*pth*pth + dgff_r*b*b);
+    float dsig_r=2.0*r; float ddel_r=2.0*r-2.0;
+    float dA_r=4.0*r*rpa2-ddel_r*a2*s2;
+    float dSD_r=dsig_r*sdel+sig*ddel_r;
+    float dgtt_r=-(dA_r*SD-A_*dSD_r)/(SD*SD);
+    // d/dr[-a*w/SD] = -a*(dw*SD - w*dSD)/SD^2, dw/dr = 2
+    float dgtf_r=-a*(2.0*SD - w*dSD_r)/(SD*SD);
+    float dgrr_r=(ddel_r*sig-sdel*dsig_r)/(sig*sig);
+    float dgthth_r=-dsig_r*isig*isig;
+    float num_ff=sig-w; float den_ff=SD*s2;
+    // d(num_ff)/dr = dsig_r - dw/dr = 2r - 2
+    float dgff_r=((dsig_r-2.0)*den_ff-num_ff*dSD_r*s2)/(den_ff*den_ff);
+    dpr=-0.5*(dgtt_r-2.0*b*dgtf_r+dgrr_r*pr*pr+dgthth_r*pth*pth+dgff_r*b*b);
 
-    float dsig_th = -2.0*a2*sth*cth;
-    float ds2_th = 2.0*sth*cth;
-    float dA_th = -sdel*a2*ds2_th;
-    float dSD_th = dsig_th*sdel;
-    float dgtt_th = -(dA_th*SD - A_*dSD_th)/(SD*SD);
-    float dgtf_th = 2.0*a*r*dSD_th/(SD*SD);
-    float dgrr_th = -sdel*dsig_th/(sig*sig);
-    float dgthth_th = -dsig_th*isig*isig;
-    float dgff_th = (dsig_th*den_ff - num_ff*(dsig_th*sdel*s2 + SD*ds2_th))/(den_ff*den_ff);
-    dpth = -0.5*(dgtt_th - 2.0*b*dgtf_th + dgrr_th*pr*pr + dgthth_th*pth*pth + dgff_th*b*b);
+    float dsig_th=-2.0*a2*sth*cth;
+    float ds2_th=2.0*sth*cth;
+    float dA_th=-sdel*a2*ds2_th;
+    float dSD_th=dsig_th*sdel;
+    float dgtt_th=-(dA_th*SD-A_*dSD_th)/(SD*SD);
+    // d/dtheta[-a*w/SD]: w is r-only, so = a*w*dSD_th/SD^2
+    float dgtf_th=a*w*dSD_th/(SD*SD);
+    float dgrr_th=-sdel*dsig_th/(sig*sig);
+    float dgthth_th=-dsig_th*isig*isig;
+    // d(num_ff)/dtheta = dsig_th (w has no theta dependence)
+    float dgff_th=(dsig_th*den_ff-num_ff*(dsig_th*sdel*s2+SD*ds2_th))/(den_ff*den_ff);
+    dpth=-0.5*(dgtt_th-2.0*b*dgtf_th+dgrr_th*pr*pr+dgthth_th*pth*pth+dgff_th*b*b);
 }
 
 void main() {
@@ -593,32 +615,30 @@ void main() {
 
     float r = R0, th = thObs, phi = u_phi0;
     float sth = sin(th), cth = cos(th);
-    float s2 = sth*sth + 1e-10, c2 = cth*cth;
-    float sig = r*r + a2*c2, del = r*r - 2.0*r + a2;
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+    float sig = r*r+a2*c2, del = r*r-2.0*r+a2+u_Q*u_Q;
     float sdel = max(del,1e-6);
-    float rpa2 = r*r+a2, A_ = rpa2*rpa2 - sdel*a2*s2;
+    float rpa2 = r*r+a2, A_ = rpa2*rpa2-sdel*a2*s2;
     float iSD = 1.0/(sig*sdel), is2 = 1.0/s2;
     float grr = sdel/sig, gthi = 1.0/sig;
     float pth = beta;
-    float rest = -A_*iSD - 2.0*b*(-2.0*a*r*iSD) + gthi*pth*pth + (sig-2.0*r)*iSD*is2*b*b;
+    // KN cross-term factor: w = 2r - Q^2
+    float w_init = 2.0*r - u_Q*u_Q;
+    // Hamiltonian constraint: g^tt + 2*b*g^tphi + g^rr*pr^2 + g^thth*pth^2 + g^phiphi*b^2 = 0
+    // g^tphi = -a*w/SD,  g^phiphi = (sig-w)/(SD*s^2)
+    float rest = -A_*iSD + 2.0*a*b*w_init*iSD + gthi*pth*pth + (sig-w_init)*iSD*is2*b*b;
     float pr2 = -rest/grr;
     float pr = pr2 > 0.0 ? -sqrt(pr2) : 0.0;
-    float rp = 1.0 + sqrt(max(1.0-a2, 0.0));
+    float Q2 = u_Q*u_Q;
+    float rp = 1.0 + sqrt(max(1.0-a2-Q2, 0.0));
     vec3 color = vec3(0); bool done = false;
 
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
         float he = H_BASE * clamp((r-rp)*0.4, 0.04, 1.0);
-
-        // Estimate dphi to adapt step size
-        float sthE = sin(th);
-        float is2E = 1.0 / (sthE*sthE + 1e-10);
-        float sigE = r*r + a2*cos(th)*cos(th);
-        float dphiEst = abs(b*is2E) / sigE;
-        if (dphiEst * he > MAX_DPHI) he = MAX_DPHI / max(dphiEst, 1e-8);
-        he = clamp(he, 0.005, 0.6);
-
+        he = clamp(he, 0.012, 0.6);
         float oldTh = th, oldR = r, oldPhi = phi;
+
         float dr1,dth1,dphi1,dpr1,dpth1;
         float dr2,dth2,dphi2,dpr2,dpth2;
         float dr3,dth3,dphi3,dpr3,dpth3;
@@ -627,34 +647,36 @@ void main() {
         geoRHS(r+.5*he*dr1, th+.5*he*dth1, pr+.5*he*dpr1, pth+.5*he*dpth1, a,b, dr2,dth2,dphi2,dpr2,dpth2);
         geoRHS(r+.5*he*dr2, th+.5*he*dth2, pr+.5*he*dpr2, pth+.5*he*dpth2, a,b, dr3,dth3,dphi3,dpr3,dpth3);
         geoRHS(r+he*dr3, th+he*dth3, pr+he*dpr3, pth+he*dpth3, a,b, dr4,dth4,dphi4,dpr4,dpth4);
-        r   += he*(dr1   + 2.0*dr2   + 2.0*dr3   + dr4  )/6.0;
-        th  += he*(dth1  + 2.0*dth2  + 2.0*dth3  + dth4 )/6.0;
-        phi += he*(dphi1 + 2.0*dphi2 + 2.0*dphi3 + dphi4)/6.0;
-        pr  += he*(dpr1  + 2.0*dpr2  + 2.0*dpr3  + dpr4 )/6.0;
-        pth += he*(dpth1 + 2.0*dpth2 + 2.0*dpth3 + dpth4)/6.0;
+        r   += he*(dr1  +2.0*dr2  +2.0*dr3  +dr4  )/6.0;
+        th  += he*(dth1 +2.0*dth2 +2.0*dth3 +dth4 )/6.0;
+        phi += he*(dphi1+2.0*dphi2+2.0*dphi3+dphi4)/6.0;
+        pr  += he*(dpr1 +2.0*dpr2 +2.0*dpr3 +dpr4 )/6.0;
+        pth += he*(dpth1+2.0*dpth2+2.0*dpth3+dpth4)/6.0;
 
         if (th < 0.005) { th = 0.005; pth = abs(pth); }
         if (th > PI-0.005) { th = PI-0.005; pth = -abs(pth); }
 
-        if (r <= rp*1.01) { done = true; break; }
+        if (r <= rp*1.01) { done=true; break; }
         if (u_disk > 0.5) {
-            float cross = (oldTh - PI*0.5)*(th - PI*0.5);
+            float cross = (oldTh-PI*0.5)*(th-PI*0.5);
             if (cross < 0.0) {
-                float f = clamp(abs(oldTh - PI*0.5)/max(abs(th-oldTh), 1e-6), 0.0, 1.0);
-                vec3 dc = disk(oldR + f*(r-oldR), oldPhi + f*(phi-oldPhi), a);
+                float f = clamp(abs(oldTh-PI*0.5)/max(abs(th-oldTh),1e-6), 0.0, 1.0);
+                vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a);
                 color += dc * (1.0 - clamp(length(color)*0.4, 0.0, 0.9));
             }
         }
         if (r > RESC) {
-            color += background(th, mod(phi,TAU)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
-            done = true; break;
+            float fth = oldTh + (th-oldTh) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            float fph = oldPhi + (phi-oldPhi) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            color += background(sphereDir(fth, fph)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
+            done=true; break;
         }
-        if (r < 0.5 || r!=r || th!=th) { done = true; break; }
+        if (r < 0.5 || r!=r || th!=th) { done=true; break; }
     }
-    float imp = length(vec2(alpha, beta));
-    float rc = 5.2 - 1.0*a;
-    color += vec3(0.1,0.07,0.04)*exp(-pow((imp-rc)/0.3, 2.0))*0.06;
-    color *= 1.0 - 0.3*dot(uv,uv);
+    float imp = length(vec2(alpha,beta));
+    float rc = 5.2-1.0*a;
+    color += vec3(0.1,0.07,0.04)*exp(-pow((imp-rc)/0.3,2.0))*0.06;
+    color *= 1.0-0.3*dot(uv,uv);
     color = color/(1.0+color);
     color = pow(color, vec3(1.0/2.2));
     gl_FragColor = vec4(color, 1);
@@ -663,75 +685,11 @@ void main() {
     } else {
         src += `
 // ===========================================================
-//  SEPARATED GEODESIC EQUATIONS — mu = cos(theta) form
-//
-//  The Carter-separated first-order ODEs in Boyer-Lindquist
-//  coordinates use theta as the polar variable. The theta
-//  potential Theta(th) = q^2 + a^2 cos^2(th) - b^2 cot^2(th)
-//  diverges as cot^2(th) -> infinity at the poles.
-//
-//  Substituting mu = cos(theta), sin^2(theta) = 1 - mu^2:
-//
-//    Sigma dr/dlam   = sr * sqrt(R(r))
-//    Sigma dmu/dlam  = smu * sqrt(Theta_mu(mu))
-//    Sigma dphi/dlam = b/(1-mu^2) + a*(T/Delta - 1)
-//
-//  where the mu-potential is a smooth quartic:
-//    Theta_mu(mu) = q^2 + (a^2 - q^2 - b^2) mu^2 - a^2 mu^4
-//
-//  No 1/sin^2(th) anywhere in the potential. The ONLY remaining
-//  singularity is b/(1-mu^2) in dphi, which physically never
-//  activates: Theta_mu(+/-1) = -b^2 < 0 for b != 0, so rays
-//  always turn before reaching the pole.
-//
-//  Residual numerical issues from finite step size are handled
-//  by dphi-adaptive stepping: the integration step is automatically
-//  reduced whenever |dphi| is large, ensuring smooth phi evolution
-//  without any hard clamps or coordinate-based heuristics.
+//  SEPARATED GEODESIC EQUATIONS (Verlet midpoint)
+//  θ-form with smooth sin²θ+ε regularization.
+//  At escape, convert to Cartesian direction for background
+//  lookup — sinθ multiplier naturally suppresses φ-error.
 // ===========================================================
-
-// Evaluate separated-equation velocities for the mu-form.
-// Returns derivatives via out params. No sign flips here.
-void muDerivs(
-    float r, float mu, float a, float a2, float b, float b2,
-    float q2, float bma, float bma2,
-    float sr, float smu,
-    out float dr, out float dmu, out float dphi
-) {
-    float mu2 = mu * mu;
-    float omu2 = 1.0 - mu2;           // sin^2(theta)
-    float sig = r*r + a2*mu2;
-    float isig = 1.0 / sig;
-    float del = r*r - 2.0*r + a2;
-    float sdel = max(del, 1e-6);
-
-    // R potential (same as theta-form)
-    float T = r*r + a2 - a*b;
-    float Rp = T*T - del*(q2 + bma2);
-
-    // Theta_mu potential — smooth quartic polynomial in mu
-    // = q^2 + (a^2 - q^2 - b^2)*mu^2 - a^2*mu^4
-    // Factored form: (q^2 + a^2*mu^2)*(1-mu^2) - b^2*mu^2
-    float Tmu = (q2 + a2*mu2) * omu2 - b2*mu2;
-
-    // sqrt(abs()) instead of conditional zeroing: when a ray overshoots
-    // a turning point (potential < 0), this gives a nonzero velocity that
-    // (combined with the sign flip at the start of the step) pushes the ray
-    // BACK toward the allowed region. Using max(,0) would freeze all
-    // mu-motion, trapping the ray permanently.
-    float sqRp  = sqrt(abs(Rp));
-    float sqTmu = sqrt(abs(Tmu));
-
-    dr  = sr  * sqRp  * isig;
-    dmu = smu * sqTmu * isig;
-
-    // dphi: b/(1-mu^2) + a*(T/Delta - 1), divided by Sigma.
-    // The 1/(1-mu^2) is safe: physical rays keep omu2 > b^2/(q^2+a^2).
-    // Safety floor at 1e-10 prevents literal division by zero only if
-    // a ray is numerically forced to mu=+/-1 (should not happen).
-    float iomu2 = 1.0 / max(omu2, 1e-10);
-    dphi = (b * iomu2 + a * (T/sdel - 1.0)) * isig;
-}
 
 void main() {
     vec2 uv = v_uv;
@@ -740,106 +698,95 @@ void main() {
     float a = u_a, a2 = a*a;
     float thObs = u_incl, sO = sin(thObs), cO = cos(thObs);
     float b = -alpha * sO;
-    float b2 = b * b;
     float q2 = beta*beta + cO*cO*(alpha*alpha - a2);
-    float bma = b - a, bma2 = bma*bma;
-
-    // Initial state in mu-form
-    float r = R0;
-    float mu = cos(thObs);       // mu = cos(theta)
-    float phi = u_phi0;
-    float sr = -1.0;             // inward initially
-    // smu = sign of dmu/dlam = -sin(th) * (sign of dth/dlam)
-    // dth/dlam sign: beta >= 0 means ray launched "upward" -> dth < 0 -> dmu > 0
-    float smu = beta >= 0.0 ? 1.0 : -1.0;
-
-    float rp = 1.0 + sqrt(max(1.0-a2, 0.0));
-    vec3 color = vec3(0);
-    bool done = false;
-    // Anti-oscillation: track if smu was flipped on the previous step.
-    // If so, don't flip again (prevents stuck oscillation in forbidden zone).
-    bool smuFlippedLast = false;
-    bool srFlippedLast = false;
+    float r = R0, th = thObs, phi = u_phi0;
+    float sr = -1.0, st = beta >= 0.0 ? -1.0 : 1.0;
+    float Q2 = u_Q*u_Q;
+    float rp = 1.0 + sqrt(max(1.0-a2-Q2, 0.0));
+    float bma = b-a, bma2 = bma*bma;
+    vec3 color = vec3(0); bool done = false;
 
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        // ---- Turning point detection ----
-        float mu2 = mu*mu;
-        float omu2 = 1.0 - mu2;
-        float Tmu_check = (q2 + a2*mu2)*omu2 - b2*mu2;
-        float del = r*r - 2.0*r + a2;
+        // Regularized quantities — sin²θ + ε is smooth, never zero
+        float sth = sin(th), cth = cos(th);
+        float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+        float sig = r*r + a2*c2, isig = 1.0/sig;
+        float del = r*r - 2.0*r + a2 + u_Q*u_Q;
+        float sdel = max(del, 1e-6);
+
         float T = r*r + a2 - a*b;
-        float Rp_check = T*T - del*(q2 + bma2);
+        float Rp = T*T - del*(q2 + bma2);
+        float Tp = q2 + a2*c2 - c2*b*b/s2;
+        if (Rp < 0.0) { Rp = 0.0; sr = -sr; }
+        if (Tp < 0.0) { Tp = 0.0; st = -st; }
 
-        // Only flip sign when ENTERING the forbidden zone (not if already there)
-        if (Rp_check < 0.0) {
-            if (!srFlippedLast) { sr = -sr; srFlippedLast = true; }
-        } else { srFlippedLast = false; }
+        float dr   = sr * sqrt(Rp) * isig;
+        float dth  = st * sqrt(Tp) * isig;
+        float dphi = (b/s2 - a + a*T/sdel) * isig;
 
-        if (Tmu_check < 0.0) {
-            if (!smuFlippedLast) { smu = -smu; smuFlippedLast = true; }
-        } else { smuFlippedLast = false; }
+        // Adaptive step: smaller near horizon only
+        float he = H_BASE * clamp((r-rp)*0.35, 0.04, 1.0);
+        he = clamp(he, 0.012, 0.7);
 
-        float dr0, dmu0, dphi0;
-        muDerivs(r, mu, a, a2, b, b2, q2, bma, bma2, sr, smu, dr0, dmu0, dphi0);
+        float oldTh = th, oldR = r, oldPhi = phi;
 
-        // ---- Adaptive step size ----
-        float he = H_BASE * clamp((r - rp) * 0.35, 0.04, 1.0);
-        // dphi-adaptive: limit azimuthal displacement per step
-        float adphi = abs(dphi0);
-        if (adphi * he > MAX_DPHI) he = MAX_DPHI / adphi;
-        // dmu-adaptive: limit mu displacement to prevent turning point overshoot
-        float admu = abs(dmu0);
-        if (admu * he > MAX_DMU) he = MAX_DMU / admu;
-        he = clamp(he, 0.005, 0.7);
+        // Verlet midpoint
+        float rH  = r  + 0.5*he*dr;
+        float thH = th + 0.5*he*dth;
+        thH = clamp(thH, 0.005, PI-0.005);
+        float sthH = sin(thH), cthH = cos(thH);
+        float s2H = sthH*sthH + S2_EPS, c2H = cthH*cthH;
+        float sigH = rH*rH + a2*c2H, isigH = 1.0/sigH;
+        float delH = rH*rH - 2.0*rH + a2 + u_Q*u_Q;
+        float sdelH = max(delH, 1e-6);
+        float TH = rH*rH + a2 - a*b;
+        float RpH = TH*TH - delH*(q2 + bma2);
+        float TpH = q2 + a2*c2H - c2H*b*b/s2H;
+        if (RpH < 0.0) { RpH = 0.0; sr = -sr; }
+        if (TpH < 0.0) { TpH = 0.0; st = -st; }
 
-        float oldR = r, oldMu = mu, oldPhi = phi;
+        float drH   = sr * sqrt(RpH) * isigH;
+        float dthH  = st * sqrt(TpH) * isigH;
+        float dphiH = (b/s2H - a + a*TH/sdelH) * isigH;
 
-        // ---- Verlet midpoint ----
-        float rH  = r  + 0.5*he*dr0;
-        float muH = mu + 0.5*he*dmu0;
-        muH = clamp(muH, -0.99995, 0.99995);
-
-        // At midpoint, do NOT flip signs (turning already handled)
-        float drH, dmuH, dphiH;
-        muDerivs(rH, muH, a, a2, b, b2, q2, bma, bma2, sr, smu, drH, dmuH, dphiH);
-
-        // Full step using midpoint derivatives
         r   += he * drH;
-        mu  += he * dmuH;
+        th  += he * dthH;
         phi += he * dphiH;
 
-        // Hard clamp mu (safety net — should never be needed for physical rays)
-        mu = clamp(mu, -0.99995, 0.99995);
+        // Soft boundary reflection
+        if (th < 0.005) { th = 0.005; st = 1.0; }
+        if (th > PI-0.005) { th = PI-0.005; st = -1.0; }
 
-        // ---- Termination checks ----
-        if (r <= rp * 1.005) { done = true; break; }
+        if (r <= rp*1.005) { done = true; break; }
 
-        // Disk crossing: disk is at theta = pi/2, i.e. mu = 0
+        // Disk crossing
         if (u_disk > 0.5) {
-            if (oldMu * mu < 0.0) {
-                float f = clamp(abs(oldMu) / max(abs(mu - oldMu), 1e-6), 0.0, 1.0);
-                float diskR   = oldR   + f * (r   - oldR);
-                float diskPhi = oldPhi + f * (phi - oldPhi);
-                vec3 dc = disk(diskR, diskPhi, a);
+            float cross = (oldTh - PI*0.5) * (th - PI*0.5);
+            if (cross < 0.0) {
+                float f = clamp(abs(oldTh-PI*0.5)/max(abs(th-oldTh),1e-6), 0.0, 1.0);
+                vec3 dc = disk(oldR + f*(r-oldR), oldPhi + f*(phi-oldPhi), a);
                 color += dc * (1.0 - clamp(length(color)*0.4, 0.0, 0.9));
             }
         }
 
-        // Escape: convert mu back to theta for background lookup
+        // Escape — convert to Cartesian direction for background
         if (r > RESC) {
-            float th = acos(clamp(mu, -1.0, 1.0));
-            color += background(th, mod(phi, TAU)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
+            // Interpolate to escape radius for smoother background
+            float frac = clamp((RESC - oldR) / max(r - oldR, 1e-6), 0.0, 1.0);
+            float escTh  = oldTh  + (th  - oldTh)  * frac;
+            float escPhi = oldPhi + (phi - oldPhi) * frac;
+            vec3 d = sphereDir(escTh, escPhi);
+            color += background(d) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
             done = true; break;
         }
-
-        if (r != r || mu != mu) { done = true; break; }
+        if (r!=r || th!=th) { done = true; break; }
     }
 
     float imp = length(vec2(alpha, beta));
     float rc = 5.2 - 1.0*a;
-    color += vec3(0.1, 0.07, 0.04) * exp(-pow((imp-rc)/0.3, 2.0)) * 0.06;
+    color += vec3(0.1,0.07,0.04) * exp(-pow((imp-rc)/0.3, 2.0)) * 0.06;
     color *= 1.0 - 0.3 * dot(uv, uv);
     color = color / (1.0 + color);
     color = pow(color, vec3(1.0/2.2));
@@ -862,7 +809,7 @@ void main() {
     const gl = canvas.getContext('webgl', {antialias:false, preserveDrawingBuffer:false, powerPreference:'high-performance'});
     if (!gl) { loadMsg.textContent='WebGL not available'; errMsg.style.display='block'; errMsg.textContent='Try Chrome/Firefox on desktop.'; return; }
 
-    let spin=0.6, incl=80, diskTemp=1, showDisk=1, showGrid=1, autoRotate=false, rotAngle=0, fov=8;
+    let spin=0.6, charge=0, incl=80, diskTemp=1, showDisk=1, showGrid=1, autoRotate=false, rotAngle=0, fov=8;
     let bgMode = 1;
     let qMethod='separated', qSteps=200, qResScale=1.0, qStepSize=0.3, qObsDist=40, qStarLayers=3;
 
@@ -896,8 +843,8 @@ void main() {
         gl.enableVertexAttribArray(aPos);
         gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
         uniforms = {};
-        ['u_res','u_a','u_incl','u_fov','u_disk','u_grid','u_temp','u_phi0'].forEach(n => { uniforms[n]=gl.getUniformLocation(program,n); });
-        document.getElementById('integ-info').textContent = qMethod==='hamiltonian' ? 'hamiltonian RK4' : 'separated (μ)';
+        ['u_res','u_a','u_incl','u_fov','u_disk','u_grid','u_temp','u_phi0','u_Q','u_isco'].forEach(n => { uniforms[n]=gl.getUniformLocation(program,n); });
+        document.getElementById('integ-info').textContent = qMethod==='hamiltonian' ? 'hamiltonian RK4' : 'separated';
         return {ok:true};
     }
 
@@ -908,14 +855,95 @@ void main() {
     }
     addEventListener('resize', resize);
 
-    function rPlus(a) { return 1+Math.sqrt(Math.max(1-a*a,0)); }
-    function iscoJS(a) {
-        const z1=1+Math.pow(1-a*a,1/3)*(Math.pow(1+a,1/3)+Math.pow(Math.max(1-a,0),1/3));
-        const z2=Math.sqrt(3*a*a+z1*z1); return 3+z2-Math.sqrt((3-z1)*(3+z1+2*z2));
+
+    // Numerical ISCO for Kerr-Newman (uncharged test particle, M=1).
+    // Uses dE/dr = 0 condition via bisection with finite-difference derivative.
+    function iscoKN(a, Q) {
+        const a2 = a*a, Q2 = Q*Q;
+        const rh = 1 + Math.sqrt(Math.max(1 - a2 - Q2, 1e-12));
+        // Angular velocity of prograde circular orbit at radius r
+        function omega(r) {
+            const f = r - Q2/r;  // = (r^2 - Q^2)/r
+            const D = r*r - 2*r + a2 + Q2;
+            // From geodesic equation: Omega = (sqrt(M/r - Q^2/r^2) - a*(...)) 
+            // More robust: use the condition dg_tt/dr + 2 Omega dg_tphi/dr + Omega^2 dg_phiphi/dr = 0
+            // At equator (Sigma = r^2):
+            // A = 2*(Q2 - r)/r^3, B = 2*a*(r - Q2/r)/r^2... let me use the direct formula
+            const rm = r - Q2/r;  // = (r^2 - Q^2)/r
+            if (rm <= 0) return NaN;
+            const sqrm = Math.sqrt(rm/r);  // sqrt((r - Q^2/r)/r) = sqrt(1/r - Q^2/r^2)
+            return 1 / (r*r/sqrm/r + a);  // simplified: 1/(r^(3/2)/sqrt(1-Q^2/r^2) + a)
+        }
+        // Energy of circular orbit via metric components at equator
+        function energy(r) {
+            const r2 = r*r;
+            const del = r2 - 2*r + a2 + Q2;
+            if (del <= 0) return NaN;
+            // Metric at equator (Sigma = r^2):
+            const gtt = -(1 - (2*r - Q2)/r2);
+            const gtph = -a*(2*r - Q2)/r2;
+            const gphph = (r2*r2 + a2*r2 + a2*(2*r - Q2))/r2;
+            // Solve for Omega from circular orbit condition
+            const A = gphph, B = 2*gtph, C = gtt;
+            // d/dr components:
+            const dgtt = 2*(Q2 - r)/(r2*r);
+            const dgtph = 2*a*(r2 - 2*Q2*r + Q2*r)/(r2*r2);  
+            // Use cleaner formula: g_tphi = -a(2r-Q^2)/r^2
+            // dg_tphi/dr = -a[(2r^2 - (2r-Q^2)*2r)/r^4] = -a[(2r^2-4r^2+2Q^2r)/r^4] = -a[(-2r^2+2Q^2r)/r^4]
+            // = 2a(r-Q^2)/r^3  ... wait: 2a(r^2 - Q^2*r) hmm
+            // Let me just use g_tphi = -a(2r-Q^2)/r^2
+            // dg_tphi/dr = -a * [(2*r^2 - (2r-Q^2)*2r) / r^4]
+            //            = -a * [(2r^2 - 4r^2 + 2Q^2*r) / r^4]
+            //            = -a * [(-2r^2 + 2Q^2*r) / r^4]
+            //            = 2*a*(r - Q2) / (r*r*r)
+            const dgtph_clean = 2*a*(r - Q2)/(r*r2);
+            // g_phiphi = (r^4 + a^2*r^2 + a^2*(2r-Q^2))/r^2
+            //          = r^2 + a^2 + a^2*(2r-Q^2)/r^2
+            const A2 = r2 + a2 + a2*(2*r-Q2)/r2;
+            // dg_phiphi/dr = 2r + a^2 * d[(2r-Q^2)/r^2]/dr
+            //              = 2r + a^2 * [(2r^2 - (2r-Q^2)*2r)/r^4]
+            //              = 2r + a^2 * [(-2r^2 + 2Q^2*r)/r^4]  ... same as before
+            //              = 2r - 2*a^2*(r-Q2)/r^3  hmm
+            // Actually: (2r-Q^2)/r^2 = 2/r - Q^2/r^2
+            // d/dr = -2/r^2 + 2Q^2/r^3
+            const dgphph = 2*r + a2*(-2/r2 + 2*Q2/(r2*r));
+
+            // Circular orbit: dgtt + 2*Om*dgtph + Om^2*dgphph = 0
+            const disc = dgtph_clean*dgtph_clean - dgtt*dgphph;
+            if (disc < 0) return NaN;
+            const Om = (-dgtph_clean + Math.sqrt(disc)) / dgphph;  // prograde
+            
+            // E = -(g_tt + g_tphi * Om) * u^t
+            // u^t = 1/sqrt(-(g_tt + 2*g_tphi*Om + g_phiphi*Om^2))
+            const denom = -(gtt + 2*gtph*Om + gphph*Om*Om);
+            if (denom <= 0) return NaN;
+            const ut = 1/Math.sqrt(denom);
+            return -(gtt + gtph*Om) * ut;
+        }
+        // Bisect on dE/dr = 0
+        const dr = 1e-5;
+        function dEdr(r) {
+            const Ep = energy(r + dr), Em = energy(r - dr);
+            if (isNaN(Ep) || isNaN(Em)) return NaN;
+            return (Ep - Em) / (2*dr);
+        }
+        let lo = rh + 0.01, hi = 9.0;
+        // ISCO is where dE/dr changes from negative to positive
+        for (let i = 0; i < 80; i++) {
+            const mid = (lo + hi) / 2;
+            const d = dEdr(mid);
+            if (isNaN(d) || d < 0) lo = mid;
+            else hi = mid;
+        }
+        return (lo + hi) / 2;
     }
+
+    function rPlus(a, Q) { return 1+Math.sqrt(Math.max(1-a*a-Q*Q,0)); }
+    function iscoJS(a, Q) { return iscoKN(a, Q || 0); }
     function updInfo() {
-        document.getElementById('rp').textContent = rPlus(spin).toFixed(3);
-        document.getElementById('risco').textContent = iscoJS(spin).toFixed(3);
+        document.getElementById('rp').textContent = rPlus(spin, charge).toFixed(3);
+        document.getElementById('risco').textContent = iscoJS(spin, charge).toFixed(3);
+        document.getElementById('Qval').textContent = charge.toFixed(3);
     }
 
     const presets = {
@@ -926,7 +954,7 @@ void main() {
     };
 
     function refreshLabels() {
-        document.getElementById('integ-label').textContent = qMethod==='hamiltonian' ? 'Hamiltonian (RK4)' : 'Separated (μ-form)';
+        document.getElementById('integ-label').textContent = qMethod==='hamiltonian' ? 'Hamiltonian (RK4)' : 'Separated (fast)';
         document.getElementById('steps-val').textContent = qSteps;
         document.getElementById('res-scale-val').textContent = qResScale.toFixed(2)+'×';
         document.getElementById('stepsize-val').textContent = qStepSize.toFixed(2);
@@ -966,7 +994,24 @@ void main() {
     function clearPH() { document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active')); }
 
     // ---- UI ----
-    document.getElementById('spin').addEventListener('input', function(){ spin=+this.value; document.getElementById('spin-val').textContent='a = '+spin.toFixed(3); updInfo(); });
+
+    // Charge slider + constraint: a^2 + Q^2 <= 1
+    document.getElementById('charge').addEventListener('input', function(){
+        charge=+this.value;
+        // Enforce a^2 + Q^2 <= 1
+        const maxA = Math.sqrt(Math.max(1 - charge*charge, 0));
+        if (spin > maxA) { spin = Math.floor(maxA*500)/500; document.getElementById('spin').value = spin; document.getElementById('spin-val').textContent='a = '+spin.toFixed(3); }
+        document.getElementById('charge-val').textContent='Q = '+charge.toFixed(3);
+        updInfo();
+    });
+    // Also enforce constraint when spin changes
+    document.getElementById('spin').addEventListener('input', function(){
+        spin=+this.value;
+        const maxQ = Math.sqrt(Math.max(1 - spin*spin, 0));
+        if (charge > maxQ) { charge = Math.floor(maxQ*500)/500; document.getElementById('charge').value = charge; document.getElementById('charge-val').textContent='Q = '+charge.toFixed(3); }
+        document.getElementById('spin-val').textContent='a = '+spin.toFixed(3);
+        updInfo();
+    });
     document.getElementById('incl').addEventListener('input', function(){ incl=+this.value; document.getElementById('incl-val').innerHTML='&theta; = '+incl.toFixed(1)+'&deg;'; });
     document.getElementById('temp').addEventListener('input', function(){ diskTemp=+this.value; document.getElementById('temp-val').textContent=diskTemp.toFixed(2); });
     document.getElementById('btn-disk').addEventListener('click', function(){ showDisk=showDisk>0.5?0:1; this.classList.toggle('active',showDisk>0.5); });
@@ -1016,6 +1061,8 @@ void main() {
         gl.uniform1f(uniforms.u_grid, showGrid);
         gl.uniform1f(uniforms.u_temp, diskTemp);
         gl.uniform1f(uniforms.u_phi0, rotAngle);
+        gl.uniform1f(uniforms.u_Q, charge);
+        gl.uniform1f(uniforms.u_isco, iscoJS(spin, charge));
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         fc++; const now=performance.now();
         if (now-lastFT > 800) { document.getElementById('fps').textContent=Math.round(fc/((now-lastFT)*0.001)); fc=0; lastFT=now; }
