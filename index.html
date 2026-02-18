@@ -7,213 +7,161 @@
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Cormorant+Garamond:wght@300;400;600&display=swap');
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{
+    background:#000;overflow:hidden;
+    font-family:'IBM Plex Mono',monospace;color:#c8bfa9;cursor:crosshair;
+  }
+  canvas{display:block;width:100vw;height:100vh;}
 
-  body {
-    background: #000;
-    overflow: hidden;
-    font-family: 'IBM Plex Mono', monospace;
-    color: #c8bfa9;
-    cursor: crosshair;
+  .title-block{
+    position:fixed;top:24px;left:28px;z-index:20;pointer-events:none;
+  }
+  .title-block h1{
+    font-family:'Cormorant Garamond',serif;font-weight:300;font-size:26px;
+    letter-spacing:.08em;color:#e8dfd0;
+    text-shadow:0 0 40px rgba(255,180,100,.15);margin-bottom:3px;
+  }
+  .title-block .sub{
+    font-size:10px;font-weight:300;letter-spacing:.25em;
+    text-transform:uppercase;color:#7a7060;
   }
 
-  canvas {
-    display: block;
-    width: 100vw;
-    height: 100vh;
+  .panel{
+    position:fixed;z-index:20;pointer-events:auto;
+    display:flex;flex-direction:column;gap:12px;
+    background:rgba(10,8,6,.82);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(200,180,140,.08);
+    border-radius:10px;padding:16px 20px;
+  }
+  .panel-title{
+    font-size:9px;font-weight:500;letter-spacing:.22em;
+    text-transform:uppercase;color:#a09080;
+    padding-bottom:3px;border-bottom:1px solid rgba(200,180,140,.06);
   }
 
-  .title-block {
-    position: fixed;
-    top: 28px;
-    left: 32px;
-    z-index: 20;
-    pointer-events: none;
+  .controls{bottom:24px;left:24px;min-width:260px;}
+  .settings-panel{
+    bottom:24px;left:306px;min-width:240px;
+    transition:opacity .3s,transform .3s;
+  }
+  .settings-panel.hidden{opacity:0;pointer-events:none;transform:translateY(8px);}
+
+  /* Legend panel */
+  .legend-panel{
+    top:24px;right:24px;min-width:200px;
+    transition:opacity .3s,transform .3s;
+  }
+  .legend-panel.hidden{opacity:0;pointer-events:none;transform:translateY(-8px);}
+  .legend-item{
+    display:flex;align-items:center;gap:10px;
+    font-size:10px;color:#9a8e7c;line-height:1.5;
+  }
+  .legend-swatch{
+    width:14px;height:14px;border-radius:3px;flex-shrink:0;
+    border:1px solid rgba(255,255,255,.08);
+  }
+  .legend-desc{font-size:9px;color:#706456;margin-top:1px;}
+
+  .control-row{display:flex;flex-direction:column;gap:4px;}
+  .control-label{
+    display:flex;justify-content:space-between;align-items:baseline;
+    font-size:10px;font-weight:400;letter-spacing:.14em;
+    text-transform:uppercase;color:#8a7e6c;
+  }
+  .control-value{
+    font-size:12px;font-weight:500;color:#d4c8b0;
+    font-variant-numeric:tabular-nums;letter-spacing:0;text-transform:none;
   }
 
-  .title-block h1 {
-    font-family: 'Cormorant Garamond', serif;
-    font-weight: 300;
-    font-size: 28px;
-    letter-spacing: 0.08em;
-    color: #e8dfd0;
-    text-shadow: 0 0 40px rgba(255,180,100,0.15);
-    margin-bottom: 4px;
+  input[type="range"]{
+    -webkit-appearance:none;appearance:none;width:100%;height:2px;
+    background:rgba(200,180,140,.12);border-radius:1px;outline:none;cursor:pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+    background:#c8b890;border:2px solid rgba(10,8,6,.6);
+    box-shadow:0 0 10px rgba(200,170,100,.25);cursor:grab;
+  }
+  input[type="range"]::-moz-range-thumb{
+    width:12px;height:12px;border-radius:50%;background:#c8b890;
+    border:2px solid rgba(10,8,6,.6);box-shadow:0 0 10px rgba(200,170,100,.25);cursor:grab;
   }
 
-  .title-block .subtitle {
-    font-size: 10px;
-    font-weight: 300;
-    letter-spacing: 0.25em;
-    text-transform: uppercase;
-    color: #7a7060;
+  .toggle-row{display:flex;gap:7px;flex-wrap:wrap;}
+  .toggle-btn,.preset-btn{
+    font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:400;
+    letter-spacing:.12em;text-transform:uppercase;color:#6a6050;
+    background:rgba(200,180,140,.04);border:1px solid rgba(200,180,140,.1);
+    border-radius:5px;padding:4px 8px;cursor:pointer;transition:all .25s;
+  }
+  .toggle-btn.active,.preset-btn.active{
+    color:#d4c8b0;background:rgba(200,180,140,.1);border-color:rgba(200,180,140,.25);
+  }
+  .toggle-btn:hover,.preset-btn:hover{border-color:rgba(200,180,140,.2);}
+
+  select.ctrl-select{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;
+    color:#d4c8b0;background:rgba(200,180,140,.06);
+    border:1px solid rgba(200,180,140,.12);border-radius:5px;
+    padding:4px 8px;cursor:pointer;outline:none;
+    -webkit-appearance:none;appearance:none;
+  }
+  select.ctrl-select option{background:#1a1510;color:#c8bfa9;}
+
+  .readout{
+    position:fixed;bottom:24px;right:24px;z-index:20;pointer-events:none;
+    text-align:right;font-size:10px;font-weight:300;
+    letter-spacing:.1em;color:#5a5040;line-height:1.8;
+  }
+  .readout .hl{color:#8a7e6c;}
+
+  .warn-badge{
+    font-size:8px;letter-spacing:.1em;text-transform:uppercase;
+    color:#c09040;background:rgba(200,140,60,.1);
+    border:1px solid rgba(200,140,60,.15);border-radius:4px;
+    padding:2px 6px;display:inline-block;margin-top:3px;
   }
 
-  .controls {
-    position: fixed;
-    bottom: 28px;
-    left: 32px;
-    z-index: 20;
-    pointer-events: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    background: rgba(10, 8, 6, 0.75);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(200, 180, 140, 0.08);
-    border-radius: 12px;
-    padding: 20px 24px;
-    min-width: 280px;
+  /* Annotation overlay */
+  .annotation{
+    position:fixed;z-index:15;pointer-events:none;
+    font-size:9px;font-weight:400;letter-spacing:.12em;
+    text-transform:uppercase;color:rgba(255,220,160,.5);
+    text-shadow:0 0 8px rgba(0,0,0,.9),0 0 20px rgba(0,0,0,.7);
+    transition:opacity .4s;white-space:nowrap;
   }
-
-  .control-row {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  .annotation .ann-line{
+    display:block;width:1px;background:rgba(255,220,160,.15);
+    position:absolute;
   }
+  .annotations-hidden .annotation{opacity:0;}
 
-  .control-label {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    font-size: 10px;
-    font-weight: 400;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: #8a7e6c;
+  .loading-overlay{
+    position:fixed;inset:0;z-index:100;display:flex;
+    flex-direction:column;align-items:center;justify-content:center;gap:16px;
+    background:#0a0806;transition:opacity 1.2s ease;
   }
-
-  .control-value {
-    font-size: 13px;
-    font-weight: 500;
-    color: #d4c8b0;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0;
-    text-transform: none;
+  .loading-overlay.hidden{opacity:0;pointer-events:none;}
+  .loading-text{
+    font-family:'Cormorant Garamond',serif;font-weight:300;font-size:18px;
+    color:#6a6050;letter-spacing:.15em;animation:pulse 2s ease-in-out infinite;
   }
-
-  input[type="range"] {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 2px;
-    background: rgba(200, 180, 140, 0.12);
-    border-radius: 1px;
-    outline: none;
-    cursor: pointer;
+  .error-text{
+    font-size:11px;color:#a04030;letter-spacing:.05em;max-width:520px;
+    text-align:center;line-height:1.6;display:none;white-space:pre-wrap;
   }
+  @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
 
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #c8b890;
-    border: 2px solid rgba(10, 8, 6, 0.6);
-    box-shadow: 0 0 12px rgba(200, 170, 100, 0.25);
-    cursor: grab;
-    transition: box-shadow 0.2s;
-  }
-
-  input[type="range"]::-webkit-slider-thumb:hover {
-    box-shadow: 0 0 20px rgba(200, 170, 100, 0.45);
-  }
-
-  input[type="range"]::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #c8b890;
-    border: 2px solid rgba(10, 8, 6, 0.6);
-    box-shadow: 0 0 12px rgba(200, 170, 100, 0.25);
-    cursor: grab;
-  }
-
-  .toggle-row {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .toggle-btn {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 9px;
-    font-weight: 400;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    color: #6a6050;
-    background: rgba(200, 180, 140, 0.04);
-    border: 1px solid rgba(200, 180, 140, 0.1);
-    border-radius: 6px;
-    padding: 5px 10px;
-    cursor: pointer;
-    transition: all 0.25s;
-  }
-
-  .toggle-btn.active {
-    color: #d4c8b0;
-    background: rgba(200, 180, 140, 0.1);
-    border-color: rgba(200, 180, 140, 0.25);
-  }
-
-  .toggle-btn:hover { border-color: rgba(200, 180, 140, 0.2); }
-
-  .readout {
-    position: fixed;
-    bottom: 28px;
-    right: 32px;
-    z-index: 20;
-    pointer-events: none;
-    text-align: right;
-    font-size: 10px;
-    font-weight: 300;
-    letter-spacing: 0.12em;
-    color: #5a5040;
-    line-height: 1.8;
-  }
-
-  .readout .hl { color: #8a7e6c; }
-
-  .loading-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    background: #0a0806;
-    transition: opacity 1.2s ease;
-  }
-
-  .loading-overlay.hidden { opacity: 0; pointer-events: none; }
-
-  .loading-text {
-    font-family: 'Cormorant Garamond', serif;
-    font-weight: 300;
-    font-size: 18px;
-    color: #6a6050;
-    letter-spacing: 0.15em;
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  .error-text {
-    font-size: 11px;
-    color: #a04030;
-    letter-spacing: 0.05em;
-    max-width: 520px;
-    text-align: center;
-    line-height: 1.6;
-    display: none;
-    white-space: pre-wrap;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
+  @media(max-width:720px){
+    .controls{left:12px;bottom:12px;min-width:auto;max-width:calc(100vw - 24px);padding:12px 14px;}
+    .settings-panel{left:12px;bottom:280px;min-width:auto;max-width:calc(100vw - 24px);padding:12px 14px;}
+    .legend-panel{top:auto;bottom:12px;right:12px;left:auto;}
+    .title-block{top:12px;left:12px;}
+    .title-block h1{font-size:18px;}
+    .readout{display:none;}
+    .annotation{font-size:8px;}
   }
 </style>
 </head>
@@ -228,10 +176,61 @@
 
 <div class="title-block">
   <h1>Kerr Spacetime</h1>
-  <div class="subtitle">Null geodesic ray tracer — GPU accelerated</div>
+  <div class="sub">Null geodesic ray tracer — GPU accelerated</div>
 </div>
 
-<div class="controls" id="controls">
+<!-- Annotations (positioned dynamically by JS) -->
+<div id="ann-container">
+  <div class="annotation" id="ann-shadow" style="top:46%;left:53%">← Black hole shadow</div>
+  <div class="annotation" id="ann-ring" style="top:34%;left:44%">Photon ring ↓</div>
+  <div class="annotation" id="ann-disk-upper" style="top:26%;left:56%">↙ Lensed upper disk</div>
+  <div class="annotation" id="ann-disk-lower" style="top:60%;left:40%">Direct disk image ↗</div>
+  <div class="annotation" id="ann-einstein" style="top:42%;left:22%">Einstein ring →</div>
+  <div class="annotation" id="ann-drag" style="top:72%;left:55%">↑ Frame-dragged stars</div>
+</div>
+
+<!-- Legend panel -->
+<div class="panel legend-panel" id="legend-panel">
+  <div class="panel-title">What you're seeing</div>
+  <div class="legend-item">
+    <div class="legend-swatch" style="background:#000;box-shadow:0 0 4px rgba(255,180,100,.3)"></div>
+    <div>
+      <div>Black hole shadow</div>
+      <div class="legend-desc">Photons captured by the horizon</div>
+    </div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-swatch" style="background:linear-gradient(135deg,#f80,#ff4)"></div>
+    <div>
+      <div>Accretion disk</div>
+      <div class="legend-desc">Bright side = Doppler-boosted (approaching)</div>
+    </div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-swatch" style="background:linear-gradient(135deg,#543,#ba8)"></div>
+    <div>
+      <div>Photon ring</div>
+      <div class="legend-desc">Light that orbited the BH before escaping</div>
+    </div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-swatch" style="background:conic-gradient(#e45,#58e,#5c5,#e45)"></div>
+    <div>
+      <div>Lensed background</div>
+      <div class="legend-desc">Celestial sphere warped by curved spacetime</div>
+    </div>
+  </div>
+  <div style="font-size:9px;color:#605648;line-height:1.5;margin-top:2px;">
+    The spinning BH drags spacetime (frame dragging), making the shadow asymmetric and one side of the disk brighter.
+  </div>
+  <div class="toggle-row" style="margin-top:2px;">
+    <button class="toggle-btn active" id="btn-legend-close">Close</button>
+    <button class="toggle-btn active" id="btn-ann-toggle">Annotations</button>
+  </div>
+</div>
+
+<!-- Physics controls -->
+<div class="panel controls">
   <div class="control-row">
     <div class="control-label">
       <span>Black Hole Spin</span>
@@ -241,7 +240,7 @@
   </div>
   <div class="control-row">
     <div class="control-label">
-      <span>Observer Inclination</span>
+      <span>Inclination</span>
       <span class="control-value" id="incl-val">&theta; = 80.0&deg;</span>
     </div>
     <input type="range" id="incl" min="5" max="89" step="0.5" value="80">
@@ -254,18 +253,76 @@
     <input type="range" id="temp" min="0.2" max="2.5" step="0.05" value="1.0">
   </div>
   <div class="control-row">
+    <div class="control-label"><span>Background</span></div>
+    <div class="toggle-row">
+      <button class="toggle-btn" data-bg="0">Stars</button>
+      <button class="toggle-btn active" data-bg="1">Checker</button>
+      <button class="toggle-btn" data-bg="2">Color Map</button>
+    </div>
+  </div>
+  <div class="control-row">
     <div class="control-label"><span>Layers</span></div>
     <div class="toggle-row">
-      <button class="toggle-btn active" id="btn-disk">Accretion Disk</button>
-      <button class="toggle-btn active" id="btn-grid">Celestial Grid</button>
-      <button class="toggle-btn" id="btn-rotate">Auto Rotate</button>
+      <button class="toggle-btn active" id="btn-disk">Disk</button>
+      <button class="toggle-btn active" id="btn-grid">Grid</button>
+      <button class="toggle-btn" id="btn-rotate">Rotate</button>
+      <button class="toggle-btn" id="btn-settings">⚙</button>
+      <button class="toggle-btn active" id="btn-legend">?</button>
     </div>
+  </div>
+</div>
+
+<!-- Performance settings -->
+<div class="panel settings-panel hidden" id="settings-panel">
+  <div class="panel-title">Performance &amp; Quality</div>
+  <div class="control-row">
+    <div class="control-label"><span>Preset</span></div>
+    <div class="toggle-row">
+      <button class="preset-btn" data-preset="low">Low</button>
+      <button class="preset-btn active" data-preset="medium">Medium</button>
+      <button class="preset-btn" data-preset="high">High</button>
+      <button class="preset-btn" data-preset="ultra">Ultra</button>
+    </div>
+  </div>
+  <div class="control-row">
+    <div class="control-label">
+      <span>Integrator</span>
+      <span class="control-value" id="integ-label">Separated</span>
+    </div>
+    <select class="ctrl-select" id="sel-integrator">
+      <option value="separated" selected>Separated eqs — fast</option>
+      <option value="hamiltonian">Full Hamiltonian RK4</option>
+    </select>
+    <div id="hamiltonian-warn" class="warn-badge" style="display:none">
+      Heavy — may fail on mobile / integrated GPU
+    </div>
+  </div>
+  <div class="control-row">
+    <div class="control-label"><span>Steps</span><span class="control-value" id="steps-val">200</span></div>
+    <input type="range" id="steps" min="60" max="500" step="10" value="200">
+  </div>
+  <div class="control-row">
+    <div class="control-label"><span>Resolution</span><span class="control-value" id="res-scale-val">1.00×</span></div>
+    <input type="range" id="res-scale" min="0.25" max="2.0" step="0.05" value="1.0">
+  </div>
+  <div class="control-row">
+    <div class="control-label"><span>Step Size</span><span class="control-value" id="stepsize-val">0.30</span></div>
+    <input type="range" id="stepsize" min="0.10" max="0.80" step="0.02" value="0.30">
+  </div>
+  <div class="control-row">
+    <div class="control-label"><span>Observer Dist</span><span class="control-value" id="obs-val">40 M</span></div>
+    <input type="range" id="obs-dist" min="20" max="100" step="5" value="40">
+  </div>
+  <div class="control-row">
+    <div class="control-label"><span>Star Layers</span><span class="control-value" id="starlayers-val">3</span></div>
+    <input type="range" id="star-layers" min="1" max="4" step="1" value="3">
   </div>
 </div>
 
 <div class="readout">
   <span class="hl">r<sub>+</sub></span> = <span id="rp">1.800</span> M<br>
   <span class="hl">r<sub>isco</sub></span> = <span id="risco">4.233</span> M<br>
+  <span class="hl">integrator</span> <span id="integ-info">separated</span><br>
   <span class="hl">res</span> <span id="res">---</span><br>
   <span class="hl">fps</span> <span id="fps">--</span>
 </div>
@@ -276,42 +333,33 @@ varying vec2 v_uv;
 void main(){ v_uv=a_pos; gl_Position=vec4(a_pos,0,1); }
 </script>
 
-<!--
-  FRAGMENT SHADER
-  ===============
-  Uses the SEPARATED first-order geodesic equations in Kerr spacetime
-  (Boyer-Lindquist coords). This avoids computing any metric derivatives.
+<script>
+// ============================================================
+//  SHADER GENERATOR — builds GLSL from options
+// ============================================================
+function buildFragSrc(opts) {
+    const STEPS = opts.steps || 200;
+    const METHOD = opts.method || 'separated';
+    const R0 = opts.obsDist || 40;
+    const RESC = R0 + 12;
+    const STAR_LAYERS = opts.starLayers || 3;
+    const H_BASE = opts.stepSize || 0.30;
+    const BG_MODE = opts.bgMode || 1; // 0=stars, 1=checker, 2=colormap
 
-  Conserved: E=1 (energy), b=Lz/E (angular momentum), q2=Q/E^2 (Carter const)
-
-  Potentials:
-    R(r)      = (r²+a²-a·b)² − Δ·[q2 + (b−a)²]
-    Θ(θ)      = q2 + a²cos²θ − b²cos²θ/sin²θ
-
-  Equations (Σ = r²+a²cos²θ, Δ = r²−2r+a²):
-    Σ·dr/dλ   = ±√R
-    Σ·dθ/dλ   = ±√Θ
-    Σ·dφ/dλ   = b/sin²θ − a + a(r²+a²−ab)/Δ
--->
-<script id="fs" type="x-shader/x-fragment">
-precision highp float;
-
+    let src = `precision highp float;
 varying vec2 v_uv;
 uniform vec2 u_res;
-uniform float u_a;      // spin
-uniform float u_incl;   // inclination (rad)
-uniform float u_fov;
-uniform float u_disk;   // show disk
-uniform float u_grid;   // show grid
-uniform float u_temp;   // disk temp mult
-uniform float u_phi0;   // azimuthal rotation
+uniform float u_a,u_incl,u_fov,u_disk,u_grid,u_temp,u_phi0;
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
-#define STEPS 220
-#define R0  40.0
-#define RESC 50.0
+#define STEPS ${STEPS}
+#define R0  ${R0.toFixed(1)}
+#define RESC ${RESC.toFixed(1)}
 #define RDISK 14.0
+#define H_BASE ${H_BASE.toFixed(4)}
+#define STAR_LAYERS ${STAR_LAYERS}
+#define BG_MODE ${BG_MODE}
 
 float hash(vec2 p){
     p=fract(p*vec2(443.8,441.4));
@@ -325,16 +373,15 @@ float isco(float a){
     return 3.+z2-sqrt((3.-z1)*(3.+z1+2.*z2));
 }
 
-vec3 stars(float th, float ph){
+// ============ BACKGROUND RENDERING ============
+
+vec3 bgStars(float th, float ph){
     vec3 c=vec3(.007,.008,.018);
-    // milky way
     float mw=exp(-8.*pow(th-PI*.5,2.));
     c+=vec3(.018,.014,.028)*mw;
-    // nebulae
     c+=vec3(.018,.006,.022)*hash(floor(vec2(th,ph)*5.))*mw*.5;
     c+=vec3(.004,.012,.022)*hash(floor(vec2(th+40.,ph+60.)*3.))*.25;
-    // stars
-    for(int L=0;L<3;L++){
+    for(int L=0;L<STAR_LAYERS;L++){
         float sc=50.+float(L)*70.;
         vec2 ce=floor(vec2(th,ph)*sc);
         float h=hash(ce+float(L)*137.);
@@ -347,165 +394,330 @@ vec3 stars(float th, float ph){
             c+=sc2*s*(.4+2.*hash(ce+33.));
         }
     }
-    // grid
-    if(u_grid>.5){
-        float gt=abs(fract(th/PI*12.)-.5)*2.;
-        float gp=abs(fract(ph/TAU*24.)-.5)*2.;
+    return c;
+}
+
+// Checkerboard on celestial sphere — makes lensing very obvious
+vec3 bgChecker(float th, float ph){
+    float nth=th/PI;         // 0..1
+    float nph=ph/TAU;        // 0..1
+
+    // Checkerboard
+    float cTh=floor(nth*12.);
+    float cPh=floor(nph*24.);
+    float check=mod(cTh+cPh,2.);
+
+    // Base color: warm vs cool alternating
+    vec3 colA=vec3(.06,.055,.08);  // dark cool
+    vec3 colB=vec3(.10,.08,.05);   // dark warm
+    vec3 base=mix(colA,colB,check);
+
+    // Latitude bands with distinct hues
+    float band=floor(nth*6.);
+    vec3 tint;
+    if(band<1.) tint=vec3(.15,.08,.03);       // warm brown (N pole)
+    else if(band<2.) tint=vec3(.04,.08,.15);   // steel blue
+    else if(band<3.) tint=vec3(.03,.12,.06);   // forest green
+    else if(band<4.) tint=vec3(.12,.04,.10);   // plum
+    else if(band<5.) tint=vec3(.12,.10,.03);   // olive gold
+    else tint=vec3(.08,.04,.14);               // deep violet (S pole)
+
+    base+=tint*(0.35+0.15*check);
+
+    // Grid lines (bright)
+    float gridTh=abs(fract(nth*12.)-.5)*2.;
+    float gridPh=abs(fract(nph*24.)-.5)*2.;
+    float grid=smoothstep(.92,.98,max(gridTh,gridPh));
+    base+=vec3(.18,.15,.10)*grid;
+
+    // Equator
+    float eq=1.-smoothstep(0.,.008,abs(nth-.5));
+    base+=vec3(.25,.15,.05)*eq;
+
+    // Prime meridian
+    float pm=1.-smoothstep(0.,.004,abs(nph));
+    base+=vec3(.15,.10,.20)*pm;
+
+    return base;
+}
+
+// Color-mapped celestial sphere — hemisphere coloring shows distortion clearly
+vec3 bgColorMap(float th, float ph){
+    float nth=th/PI;
+    float nph=ph/TAU;
+
+    // Convert to Cartesian on unit sphere for coloring
+    float sth=sin(th), cth=cos(th);
+    float sph=sin(ph), cph=cos(ph);
+    float x=sth*cph, y=sth*sph, z=cth;
+
+    // Map xyz to RGB — each axis gets a color channel
+    // This makes EVERY direction a unique color
+    vec3 col=vec3(0);
+    col.r=.08+.35*(x*.5+.5);        // red = +x direction
+    col.g=.08+.35*(y*.5+.5);        // green = +y direction
+    col.b=.08+.35*max(-z,0.);       // blue = south pole
+    col+=vec3(.08,.04,.02)*max(z,0.); // warm = north pole
+
+    // Boost saturation
+    col=pow(col,vec3(.8));
+
+    // Grid overlay
+    float gridTh=abs(fract(nth*12.)-.5)*2.;
+    float gridPh=abs(fract(nph*24.)-.5)*2.;
+    float grid=smoothstep(.93,.99,max(gridTh,gridPh));
+    col+=vec3(.12,.10,.08)*grid;
+
+    float eq=1.-smoothstep(0.,.01,abs(nth-.5));
+    col+=vec3(.15,.12,.05)*eq;
+
+    return col;
+}
+
+vec3 background(float th, float ph){
+    // Always add coordinate grid if enabled
+    vec3 c;
+#if BG_MODE == 0
+    c=bgStars(th,ph);
+#elif BG_MODE == 1
+    c=bgChecker(th,ph);
+#else
+    c=bgColorMap(th,ph);
+#endif
+
+    // Optional celestial coordinate grid overlay (on top of any background)
+    if(u_grid>.5 && BG_MODE==0){
+        float nth=th/PI, nph=ph/TAU;
+        float gt=abs(fract(nth*12.)-.5)*2.;
+        float gp=abs(fract(nph*24.)-.5)*2.;
         c+=vec3(.055,.04,.028)*smoothstep(.97,.995,max(gt,gp));
         c+=vec3(.07,.035,.02)*(1.-smoothstep(0.,.012,abs(th-PI*.5)));
     }
     return c;
 }
 
+// ============ ACCRETION DISK ============
+
 vec3 disk(float r, float ph, float a){
     float ri=isco(a);
-    if(r<ri*.88||r>RDISK) return vec3(0);
+    if(r<ri*.85||r>RDISK) return vec3(0);
     float x=r/ri;
     float tp=pow(x,-.75)*u_temp;
-    float I=pow(tp,4.)/(r*.35);
-    I*=smoothstep(ri*.88,ri*1.3,r);
-    I*=smoothstep(RDISK,RDISK*.6,r);
-    // doppler
+    float I=pow(tp,4.)/(r*.3);
+    I*=smoothstep(ri*.85,ri*1.3,r);
+    I*=smoothstep(RDISK,RDISK*.55,r);
     float vo=1./sqrt(r);
-    float dop=1.+.6*vo*sin(ph);
+    float dop=1.+.65*vo*sin(ph);
     float boost=pow(max(dop,.1),3.);
     I*=boost;
-    float t=clamp(tp*boost*.42,0.,3.);
-    vec3 col=t<.5?mix(vec3(.22,.04,0),vec3(.75,.14,.01),t*2.):
-              t<1.?mix(vec3(.75,.14,.01),vec3(1,.52,.08),(t-.5)*2.):
-              t<1.8?mix(vec3(1,.52,.08),vec3(1,.9,.55),(t-1.)/.8):
-              mix(vec3(1,.9,.55),vec3(1,1,1),clamp((t-1.8)/1.2,0.,1.));
-    float tu=.7+.3*hash(vec2(r*6.,ph*4.));
-    return col*I*tu*2.8;
+    // Blackbody color ramp
+    float t=clamp(tp*boost*.45,0.,3.5);
+    vec3 col;
+    if(t<.4) col=mix(vec3(.25,.03,0),vec3(.85,.15,.01),t*2.5);
+    else if(t<.9) col=mix(vec3(.85,.15,.01),vec3(1,.55,.08),(t-.4)*2.);
+    else if(t<1.7) col=mix(vec3(1,.55,.08),vec3(1,.92,.6),(t-.9)/0.8);
+    else if(t<2.5) col=mix(vec3(1,.92,.6),vec3(1,1,.95),(t-1.7)/.8);
+    else col=vec3(1,1,1);
+    // Turbulence
+    float tu=.65+.35*hash(vec2(r*5.,ph*3.));
+    float tu2=.8+.2*hash(vec2(r*18.,ph*9.));
+    return col*I*tu*tu2*3.2;
+}
+`;
+
+    // ---- INTEGRATOR ----
+    if (METHOD === 'hamiltonian') {
+        src += `
+void geoRHS(
+    float r, float th, float pr, float pth,
+    float a, float b,
+    out float dr, out float dth, out float dphi,
+    out float dpr, out float dpth
+){
+    float sth=sin(th),cth=cos(th);
+    float s2=sth*sth,c2=cth*cth;
+    float a2=a*a,r2=r*r;
+    float sig=r2+a2*c2;
+    float del=r2-2.*r+a2;
+    float rpa2=r2+a2;
+    float A_=rpa2*rpa2-del*a2*s2;
+    float isig=1./sig;
+    float idel=1./del;
+    float is2=1./max(s2,1e-10);
+    float SD=sig*del;
+    float iSD=isig*idel;
+    float gtt=-A_*iSD;
+    float gtf=-2.*a*r*iSD;
+    float grr=del*isig;
+    float gthth=isig;
+    float gff=(sig-2.*r)*iSD*is2;
+    dr=grr*pr; dth=gthth*pth; dphi=gff*b-gtf;
+    float dsig_r=2.*r;float ddel_r=2.*r-2.;
+    float dA_r=4.*r*rpa2-ddel_r*a2*s2;
+    float dSD_r=dsig_r*del+sig*ddel_r;
+    float dgtt_r=-(dA_r*SD-A_*dSD_r)/(SD*SD);
+    float dgtf_r=-(2.*a*SD-2.*a*r*dSD_r)/(SD*SD);
+    float dgrr_r=(ddel_r*sig-del*dsig_r)/(sig*sig);
+    float dgthth_r=-dsig_r*isig*isig;
+    float num_ff=sig-2.*r;float den_ff=SD*s2;
+    float dgff_r=((dsig_r-2.)*den_ff-num_ff*dSD_r*s2)/(den_ff*den_ff);
+    dpr=-0.5*(dgtt_r-2.*b*dgtf_r+dgrr_r*pr*pr+dgthth_r*pth*pth+dgff_r*b*b);
+    float dsig_th=-2.*a2*sth*cth;
+    float dA_th=-del*a2*2.*sth*cth;
+    float ds2_th=2.*sth*cth;
+    float dSD_th=dsig_th*del;
+    float dgtt_th=-(dA_th*SD-A_*dSD_th)/(SD*SD);
+    float dgtf_th=2.*a*r*dSD_th/(SD*SD);
+    float dgrr_th=-del*dsig_th/(sig*sig);
+    float dgthth_th=-dsig_th*isig*isig;
+    float dgff_th=(dsig_th*den_ff-num_ff*(dsig_th*del*s2+SD*ds2_th))/(den_ff*den_ff);
+    dpth=-0.5*(dgtt_th-2.*b*dgtf_th+dgrr_th*pr*pr+dgthth_th*pth*pth+dgff_th*b*b);
 }
 
 void main(){
     vec2 uv=v_uv;
     float asp=u_res.x/u_res.y;
-    float alpha=uv.x*u_fov*asp;
-    float beta=uv.y*u_fov;
-
-    float a=u_a, a2=a*a;
-    float thObs=u_incl;
-    float sO=sin(thObs), cO=cos(thObs);
-
-    // conserved quantities (Bardeen 1973)
+    float alpha=uv.x*u_fov*asp, beta=uv.y*u_fov;
+    float a=u_a,a2=a*a;
+    float thObs=u_incl,sO=sin(thObs),cO=cos(thObs);
     float b=-alpha*sO;
     float q2=beta*beta+cO*cO*(alpha*alpha-a2);
-
-    // initial state
-    float r=R0, th=thObs, phi=u_phi0;
-    float sr=-1.;  // dr sign (ingoing)
-    float st=beta>=0.?-1.:1.;  // dth sign
-
+    float r=R0,th=thObs,phi=u_phi0;
+    float sth=sin(th),cth=cos(th),s2=sth*sth,c2=cth*cth;
+    float sig=r*r+a2*c2,del=r*r-2.*r+a2;
+    float rpa2=r*r+a2,A_=rpa2*rpa2-del*a2*s2;
+    float iSD=1./(sig*del),is2=1./max(s2,1e-10);
+    float grr=del/sig,gthth_i=1./sig;
+    float pth=beta;
+    float rest=-A_*iSD-2.*b*(-2.*a*r*iSD)+gthth_i*pth*pth+(sig-2.*r)*iSD*is2*b*b;
+    float pr2=-rest/grr;
+    float pr=pr2>0.?-sqrt(pr2):0.;
     float rp=1.+sqrt(max(1.-a2,0.));
-    float bma=b-a; float bma2=bma*bma;
-
-    vec3 color=vec3(0);
-    bool done=false;
-    float h=.25;
-
+    vec3 color=vec3(0);bool done=false;
     for(int i=0;i<STEPS;i++){
-        if(done) break;
-
-        float sth=sin(th), cth=cos(th);
-        float s2=sth*sth, c2=cth*cth;
-        float sig=r*r+a2*c2;
-        float isig=1./sig;
-        float del=r*r-2.*r+a2;
-
-        // R potential
-        float T=r*r+a2-a*b;
-        float Rpot=T*T-del*(q2+bma2);
-
-        // Theta potential
-        float Thpot=q2+a2*c2-c2*b*b/max(s2,1e-8);
-
-        // turning-point reflections
-        if(Rpot<0.){ Rpot=0.; sr=-sr; }
-        if(Thpot<0.){ Thpot=0.; st=-st; }
-
-        float dr=sr*sqrt(Rpot)*isig;
-        float dth=st*sqrt(Thpot)*isig;
-        float dphi=(b/max(s2,1e-8)-a+a*T/del)*isig;
-
-        // adaptive step
-        float he=h*clamp((r-rp)*.35,.04,1.);
-        he=clamp(he,.015,.7);
-
-        float oldTh=th, oldR=r, oldPhi=phi;
-
-        // Verlet-style: half-step position, recompute velocities, full step
-        // (better than Euler, cheaper than RK4)
-        float rH=r+.5*he*dr;
-        float thH=th+.5*he*dth;
-        float sthH=sin(thH), cthH=cos(thH);
-        float s2H=sthH*sthH, c2H=cthH*cthH;
-        float sigH=rH*rH+a2*c2H;
-        float isigH=1./sigH;
-        float delH=rH*rH-2.*rH+a2;
-        float TH=rH*rH+a2-a*b;
-        float RpH=TH*TH-delH*(q2+bma2);
-        float ThpH=q2+a2*c2H-c2H*b*b/max(s2H,1e-8);
-        if(RpH<0.){RpH=0.;sr=-sr;}
-        if(ThpH<0.){ThpH=0.;st=-st;}
-        float drH=sr*sqrt(RpH)*isigH;
-        float dthH=st*sqrt(ThpH)*isigH;
-        float dphiH=(b/max(s2H,1e-8)-a+a*TH/delH)*isigH;
-
-        r+=he*drH;
-        th+=he*dthH;
-        phi+=he*dphiH;
-
-        // boundary reflect theta
-        if(th<1e-4){th=1e-4;st=1.;}
-        if(th>PI-1e-4){th=PI-1e-4;st=-1.;}
-
-        // horizon check
-        if(r<=rp*1.005){
-            color+=vec3(0);
-            done=true; break;
-        }
-
-        // disk crossing
+        if(done)break;
+        float he=H_BASE*clamp((r-rp)*.4,.04,1.);
+        he=clamp(he,.015,.6);
+        float oldTh=th,oldR=r,oldPhi=phi;
+        float dr1,dth1,dphi1,dpr1,dpth1;
+        float dr2,dth2,dphi2,dpr2,dpth2;
+        float dr3,dth3,dphi3,dpr3,dpth3;
+        float dr4,dth4,dphi4,dpr4,dpth4;
+        geoRHS(r,th,pr,pth,a,b,dr1,dth1,dphi1,dpr1,dpth1);
+        geoRHS(r+.5*he*dr1,th+.5*he*dth1,pr+.5*he*dpr1,pth+.5*he*dpth1,a,b,dr2,dth2,dphi2,dpr2,dpth2);
+        geoRHS(r+.5*he*dr2,th+.5*he*dth2,pr+.5*he*dpr2,pth+.5*he*dpth2,a,b,dr3,dth3,dphi3,dpr3,dpth3);
+        geoRHS(r+he*dr3,th+he*dth3,pr+he*dpr3,pth+he*dpth3,a,b,dr4,dth4,dphi4,dpr4,dpth4);
+        r+=he*(dr1+2.*dr2+2.*dr3+dr4)/6.;
+        th+=he*(dth1+2.*dth2+2.*dth3+dth4)/6.;
+        phi+=he*(dphi1+2.*dphi2+2.*dphi3+dphi4)/6.;
+        pr+=he*(dpr1+2.*dpr2+2.*dpr3+dpr4)/6.;
+        pth+=he*(dpth1+2.*dpth2+2.*dpth3+dpth4)/6.;
+        if(th<1e-3){th=1e-3;pth=abs(pth);}
+        if(th>PI-1e-3){th=PI-1e-3;pth=-abs(pth);}
+        if(r<=rp*1.01){done=true;break;}
         if(u_disk>.5){
             float cross=(oldTh-PI*.5)*(th-PI*.5);
             if(cross<0.){
-                float f=abs(oldTh-PI*.5)/max(abs(th-oldTh),1e-6);
-                f=clamp(f,0.,1.);
-                float dr2=oldR+f*(r-oldR);
-                float dp=oldPhi+f*(phi-oldPhi);
-                vec3 dc=disk(dr2,dp,a);
+                float f=clamp(abs(oldTh-PI*.5)/max(abs(th-oldTh),1e-6),0.,1.);
+                vec3 dc=disk(oldR+f*(r-oldR),oldPhi+f*(phi-oldPhi),a);
                 color+=dc*(1.-clamp(length(color)*.4,0.,.9));
             }
         }
-
-        // escape
         if(r>RESC){
-            vec3 sky=stars(th,mod(phi,TAU));
-            color+=sky*(1.-clamp(length(color)*.3,0.,.9));
-            done=true; break;
+            color+=background(th,mod(phi,TAU))*(1.-clamp(length(color)*.3,0.,.9));
+            done=true;break;
         }
-
-        if(r!=r||th!=th){done=true;break;}
+        if(r<.5||r!=r||th!=th){done=true;break;}
     }
-
-    // photon ring glow
     float imp=length(vec2(alpha,beta));
     float rc=5.2-1.*a;
-    color+=vec3(.08,.06,.04)*exp(-pow((imp-rc)/.3,2.))*.04;
-
-    // vignette
+    color+=vec3(.1,.07,.04)*exp(-pow((imp-rc)/.3,2.))*.06;
     color*=1.-.3*dot(uv,uv);
-    // tonemap + gamma
     color=color/(1.+color);
     color=pow(color,vec3(1./2.2));
-
     gl_FragColor=vec4(color,1);
 }
-</script>
+`;
+    } else {
+        // SEPARATED (default)
+        src += `
+void main(){
+    vec2 uv=v_uv;
+    float asp=u_res.x/u_res.y;
+    float alpha=uv.x*u_fov*asp, beta=uv.y*u_fov;
+    float a=u_a,a2=a*a;
+    float thObs=u_incl,sO=sin(thObs),cO=cos(thObs);
+    float b=-alpha*sO;
+    float q2=beta*beta+cO*cO*(alpha*alpha-a2);
+    float r=R0,th=thObs,phi=u_phi0;
+    float sr=-1.,st=beta>=0.?-1.:1.;
+    float rp=1.+sqrt(max(1.-a2,0.));
+    float bma=b-a,bma2=bma*bma;
+    vec3 color=vec3(0);bool done=false;
+    for(int i=0;i<STEPS;i++){
+        if(done)break;
+        float sth=sin(th),cth=cos(th);
+        float s2=sth*sth,c2=cth*cth;
+        float sig=r*r+a2*c2,isig=1./sig;
+        float del=r*r-2.*r+a2;
+        float T=r*r+a2-a*b;
+        float Rp=T*T-del*(q2+bma2);
+        float Tp=q2+a2*c2-c2*b*b/max(s2,1e-8);
+        if(Rp<0.){Rp=0.;sr=-sr;}
+        if(Tp<0.){Tp=0.;st=-st;}
+        float dr=sr*sqrt(Rp)*isig;
+        float dth=st*sqrt(Tp)*isig;
+        float dphi=(b/max(s2,1e-8)-a+a*T/del)*isig;
+        float he=H_BASE*clamp((r-rp)*.35,.04,1.);
+        he=clamp(he,.015,.7);
+        float oldTh=th,oldR=r,oldPhi=phi;
+        // Verlet midpoint
+        float rH=r+.5*he*dr,thH=th+.5*he*dth;
+        float sthH=sin(thH),cthH=cos(thH);
+        float s2H=sthH*sthH,c2H=cthH*cthH;
+        float sigH=rH*rH+a2*c2H,isigH=1./sigH;
+        float delH=rH*rH-2.*rH+a2;
+        float TH=rH*rH+a2-a*b;
+        float RpH=TH*TH-delH*(q2+bma2);
+        float TpH=q2+a2*c2H-c2H*b*b/max(s2H,1e-8);
+        if(RpH<0.){RpH=0.;sr=-sr;}
+        if(TpH<0.){TpH=0.;st=-st;}
+        r+=he*sr*sqrt(RpH)*isigH;
+        th+=he*st*sqrt(TpH)*isigH;
+        phi+=he*(b/max(s2H,1e-8)-a+a*TH/delH)*isigH;
+        if(th<1e-4){th=1e-4;st=1.;}
+        if(th>PI-1e-4){th=PI-1e-4;st=-1.;}
+        if(r<=rp*1.005){done=true;break;}
+        if(u_disk>.5){
+            float cross=(oldTh-PI*.5)*(th-PI*.5);
+            if(cross<0.){
+                float f=clamp(abs(oldTh-PI*.5)/max(abs(th-oldTh),1e-6),0.,1.);
+                vec3 dc=disk(oldR+f*(r-oldR),oldPhi+f*(phi-oldPhi),a);
+                color+=dc*(1.-clamp(length(color)*.4,0.,.9));
+            }
+        }
+        if(r>RESC){
+            color+=background(th,mod(phi,TAU))*(1.-clamp(length(color)*.3,0.,.9));
+            done=true;break;
+        }
+        if(r!=r||th!=th){done=true;break;}
+    }
+    float imp=length(vec2(alpha,beta));
+    float rc=5.2-1.*a;
+    color+=vec3(.1,.07,.04)*exp(-pow((imp-rc)/.3,2.))*.06;
+    color*=1.-.3*dot(uv,uv);
+    color=color/(1.+color);
+    color=pow(color,vec3(1./2.2));
+    gl_FragColor=vec4(color,1);
+}
+`;
+    }
+    return src;
+}
 
-<script>
+// ============================================================
+//  APPLICATION
+// ============================================================
 (function(){
     const canvas=document.getElementById('canvas');
     const loadEl=document.getElementById('loading');
@@ -515,58 +727,61 @@ void main(){
     const gl=canvas.getContext('webgl',{antialias:false,preserveDrawingBuffer:false,powerPreference:'high-performance'});
     if(!gl){
         loadMsg.textContent='WebGL not available';
-        errMsg.style.display='block';
-        errMsg.textContent='Try Chrome or Firefox on a desktop.';
-        return;
+        errMsg.style.display='block';errMsg.textContent='Try Chrome or Firefox on desktop.';return;
     }
 
+    // State
     let spin=.6,incl=80,diskTemp=1,showDisk=1,showGrid=1,autoRotate=false,rotAngle=0,fov=8;
-    let pr=Math.min(window.devicePixelRatio||1,1.25);
-    let fc=0,lastFT=performance.now(),curFPS=0;
+    let bgMode=1; // 0=stars,1=checker,2=colormap
 
-    function compile(src,type){
-        const s=gl.createShader(type);
-        gl.shaderSource(s,src);
-        gl.compileShader(s);
-        if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){
-            return{s:null,e:gl.getShaderInfoLog(s)};
-        }
-        return{s,e:null};
-    }
+    // Quality
+    let qMethod='separated',qSteps=200,qResScale=1.0,qStepSize=.3,qObsDist=40,qStarLayers=3;
+    let showAnnotations=true;
 
-    loadMsg.textContent='Compiling shaders…';
-    const vr=compile(document.getElementById('vs').textContent,gl.VERTEX_SHADER);
-    if(!vr.s){loadMsg.textContent='Vertex shader error';errMsg.style.display='block';errMsg.textContent=vr.e;return;}
-
-    const fr=compile(document.getElementById('fs').textContent,gl.FRAGMENT_SHADER);
-    if(!fr.s){loadMsg.textContent='Fragment shader error';errMsg.style.display='block';errMsg.textContent='GPU could not compile ray-tracer.\n\n'+fr.e;return;}
-
-    const prog=gl.createProgram();
-    gl.attachShader(prog,vr.s);
-    gl.attachShader(prog,fr.s);
-    gl.linkProgram(prog);
-    if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){
-        loadMsg.textContent='Link error';errMsg.style.display='block';errMsg.textContent=gl.getProgramInfoLog(prog);return;
-    }
-    gl.useProgram(prog);
-
+    let program=null,uniforms={},aPos=-1;
     const buf=gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER,buf);
     gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
-    const aP=gl.getAttribLocation(prog,'a_pos');
-    gl.enableVertexAttribArray(aP);
-    gl.vertexAttribPointer(aP,2,gl.FLOAT,false,0,0);
 
-    const u={};
-    ['u_res','u_a','u_incl','u_fov','u_disk','u_grid','u_temp','u_phi0'].forEach(n=>{u[n]=gl.getUniformLocation(prog,n);});
+    let fc=0,lastFT=performance.now();
+
+    function compile(src,type){
+        const s=gl.createShader(type);
+        gl.shaderSource(s,src);gl.compileShader(s);
+        if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))return{s:null,e:gl.getShaderInfoLog(s)};
+        return{s,e:null};
+    }
+    const vertSrc=document.getElementById('vs').textContent;
+
+    function buildProgram(){
+        if(program)gl.deleteProgram(program);
+        const fragSrc=buildFragSrc({method:qMethod,steps:qSteps,obsDist:qObsDist,starLayers:qStarLayers,stepSize:qStepSize,bgMode});
+        const vr=compile(vertSrc,gl.VERTEX_SHADER);
+        if(!vr.s)return{ok:false,error:'Vertex: '+vr.e};
+        const fr=compile(fragSrc,gl.FRAGMENT_SHADER);
+        if(!fr.s)return{ok:false,error:'Fragment: '+fr.e};
+        const p=gl.createProgram();
+        gl.attachShader(p,vr.s);gl.attachShader(p,fr.s);gl.linkProgram(p);
+        gl.deleteShader(vr.s);gl.deleteShader(fr.s);
+        if(!gl.getProgramParameter(p,gl.LINK_STATUS)){gl.deleteProgram(p);return{ok:false,error:'Link: '+gl.getProgramInfoLog(p)};}
+        program=p;gl.useProgram(program);
+        aPos=gl.getAttribLocation(program,'a_pos');
+        gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+        uniforms={};
+        ['u_res','u_a','u_incl','u_fov','u_disk','u_grid','u_temp','u_phi0'].forEach(n=>{uniforms[n]=gl.getUniformLocation(program,n);});
+        document.getElementById('integ-info').textContent=qMethod==='hamiltonian'?'hamiltonian RK4':'separated';
+        return{ok:true};
+    }
 
     function resize(){
-        const w=Math.floor(innerWidth*pr),h=Math.floor(innerHeight*pr);
+        const w=Math.floor(innerWidth*qResScale),h=Math.floor(innerHeight*qResScale);
         canvas.width=w;canvas.height=h;
         gl.viewport(0,0,w,h);
         document.getElementById('res').textContent=w+'×'+h;
     }
-    addEventListener('resize',resize);resize();
+    addEventListener('resize',resize);
 
     function rPlus(a){return 1+Math.sqrt(Math.max(1-a*a,0));}
     function iscoJS(a){
@@ -579,86 +794,138 @@ void main(){
         document.getElementById('risco').textContent=iscoJS(spin).toFixed(3);
     }
 
-    document.getElementById('spin').addEventListener('input',function(){
-        spin=+this.value;
-        document.getElementById('spin-val').textContent='a = '+spin.toFixed(3);
-        updInfo();
+    const presets={
+        low:{method:'separated',steps:80,resScale:.5,stepSize:.5,obsDist:30,starLayers:1},
+        medium:{method:'separated',steps:200,resScale:1,stepSize:.3,obsDist:40,starLayers:3},
+        high:{method:'separated',steps:350,resScale:1.25,stepSize:.22,obsDist:50,starLayers:4},
+        ultra:{method:'hamiltonian',steps:250,resScale:1.25,stepSize:.35,obsDist:60,starLayers:4},
+    };
+
+    function refreshLabels(){
+        document.getElementById('integ-label').textContent=qMethod==='hamiltonian'?'Hamiltonian (RK4)':'Separated (fast)';
+        document.getElementById('steps-val').textContent=qSteps;
+        document.getElementById('res-scale-val').textContent=qResScale.toFixed(2)+'×';
+        document.getElementById('stepsize-val').textContent=qStepSize.toFixed(2);
+        document.getElementById('obs-val').textContent=qObsDist+' M';
+        document.getElementById('starlayers-val').textContent=qStarLayers;
+        document.getElementById('hamiltonian-warn').style.display=qMethod==='hamiltonian'?'inline-block':'none';
+    }
+
+    let rTimer=null;
+    function recompile(){
+        clearTimeout(rTimer);
+        rTimer=setTimeout(()=>{
+            resize();
+            const r=buildProgram();
+            if(!r.ok){
+                console.error('Shader fail:',r.error);
+                if(qMethod==='hamiltonian'){
+                    qMethod='separated';document.getElementById('sel-integrator').value='separated';refreshLabels();
+                    if(buildProgram().ok)alert('Hamiltonian integrator failed on your GPU. Fell back to separated equations.');
+                }
+            }
+        },120);
+    }
+
+    function applyPreset(name){
+        const p=presets[name];if(!p)return;
+        qMethod=p.method;qSteps=p.steps;qResScale=p.resScale;qStepSize=p.stepSize;qObsDist=p.obsDist;qStarLayers=p.starLayers;
+        document.getElementById('sel-integrator').value=p.method;
+        document.getElementById('steps').value=p.steps;
+        document.getElementById('res-scale').value=p.resScale;
+        document.getElementById('stepsize').value=p.stepSize;
+        document.getElementById('obs-dist').value=p.obsDist;
+        document.getElementById('star-layers').value=p.starLayers;
+        refreshLabels();
+        document.querySelectorAll('.preset-btn').forEach(b=>b.classList.toggle('active',b.dataset.preset===name));
+        recompile();
+    }
+
+    function clearPresetHighlight(){document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));}
+
+    // ---- UI wiring ----
+    document.getElementById('spin').addEventListener('input',function(){spin=+this.value;document.getElementById('spin-val').textContent='a = '+spin.toFixed(3);updInfo();});
+    document.getElementById('incl').addEventListener('input',function(){incl=+this.value;document.getElementById('incl-val').innerHTML='&theta; = '+incl.toFixed(1)+'&deg;';});
+    document.getElementById('temp').addEventListener('input',function(){diskTemp=+this.value;document.getElementById('temp-val').textContent=diskTemp.toFixed(2);});
+
+    document.getElementById('btn-disk').addEventListener('click',function(){showDisk=showDisk>.5?0:1;this.classList.toggle('active',showDisk>.5);});
+    document.getElementById('btn-grid').addEventListener('click',function(){showGrid=showGrid>.5?0:1;this.classList.toggle('active',showGrid>.5);});
+    document.getElementById('btn-rotate').addEventListener('click',function(){autoRotate=!autoRotate;this.classList.toggle('active',autoRotate);});
+
+    document.getElementById('btn-settings').addEventListener('click',function(){
+        const p=document.getElementById('settings-panel');
+        p.classList.toggle('hidden');this.classList.toggle('active',!p.classList.contains('hidden'));
     });
-    document.getElementById('incl').addEventListener('input',function(){
-        incl=+this.value;
-        document.getElementById('incl-val').innerHTML='&theta; = '+incl.toFixed(1)+'&deg;';
+    document.getElementById('btn-legend').addEventListener('click',function(){
+        const p=document.getElementById('legend-panel');
+        p.classList.toggle('hidden');this.classList.toggle('active',!p.classList.contains('hidden'));
     });
-    document.getElementById('temp').addEventListener('input',function(){
-        diskTemp=+this.value;
-        document.getElementById('temp-val').textContent=diskTemp.toFixed(2);
+    document.getElementById('btn-legend-close').addEventListener('click',function(){
+        document.getElementById('legend-panel').classList.add('hidden');
+        document.getElementById('btn-legend').classList.remove('active');
+    });
+    document.getElementById('btn-ann-toggle').addEventListener('click',function(){
+        showAnnotations=!showAnnotations;
+        this.classList.toggle('active',showAnnotations);
+        document.getElementById('ann-container').classList.toggle('annotations-hidden',!showAnnotations);
     });
 
-    document.getElementById('btn-disk').addEventListener('click',function(){
-        showDisk=showDisk>.5?0:1;this.classList.toggle('active',showDisk>.5);
-    });
-    document.getElementById('btn-grid').addEventListener('click',function(){
-        showGrid=showGrid>.5?0:1;this.classList.toggle('active',showGrid>.5);
-    });
-    document.getElementById('btn-rotate').addEventListener('click',function(){
-        autoRotate=!autoRotate;this.classList.toggle('active',autoRotate);
+    // Background mode buttons
+    document.querySelectorAll('[data-bg]').forEach(btn=>{
+        btn.addEventListener('click',function(){
+            bgMode=parseInt(this.dataset.bg);
+            document.querySelectorAll('[data-bg]').forEach(b=>b.classList.toggle('active',parseInt(b.dataset.bg)===bgMode));
+            recompile();
+        });
     });
 
-    canvas.addEventListener('wheel',function(e){
-        e.preventDefault();
-        fov*=(1+e.deltaY*.001);
-        fov=Math.max(2,Math.min(25,fov));
-    },{passive:false});
+    // Quality controls
+    document.querySelectorAll('.preset-btn').forEach(btn=>btn.addEventListener('click',()=>applyPreset(btn.dataset.preset)));
+    document.getElementById('sel-integrator').addEventListener('change',function(){qMethod=this.value;refreshLabels();clearPresetHighlight();recompile();});
+    document.getElementById('steps').addEventListener('input',function(){qSteps=+this.value;document.getElementById('steps-val').textContent=qSteps;clearPresetHighlight();recompile();});
+    document.getElementById('res-scale').addEventListener('input',function(){qResScale=+this.value;document.getElementById('res-scale-val').textContent=qResScale.toFixed(2)+'×';clearPresetHighlight();resize();});
+    document.getElementById('stepsize').addEventListener('input',function(){qStepSize=+this.value;document.getElementById('stepsize-val').textContent=qStepSize.toFixed(2);clearPresetHighlight();recompile();});
+    document.getElementById('obs-dist').addEventListener('input',function(){qObsDist=+this.value;document.getElementById('obs-val').textContent=qObsDist+' M';clearPresetHighlight();recompile();});
+    document.getElementById('star-layers').addEventListener('input',function(){qStarLayers=+this.value;document.getElementById('starlayers-val').textContent=qStarLayers;clearPresetHighlight();recompile();});
 
+    // Zoom
+    canvas.addEventListener('wheel',function(e){e.preventDefault();fov*=(1+e.deltaY*.001);fov=Math.max(2,Math.min(25,fov));},{passive:false});
     let ltd=0;
-    canvas.addEventListener('touchstart',function(e){
-        if(e.touches.length===2){
-            const dx=e.touches[0].clientX-e.touches[1].clientX;
-            const dy=e.touches[0].clientY-e.touches[1].clientY;
-            ltd=Math.sqrt(dx*dx+dy*dy);
-        }
-    });
-    canvas.addEventListener('touchmove',function(e){
-        if(e.touches.length===2){
-            e.preventDefault();
-            const dx=e.touches[0].clientX-e.touches[1].clientX;
-            const dy=e.touches[0].clientY-e.touches[1].clientY;
-            const d=Math.sqrt(dx*dx+dy*dy);
-            if(ltd>0){fov*=ltd/d;fov=Math.max(2,Math.min(25,fov));}
-            ltd=d;
-        }
-    },{passive:false});
+    canvas.addEventListener('touchstart',function(e){if(e.touches.length===2){const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;ltd=Math.sqrt(dx*dx+dy*dy);}});
+    canvas.addEventListener('touchmove',function(e){if(e.touches.length===2){e.preventDefault();const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY,d=Math.sqrt(dx*dx+dy*dy);if(ltd>0){fov*=ltd/d;fov=Math.max(2,Math.min(25,fov));}ltd=d;}},{passive:false});
 
-    updInfo();
-    loadMsg.textContent='Tracing first frame…';
-
+    // Render
     function render(){
-        if(autoRotate) rotAngle+=.008;
-
-        gl.uniform2f(u.u_res,canvas.width,canvas.height);
-        gl.uniform1f(u.u_a,spin);
-        gl.uniform1f(u.u_incl,incl*Math.PI/180);
-        gl.uniform1f(u.u_fov,fov);
-        gl.uniform1f(u.u_disk,showDisk);
-        gl.uniform1f(u.u_grid,showGrid);
-        gl.uniform1f(u.u_temp,diskTemp);
-        gl.uniform1f(u.u_phi0,rotAngle);
-
+        if(autoRotate)rotAngle+=.008;
+        gl.uniform2f(uniforms.u_res,canvas.width,canvas.height);
+        gl.uniform1f(uniforms.u_a,spin);
+        gl.uniform1f(uniforms.u_incl,incl*Math.PI/180);
+        gl.uniform1f(uniforms.u_fov,fov);
+        gl.uniform1f(uniforms.u_disk,showDisk);
+        gl.uniform1f(uniforms.u_grid,showGrid);
+        gl.uniform1f(uniforms.u_temp,diskTemp);
+        gl.uniform1f(uniforms.u_phi0,rotAngle);
         gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-
         fc++;
         const now=performance.now();
         if(now-lastFT>800){
-            curFPS=Math.round(fc/((now-lastFT)*.001));
-            document.getElementById('fps').textContent=curFPS;
+            document.getElementById('fps').textContent=Math.round(fc/((now-lastFT)*.001));
             fc=0;lastFT=now;
         }
         requestAnimationFrame(render);
     }
 
-    requestAnimationFrame(()=>{
-        render();
-        setTimeout(()=>loadEl.classList.add('hidden'),500);
-    });
+    // Init
+    updInfo();refreshLabels();
+    loadMsg.textContent='Compiling shaders…';
+    resize();
+    const initResult=buildProgram();
+    if(!initResult.ok){
+        loadMsg.textContent='Shader compile failed';
+        errMsg.style.display='block';errMsg.textContent=initResult.error;return;
+    }
+    loadMsg.textContent='Tracing first frame…';
+    requestAnimationFrame(()=>{render();setTimeout(()=>loadEl.classList.add('hidden'),500);});
 })();
 </script>
 </body>
