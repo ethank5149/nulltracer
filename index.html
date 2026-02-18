@@ -48,9 +48,8 @@
   }
   .settings-panel.hidden{opacity:0;pointer-events:none;transform:translateY(8px);}
 
-  /* Legend panel */
   .legend-panel{
-    top:24px;right:24px;min-width:200px;
+    top:24px;right:24px;min-width:200px;max-width:260px;
     transition:opacity .3s,transform .3s;
   }
   .legend-panel.hidden{opacity:0;pointer-events:none;transform:translateY(-8px);}
@@ -124,17 +123,12 @@
     padding:2px 6px;display:inline-block;margin-top:3px;
   }
 
-  /* Annotation overlay */
   .annotation{
     position:fixed;z-index:15;pointer-events:none;
     font-size:9px;font-weight:400;letter-spacing:.12em;
     text-transform:uppercase;color:rgba(255,220,160,.5);
     text-shadow:0 0 8px rgba(0,0,0,.9),0 0 20px rgba(0,0,0,.7);
     transition:opacity .4s;white-space:nowrap;
-  }
-  .annotation .ann-line{
-    display:block;width:1px;background:rgba(255,220,160,.15);
-    position:absolute;
   }
   .annotations-hidden .annotation{opacity:0;}
 
@@ -161,7 +155,6 @@
     .title-block{top:12px;left:12px;}
     .title-block h1{font-size:18px;}
     .readout{display:none;}
-    .annotation{font-size:8px;}
   }
 </style>
 </head>
@@ -179,46 +172,32 @@
   <div class="sub">Null geodesic ray tracer — GPU accelerated</div>
 </div>
 
-<!-- Annotations (positioned dynamically by JS) -->
 <div id="ann-container">
-  <div class="annotation" id="ann-shadow" style="top:46%;left:53%">← Black hole shadow</div>
-  <div class="annotation" id="ann-ring" style="top:34%;left:44%">Photon ring ↓</div>
-  <div class="annotation" id="ann-disk-upper" style="top:26%;left:56%">↙ Lensed upper disk</div>
-  <div class="annotation" id="ann-disk-lower" style="top:60%;left:40%">Direct disk image ↗</div>
-  <div class="annotation" id="ann-einstein" style="top:42%;left:22%">Einstein ring →</div>
-  <div class="annotation" id="ann-drag" style="top:72%;left:55%">↑ Frame-dragged stars</div>
+  <div class="annotation" style="top:46%;left:53%">← Black hole shadow</div>
+  <div class="annotation" style="top:34%;left:44%">Photon ring ↓</div>
+  <div class="annotation" style="top:26%;left:56%">↙ Lensed upper disk</div>
+  <div class="annotation" style="top:60%;left:40%">Direct disk image ↗</div>
+  <div class="annotation" style="top:42%;left:22%">Einstein ring →</div>
+  <div class="annotation" style="top:72%;left:55%">↑ Frame-dragged stars</div>
 </div>
 
-<!-- Legend panel -->
 <div class="panel legend-panel" id="legend-panel">
   <div class="panel-title">What you're seeing</div>
   <div class="legend-item">
     <div class="legend-swatch" style="background:#000;box-shadow:0 0 4px rgba(255,180,100,.3)"></div>
-    <div>
-      <div>Black hole shadow</div>
-      <div class="legend-desc">Photons captured by the horizon</div>
-    </div>
+    <div><div>Black hole shadow</div><div class="legend-desc">Photons captured by the horizon</div></div>
   </div>
   <div class="legend-item">
     <div class="legend-swatch" style="background:linear-gradient(135deg,#f80,#ff4)"></div>
-    <div>
-      <div>Accretion disk</div>
-      <div class="legend-desc">Bright side = Doppler-boosted (approaching)</div>
-    </div>
+    <div><div>Accretion disk</div><div class="legend-desc">Bright side = Doppler-boosted (approaching)</div></div>
   </div>
   <div class="legend-item">
     <div class="legend-swatch" style="background:linear-gradient(135deg,#543,#ba8)"></div>
-    <div>
-      <div>Photon ring</div>
-      <div class="legend-desc">Light that orbited the BH before escaping</div>
-    </div>
+    <div><div>Photon ring</div><div class="legend-desc">Light that orbited the BH before escaping</div></div>
   </div>
   <div class="legend-item">
     <div class="legend-swatch" style="background:conic-gradient(#e45,#58e,#5c5,#e45)"></div>
-    <div>
-      <div>Lensed background</div>
-      <div class="legend-desc">Celestial sphere warped by curved spacetime</div>
-    </div>
+    <div><div>Lensed background</div><div class="legend-desc">Celestial sphere warped by curved spacetime</div></div>
   </div>
   <div style="font-size:9px;color:#605648;line-height:1.5;margin-top:2px;">
     The spinning BH drags spacetime (frame dragging), making the shadow asymmetric and one side of the disk brighter.
@@ -229,27 +208,17 @@
   </div>
 </div>
 
-<!-- Physics controls -->
 <div class="panel controls">
   <div class="control-row">
-    <div class="control-label">
-      <span>Black Hole Spin</span>
-      <span class="control-value" id="spin-val">a = 0.600</span>
-    </div>
+    <div class="control-label"><span>Black Hole Spin</span><span class="control-value" id="spin-val">a = 0.600</span></div>
     <input type="range" id="spin" min="0" max="0.998" step="0.002" value="0.6">
   </div>
   <div class="control-row">
-    <div class="control-label">
-      <span>Inclination</span>
-      <span class="control-value" id="incl-val">&theta; = 80.0&deg;</span>
-    </div>
+    <div class="control-label"><span>Inclination</span><span class="control-value" id="incl-val">&theta; = 80.0&deg;</span></div>
     <input type="range" id="incl" min="5" max="89" step="0.5" value="80">
   </div>
   <div class="control-row">
-    <div class="control-label">
-      <span>Disk Temperature</span>
-      <span class="control-value" id="temp-val">1.00</span>
-    </div>
+    <div class="control-label"><span>Disk Temperature</span><span class="control-value" id="temp-val">1.00</span></div>
     <input type="range" id="temp" min="0.2" max="2.5" step="0.05" value="1.0">
   </div>
   <div class="control-row">
@@ -272,7 +241,6 @@
   </div>
 </div>
 
-<!-- Performance settings -->
 <div class="panel settings-panel hidden" id="settings-panel">
   <div class="panel-title">Performance &amp; Quality</div>
   <div class="control-row">
@@ -285,17 +253,12 @@
     </div>
   </div>
   <div class="control-row">
-    <div class="control-label">
-      <span>Integrator</span>
-      <span class="control-value" id="integ-label">Separated</span>
-    </div>
+    <div class="control-label"><span>Integrator</span><span class="control-value" id="integ-label">Separated</span></div>
     <select class="ctrl-select" id="sel-integrator">
       <option value="separated" selected>Separated eqs — fast</option>
       <option value="hamiltonian">Full Hamiltonian RK4</option>
     </select>
-    <div id="hamiltonian-warn" class="warn-badge" style="display:none">
-      Heavy — may fail on mobile / integrated GPU
-    </div>
+    <div id="hamiltonian-warn" class="warn-badge" style="display:none">Heavy — may fail on mobile / integrated GPU</div>
   </div>
   <div class="control-row">
     <div class="control-label"><span>Steps</span><span class="control-value" id="steps-val">200</span></div>
@@ -335,7 +298,7 @@ void main(){ v_uv=a_pos; gl_Position=vec4(a_pos,0,1); }
 
 <script>
 // ============================================================
-//  SHADER GENERATOR — builds GLSL from options
+//  SHADER GENERATOR
 // ============================================================
 function buildFragSrc(opts) {
     const STEPS = opts.steps || 200;
@@ -344,7 +307,7 @@ function buildFragSrc(opts) {
     const RESC = R0 + 12;
     const STAR_LAYERS = opts.starLayers || 3;
     const H_BASE = opts.stepSize || 0.30;
-    const BG_MODE = opts.bgMode || 1; // 0=stars, 1=checker, 2=colormap
+    const BG_MODE = opts.bgMode || 1;
 
     let src = `precision highp float;
 varying vec2 v_uv;
@@ -361,6 +324,10 @@ uniform float u_a,u_incl,u_fov,u_disk,u_grid,u_temp,u_phi0;
 #define STAR_LAYERS ${STAR_LAYERS}
 #define BG_MODE ${BG_MODE}
 
+// Larger floor for sin^2(theta) — prevents numerical blowup near poles
+// 0.005 ≈ sin^2(4°), so we lose accuracy only within ~4° of the pole
+#define S2_FLOOR 0.005
+
 float hash(vec2 p){
     p=fract(p*vec2(443.8,441.4));
     p+=dot(p,p+19.19);
@@ -373,7 +340,49 @@ float isco(float a){
     return 3.+z2-sqrt((3.-z1)*(3.+z1+2.*z2));
 }
 
-// ============ BACKGROUND RENDERING ============
+// ===========================================================
+//  EQUAL-AREA TILING HELPERS
+//  Scale phi subdivisions by sin(theta) so tiles stay roughly
+//  square on the sphere. Eliminates the polar pinch artifact.
+// ===========================================================
+
+// Returns an equal-area cell ID (lat_band, lon_cell) and
+// fractional position within the cell for grid-line rendering.
+// nLat = number of latitude bands, nLonEq = longitude divisions at equator.
+
+vec4 eqAreaCell(float th, float ph, float nLat, float nLonEq) {
+    float nth = th / PI;                       // 0..1 (N pole to S pole)
+    float latBand = floor(nth * nLat);
+    float latFrac = fract(nth * nLat);
+
+    // Theta at center of this band
+    float thMid = (latBand + 0.5) / nLat * PI;
+    float sthMid = sin(thMid);
+
+    // Number of longitude cells in this band, proportional to sin(theta)
+    // Minimum 4 cells even near poles to avoid single-colour caps
+    float nLon = max(floor(nLonEq * sthMid + 0.5), 4.0);
+
+    float nph = ph / TAU;                      // 0..1
+    if(nph < 0.0) nph += 1.0;
+    nph = fract(nph);
+    float lonCell = floor(nph * nLon);
+    float lonFrac = fract(nph * nLon);
+
+    return vec4(latBand, lonCell, latFrac, lonFrac);
+}
+
+// Grid lines using equal-area cells
+float eqAreaGrid(float th, float ph, float nLat, float nLonEq) {
+    vec4 c = eqAreaCell(th, ph, nLat, nLonEq);
+    float latEdge = abs(c.z - 0.5) * 2.0;      // 0 at center, 1 at edge
+    float lonEdge = abs(c.w - 0.5) * 2.0;
+    return smoothstep(0.88, 0.97, max(latEdge, lonEdge));
+}
+
+// ===========================================================
+//  BACKGROUND FUNCTIONS
+// ===========================================================
 
 vec3 bgStars(float th, float ph){
     vec3 c=vec3(.007,.008,.018);
@@ -397,137 +406,125 @@ vec3 bgStars(float th, float ph){
     return c;
 }
 
-// Checkerboard on celestial sphere — makes lensing very obvious
 vec3 bgChecker(float th, float ph){
-    float nth=th/PI;         // 0..1
-    float nph=ph/TAU;        // 0..1
+    // Equal-area cells: 12 lat bands, 24 lon divisions at equator
+    vec4 c = eqAreaCell(th, ph, 12.0, 24.0);
+    float latBand = c.x;
+    float lonCell = c.y;
+    float check = mod(latBand + lonCell, 2.0);
 
-    // Checkerboard
-    float cTh=floor(nth*12.);
-    float cPh=floor(nph*24.);
-    float check=mod(cTh+cPh,2.);
+    // Base tile colors
+    vec3 colA = vec3(.06, .055, .08);
+    vec3 colB = vec3(.10, .08, .05);
+    vec3 base = mix(colA, colB, check);
 
-    // Base color: warm vs cool alternating
-    vec3 colA=vec3(.06,.055,.08);  // dark cool
-    vec3 colB=vec3(.10,.08,.05);   // dark warm
-    vec3 base=mix(colA,colB,check);
-
-    // Latitude bands with distinct hues
-    float band=floor(nth*6.);
+    // Latitude band hues (6 distinct colours across 12 bands)
+    float hueIdx = floor(latBand / 2.0);
     vec3 tint;
-    if(band<1.) tint=vec3(.15,.08,.03);       // warm brown (N pole)
-    else if(band<2.) tint=vec3(.04,.08,.15);   // steel blue
-    else if(band<3.) tint=vec3(.03,.12,.06);   // forest green
-    else if(band<4.) tint=vec3(.12,.04,.10);   // plum
-    else if(band<5.) tint=vec3(.12,.10,.03);   // olive gold
-    else tint=vec3(.08,.04,.14);               // deep violet (S pole)
+    if(hueIdx < 1.0)      tint = vec3(.15, .08, .03);   // warm brown
+    else if(hueIdx < 2.0) tint = vec3(.04, .08, .15);   // steel blue
+    else if(hueIdx < 3.0) tint = vec3(.03, .12, .06);   // forest green
+    else if(hueIdx < 4.0) tint = vec3(.12, .04, .10);   // plum
+    else if(hueIdx < 5.0) tint = vec3(.12, .10, .03);   // olive gold
+    else                   tint = vec3(.08, .04, .14);   // deep violet
 
-    base+=tint*(0.35+0.15*check);
+    base += tint * (0.35 + 0.15 * check);
 
-    // Grid lines (bright)
-    float gridTh=abs(fract(nth*12.)-.5)*2.;
-    float gridPh=abs(fract(nph*24.)-.5)*2.;
-    float grid=smoothstep(.92,.98,max(gridTh,gridPh));
-    base+=vec3(.18,.15,.10)*grid;
+    // Equal-area grid lines
+    float grid = eqAreaGrid(th, ph, 12.0, 24.0);
+    base += vec3(.18, .15, .10) * grid;
 
-    // Equator
-    float eq=1.-smoothstep(0.,.008,abs(nth-.5));
-    base+=vec3(.25,.15,.05)*eq;
+    // Equator highlight
+    float eq = 1.0 - smoothstep(0.0, 0.012, abs(th / PI - 0.5));
+    base += vec3(.22, .14, .05) * eq;
 
-    // Prime meridian
-    float pm=1.-smoothstep(0.,.004,abs(nph));
-    base+=vec3(.15,.10,.20)*pm;
+    // Prime meridian highlight
+    float pm = 1.0 - smoothstep(0.0, 0.008, abs(fract(ph / TAU)));
+    base += vec3(.12, .08, .18) * pm;
 
     return base;
 }
 
-// Color-mapped celestial sphere — hemisphere coloring shows distortion clearly
 vec3 bgColorMap(float th, float ph){
-    float nth=th/PI;
-    float nph=ph/TAU;
-
-    // Convert to Cartesian on unit sphere for coloring
+    // Sphere -> RGB: each axis is a unique colour channel
     float sth=sin(th), cth=cos(th);
     float sph=sin(ph), cph=cos(ph);
     float x=sth*cph, y=sth*sph, z=cth;
 
-    // Map xyz to RGB — each axis gets a color channel
-    // This makes EVERY direction a unique color
     vec3 col=vec3(0);
-    col.r=.08+.35*(x*.5+.5);        // red = +x direction
-    col.g=.08+.35*(y*.5+.5);        // green = +y direction
-    col.b=.08+.35*max(-z,0.);       // blue = south pole
-    col+=vec3(.08,.04,.02)*max(z,0.); // warm = north pole
+    col.r = .08 + .35 * (x * .5 + .5);
+    col.g = .08 + .35 * (y * .5 + .5);
+    col.b = .08 + .35 * max(-z, 0.0);
+    col += vec3(.08, .04, .02) * max(z, 0.0);
+    col = pow(col, vec3(.8));
 
-    // Boost saturation
-    col=pow(col,vec3(.8));
+    // Equal-area grid overlay
+    float grid = eqAreaGrid(th, ph, 12.0, 24.0);
+    col += vec3(.12, .10, .08) * grid;
 
-    // Grid overlay
-    float gridTh=abs(fract(nth*12.)-.5)*2.;
-    float gridPh=abs(fract(nph*24.)-.5)*2.;
-    float grid=smoothstep(.93,.99,max(gridTh,gridPh));
-    col+=vec3(.12,.10,.08)*grid;
-
-    float eq=1.-smoothstep(0.,.01,abs(nth-.5));
-    col+=vec3(.15,.12,.05)*eq;
+    // Equator
+    float eq = 1.0 - smoothstep(0.0, 0.012, abs(th / PI - 0.5));
+    col += vec3(.15, .12, .05) * eq;
 
     return col;
 }
 
 vec3 background(float th, float ph){
-    // Always add coordinate grid if enabled
     vec3 c;
 #if BG_MODE == 0
-    c=bgStars(th,ph);
+    c = bgStars(th, ph);
 #elif BG_MODE == 1
-    c=bgChecker(th,ph);
+    c = bgChecker(th, ph);
 #else
-    c=bgColorMap(th,ph);
+    c = bgColorMap(th, ph);
 #endif
 
-    // Optional celestial coordinate grid overlay (on top of any background)
-    if(u_grid>.5 && BG_MODE==0){
-        float nth=th/PI, nph=ph/TAU;
-        float gt=abs(fract(nth*12.)-.5)*2.;
-        float gp=abs(fract(nph*24.)-.5)*2.;
-        c+=vec3(.055,.04,.028)*smoothstep(.97,.995,max(gt,gp));
-        c+=vec3(.07,.035,.02)*(1.-smoothstep(0.,.012,abs(th-PI*.5)));
+    // Extra coordinate grid for star mode
+    if(u_grid > 0.5 && BG_MODE == 0){
+        float g = eqAreaGrid(th, ph, 12.0, 24.0);
+        c += vec3(.055, .04, .028) * g;
+        float eq = 1.0 - smoothstep(0.0, 0.012, abs(th - PI * 0.5));
+        c += vec3(.07, .035, .02) * eq;
     }
     return c;
 }
 
-// ============ ACCRETION DISK ============
+// ===========================================================
+//  ACCRETION DISK
+// ===========================================================
 
 vec3 disk(float r, float ph, float a){
-    float ri=isco(a);
-    if(r<ri*.85||r>RDISK) return vec3(0);
-    float x=r/ri;
-    float tp=pow(x,-.75)*u_temp;
-    float I=pow(tp,4.)/(r*.3);
-    I*=smoothstep(ri*.85,ri*1.3,r);
-    I*=smoothstep(RDISK,RDISK*.55,r);
-    float vo=1./sqrt(r);
-    float dop=1.+.65*vo*sin(ph);
-    float boost=pow(max(dop,.1),3.);
-    I*=boost;
-    // Blackbody color ramp
-    float t=clamp(tp*boost*.45,0.,3.5);
+    float ri = isco(a);
+    if(r < ri * .85 || r > RDISK) return vec3(0);
+    float x = r / ri;
+    float tp = pow(x, -.75) * u_temp;
+    float I = pow(tp, 4.0) / (r * .3);
+    I *= smoothstep(ri * .85, ri * 1.3, r);
+    I *= smoothstep(RDISK, RDISK * .55, r);
+    float vo = 1.0 / sqrt(r);
+    float dop = 1.0 + .65 * vo * sin(ph);
+    float boost = pow(max(dop, .1), 3.0);
+    I *= boost;
+    float t = clamp(tp * boost * .45, 0.0, 3.5);
     vec3 col;
-    if(t<.4) col=mix(vec3(.25,.03,0),vec3(.85,.15,.01),t*2.5);
-    else if(t<.9) col=mix(vec3(.85,.15,.01),vec3(1,.55,.08),(t-.4)*2.);
-    else if(t<1.7) col=mix(vec3(1,.55,.08),vec3(1,.92,.6),(t-.9)/0.8);
-    else if(t<2.5) col=mix(vec3(1,.92,.6),vec3(1,1,.95),(t-1.7)/.8);
-    else col=vec3(1,1,1);
-    // Turbulence
-    float tu=.65+.35*hash(vec2(r*5.,ph*3.));
-    float tu2=.8+.2*hash(vec2(r*18.,ph*9.));
-    return col*I*tu*tu2*3.2;
+    if(t < .4)       col = mix(vec3(.25,.03,0), vec3(.85,.15,.01), t * 2.5);
+    else if(t < .9)  col = mix(vec3(.85,.15,.01), vec3(1,.55,.08), (t-.4)*2.);
+    else if(t < 1.7) col = mix(vec3(1,.55,.08), vec3(1,.92,.6), (t-.9)/.8);
+    else if(t < 2.5) col = mix(vec3(1,.92,.6), vec3(1,1,.95), (t-1.7)/.8);
+    else              col = vec3(1);
+    float tu = .65 + .35 * hash(vec2(r*5., ph*3.));
+    float tu2 = .8 + .2 * hash(vec2(r*18., ph*9.));
+    return col * I * tu * tu2 * 3.2;
 }
 `;
 
     // ---- INTEGRATOR ----
     if (METHOD === 'hamiltonian') {
         src += `
+// ===========================================================
+//  FULL HAMILTONIAN INTEGRATOR (RK4)
+// ===========================================================
+
 void geoRHS(
     float r, float th, float pr, float pth,
     float a, float b,
@@ -535,42 +532,46 @@ void geoRHS(
     out float dpr, out float dpth
 ){
     float sth=sin(th),cth=cos(th);
-    float s2=sth*sth,c2=cth*cth;
+    float s2=max(sth*sth, S2_FLOOR), c2=cth*cth;
     float a2=a*a,r2=r*r;
     float sig=r2+a2*c2;
     float del=r2-2.*r+a2;
     float rpa2=r2+a2;
     float A_=rpa2*rpa2-del*a2*s2;
     float isig=1./sig;
-    float idel=1./del;
-    float is2=1./max(s2,1e-10);
-    float SD=sig*del;
-    float iSD=isig*idel;
+    float idel=1./max(del,1e-6);
+    float is2=1./s2;
+    float SD=sig*max(del,1e-6);
+    float iSD=1./SD;
+
     float gtt=-A_*iSD;
     float gtf=-2.*a*r*iSD;
-    float grr=del*isig;
+    float grr=max(del,1e-6)*isig;
     float gthth=isig;
     float gff=(sig-2.*r)*iSD*is2;
+
     dr=grr*pr; dth=gthth*pth; dphi=gff*b-gtf;
+
     float dsig_r=2.*r;float ddel_r=2.*r-2.;
     float dA_r=4.*r*rpa2-ddel_r*a2*s2;
-    float dSD_r=dsig_r*del+sig*ddel_r;
+    float dSD_r=dsig_r*max(del,1e-6)+sig*ddel_r;
     float dgtt_r=-(dA_r*SD-A_*dSD_r)/(SD*SD);
     float dgtf_r=-(2.*a*SD-2.*a*r*dSD_r)/(SD*SD);
-    float dgrr_r=(ddel_r*sig-del*dsig_r)/(sig*sig);
+    float dgrr_r=(ddel_r*sig-max(del,1e-6)*dsig_r)/(sig*sig);
     float dgthth_r=-dsig_r*isig*isig;
     float num_ff=sig-2.*r;float den_ff=SD*s2;
     float dgff_r=((dsig_r-2.)*den_ff-num_ff*dSD_r*s2)/(den_ff*den_ff);
     dpr=-0.5*(dgtt_r-2.*b*dgtf_r+dgrr_r*pr*pr+dgthth_r*pth*pth+dgff_r*b*b);
+
     float dsig_th=-2.*a2*sth*cth;
-    float dA_th=-del*a2*2.*sth*cth;
+    float dA_th=-max(del,1e-6)*a2*2.*sth*cth;
     float ds2_th=2.*sth*cth;
-    float dSD_th=dsig_th*del;
+    float dSD_th=dsig_th*max(del,1e-6);
     float dgtt_th=-(dA_th*SD-A_*dSD_th)/(SD*SD);
     float dgtf_th=2.*a*r*dSD_th/(SD*SD);
-    float dgrr_th=-del*dsig_th/(sig*sig);
+    float dgrr_th=-max(del,1e-6)*dsig_th/(sig*sig);
     float dgthth_th=-dsig_th*isig*isig;
-    float dgff_th=(dsig_th*den_ff-num_ff*(dsig_th*del*s2+SD*ds2_th))/(den_ff*den_ff);
+    float dgff_th=(dsig_th*den_ff-num_ff*(dsig_th*max(del,1e-6)*s2+SD*ds2_th))/(den_ff*den_ff);
     dpth=-0.5*(dgtt_th-2.*b*dgtf_th+dgrr_th*pr*pr+dgthth_th*pth*pth+dgff_th*b*b);
 }
 
@@ -582,22 +583,28 @@ void main(){
     float thObs=u_incl,sO=sin(thObs),cO=cos(thObs);
     float b=-alpha*sO;
     float q2=beta*beta+cO*cO*(alpha*alpha-a2);
+
     float r=R0,th=thObs,phi=u_phi0;
-    float sth=sin(th),cth=cos(th),s2=sth*sth,c2=cth*cth;
+    float sth=sin(th),cth=cos(th);
+    float s2=max(sth*sth, S2_FLOOR),c2=cth*cth;
     float sig=r*r+a2*c2,del=r*r-2.*r+a2;
     float rpa2=r*r+a2,A_=rpa2*rpa2-del*a2*s2;
-    float iSD=1./(sig*del),is2=1./max(s2,1e-10);
-    float grr=del/sig,gthth_i=1./sig;
+    float iSD=1./(sig*max(del,1e-6)),is2=1./s2;
+    float grr=max(del,1e-6)/sig,gthth_i=1./sig;
     float pth=beta;
     float rest=-A_*iSD-2.*b*(-2.*a*r*iSD)+gthth_i*pth*pth+(sig-2.*r)*iSD*is2*b*b;
     float pr2=-rest/grr;
     float pr=pr2>0.?-sqrt(pr2):0.;
     float rp=1.+sqrt(max(1.-a2,0.));
     vec3 color=vec3(0);bool done=false;
+
     for(int i=0;i<STEPS;i++){
         if(done)break;
         float he=H_BASE*clamp((r-rp)*.4,.04,1.);
-        he=clamp(he,.015,.6);
+        // Smaller steps near poles to handle coordinate stiffness
+        float poleDist = min(th, PI-th);
+        he *= clamp(poleDist * 3.0, 0.15, 1.0);
+        he=clamp(he,.012,.6);
         float oldTh=th,oldR=r,oldPhi=phi;
         float dr1,dth1,dphi1,dpr1,dpth1;
         float dr2,dth2,dphi2,dpr2,dpth2;
@@ -612,8 +619,8 @@ void main(){
         phi+=he*(dphi1+2.*dphi2+2.*dphi3+dphi4)/6.;
         pr+=he*(dpr1+2.*dpr2+2.*dpr3+dpr4)/6.;
         pth+=he*(dpth1+2.*dpth2+2.*dpth3+dpth4)/6.;
-        if(th<1e-3){th=1e-3;pth=abs(pth);}
-        if(th>PI-1e-3){th=PI-1e-3;pth=-abs(pth);}
+        if(th<.07){th=.07;pth=abs(pth);}
+        if(th>PI-.07){th=PI-.07;pth=-abs(pth);}
         if(r<=rp*1.01){done=true;break;}
         if(u_disk>.5){
             float cross=(oldTh-PI*.5)*(th-PI*.5);
@@ -639,8 +646,11 @@ void main(){
 }
 `;
     } else {
-        // SEPARATED (default)
         src += `
+// ===========================================================
+//  SEPARATED GEODESIC EQUATIONS (Verlet midpoint)
+// ===========================================================
+
 void main(){
     vec2 uv=v_uv;
     float asp=u_res.x/u_res.y;
@@ -654,39 +664,59 @@ void main(){
     float rp=1.+sqrt(max(1.-a2,0.));
     float bma=b-a,bma2=bma*bma;
     vec3 color=vec3(0);bool done=false;
+
     for(int i=0;i<STEPS;i++){
         if(done)break;
         float sth=sin(th),cth=cos(th);
-        float s2=sth*sth,c2=cth*cth;
+        float s2=max(sth*sth, S2_FLOOR), c2=cth*cth;
         float sig=r*r+a2*c2,isig=1./sig;
         float del=r*r-2.*r+a2;
         float T=r*r+a2-a*b;
         float Rp=T*T-del*(q2+bma2);
-        float Tp=q2+a2*c2-c2*b*b/max(s2,1e-8);
+        float Tp=q2+a2*c2-c2*b*b/s2;
         if(Rp<0.){Rp=0.;sr=-sr;}
         if(Tp<0.){Tp=0.;st=-st;}
+
         float dr=sr*sqrt(Rp)*isig;
         float dth=st*sqrt(Tp)*isig;
-        float dphi=(b/max(s2,1e-8)-a+a*T/del)*isig;
+        float dphi=(b/s2-a+a*T/max(del,1e-6))*isig;
+        // Clamp dphi to prevent wild azimuthal jumps near poles
+        dphi=clamp(dphi, -50.0, 50.0);
+
         float he=H_BASE*clamp((r-rp)*.35,.04,1.);
-        he=clamp(he,.015,.7);
+        // Reduce step near poles
+        float poleDist = min(th, PI-th);
+        he *= clamp(poleDist * 3.0, 0.15, 1.0);
+        he=clamp(he,.012,.7);
+
         float oldTh=th,oldR=r,oldPhi=phi;
+
         // Verlet midpoint
         float rH=r+.5*he*dr,thH=th+.5*he*dth;
+        // Clamp midpoint theta away from poles
+        thH=clamp(thH, 0.06, PI-0.06);
         float sthH=sin(thH),cthH=cos(thH);
-        float s2H=sthH*sthH,c2H=cthH*cthH;
+        float s2H=max(sthH*sthH, S2_FLOOR),c2H=cthH*cthH;
         float sigH=rH*rH+a2*c2H,isigH=1./sigH;
         float delH=rH*rH-2.*rH+a2;
         float TH=rH*rH+a2-a*b;
         float RpH=TH*TH-delH*(q2+bma2);
-        float TpH=q2+a2*c2H-c2H*b*b/max(s2H,1e-8);
+        float TpH=q2+a2*c2H-c2H*b*b/s2H;
         if(RpH<0.){RpH=0.;sr=-sr;}
         if(TpH<0.){TpH=0.;st=-st;}
-        r+=he*sr*sqrt(RpH)*isigH;
-        th+=he*st*sqrt(TpH)*isigH;
-        phi+=he*(b/max(s2H,1e-8)-a+a*TH/delH)*isigH;
-        if(th<1e-4){th=1e-4;st=1.;}
-        if(th>PI-1e-4){th=PI-1e-4;st=-1.;}
+        float drH=sr*sqrt(RpH)*isigH;
+        float dthH=st*sqrt(TpH)*isigH;
+        float dphiH=(b/s2H-a+a*TH/max(delH,1e-6))*isigH;
+        dphiH=clamp(dphiH, -50.0, 50.0);
+
+        r+=he*drH;
+        th+=he*dthH;
+        phi+=he*dphiH;
+
+        // Reflect at pole boundaries (wider margin)
+        if(th<0.06){th=0.06;st=1.;}
+        if(th>PI-0.06){th=PI-0.06;st=-1.;}
+
         if(r<=rp*1.005){done=true;break;}
         if(u_disk>.5){
             float cross=(oldTh-PI*.5)*(th-PI*.5);
@@ -725,16 +755,10 @@ void main(){
     const errMsg=document.getElementById('error-msg');
 
     const gl=canvas.getContext('webgl',{antialias:false,preserveDrawingBuffer:false,powerPreference:'high-performance'});
-    if(!gl){
-        loadMsg.textContent='WebGL not available';
-        errMsg.style.display='block';errMsg.textContent='Try Chrome or Firefox on desktop.';return;
-    }
+    if(!gl){loadMsg.textContent='WebGL not available';errMsg.style.display='block';errMsg.textContent='Try Chrome/Firefox on desktop.';return;}
 
-    // State
     let spin=.6,incl=80,diskTemp=1,showDisk=1,showGrid=1,autoRotate=false,rotAngle=0,fov=8;
-    let bgMode=1; // 0=stars,1=checker,2=colormap
-
-    // Quality
+    let bgMode=1;
     let qMethod='separated',qSteps=200,qResScale=1.0,qStepSize=.3,qObsDist=40,qStarLayers=3;
     let showAnnotations=true;
 
@@ -742,12 +766,10 @@ void main(){
     const buf=gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER,buf);
     gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
-
     let fc=0,lastFT=performance.now();
 
     function compile(src,type){
-        const s=gl.createShader(type);
-        gl.shaderSource(s,src);gl.compileShader(s);
+        const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
         if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))return{s:null,e:gl.getShaderInfoLog(s)};
         return{s,e:null};
     }
@@ -777,8 +799,7 @@ void main(){
 
     function resize(){
         const w=Math.floor(innerWidth*qResScale),h=Math.floor(innerHeight*qResScale);
-        canvas.width=w;canvas.height=h;
-        gl.viewport(0,0,w,h);
+        canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);
         document.getElementById('res').textContent=w+'×'+h;
     }
     addEventListener('resize',resize);
@@ -786,8 +807,7 @@ void main(){
     function rPlus(a){return 1+Math.sqrt(Math.max(1-a*a,0));}
     function iscoJS(a){
         const z1=1+Math.pow(1-a*a,1/3)*(Math.pow(1+a,1/3)+Math.pow(Math.max(1-a,0),1/3));
-        const z2=Math.sqrt(3*a*a+z1*z1);
-        return 3+z2-Math.sqrt((3-z1)*(3+z1+2*z2));
+        const z2=Math.sqrt(3*a*a+z1*z1);return 3+z2-Math.sqrt((3-z1)*(3+z1+2*z2));
     }
     function updInfo(){
         document.getElementById('rp').textContent=rPlus(spin).toFixed(3);
@@ -840,8 +860,7 @@ void main(){
         document.querySelectorAll('.preset-btn').forEach(b=>b.classList.toggle('active',b.dataset.preset===name));
         recompile();
     }
-
-    function clearPresetHighlight(){document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));}
+    function clearPH(){document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));}
 
     // ---- UI wiring ----
     document.getElementById('spin').addEventListener('input',function(){spin=+this.value;document.getElementById('spin-val').textContent='a = '+spin.toFixed(3);updInfo();});
@@ -851,26 +870,19 @@ void main(){
     document.getElementById('btn-disk').addEventListener('click',function(){showDisk=showDisk>.5?0:1;this.classList.toggle('active',showDisk>.5);});
     document.getElementById('btn-grid').addEventListener('click',function(){showGrid=showGrid>.5?0:1;this.classList.toggle('active',showGrid>.5);});
     document.getElementById('btn-rotate').addEventListener('click',function(){autoRotate=!autoRotate;this.classList.toggle('active',autoRotate);});
-
     document.getElementById('btn-settings').addEventListener('click',function(){
-        const p=document.getElementById('settings-panel');
-        p.classList.toggle('hidden');this.classList.toggle('active',!p.classList.contains('hidden'));
+        const p=document.getElementById('settings-panel');p.classList.toggle('hidden');this.classList.toggle('active',!p.classList.contains('hidden'));
     });
     document.getElementById('btn-legend').addEventListener('click',function(){
-        const p=document.getElementById('legend-panel');
-        p.classList.toggle('hidden');this.classList.toggle('active',!p.classList.contains('hidden'));
+        const p=document.getElementById('legend-panel');p.classList.toggle('hidden');this.classList.toggle('active',!p.classList.contains('hidden'));
     });
     document.getElementById('btn-legend-close').addEventListener('click',function(){
-        document.getElementById('legend-panel').classList.add('hidden');
-        document.getElementById('btn-legend').classList.remove('active');
+        document.getElementById('legend-panel').classList.add('hidden');document.getElementById('btn-legend').classList.remove('active');
     });
     document.getElementById('btn-ann-toggle').addEventListener('click',function(){
-        showAnnotations=!showAnnotations;
-        this.classList.toggle('active',showAnnotations);
+        showAnnotations=!showAnnotations;this.classList.toggle('active',showAnnotations);
         document.getElementById('ann-container').classList.toggle('annotations-hidden',!showAnnotations);
     });
-
-    // Background mode buttons
     document.querySelectorAll('[data-bg]').forEach(btn=>{
         btn.addEventListener('click',function(){
             bgMode=parseInt(this.dataset.bg);
@@ -878,23 +890,19 @@ void main(){
             recompile();
         });
     });
-
-    // Quality controls
     document.querySelectorAll('.preset-btn').forEach(btn=>btn.addEventListener('click',()=>applyPreset(btn.dataset.preset)));
-    document.getElementById('sel-integrator').addEventListener('change',function(){qMethod=this.value;refreshLabels();clearPresetHighlight();recompile();});
-    document.getElementById('steps').addEventListener('input',function(){qSteps=+this.value;document.getElementById('steps-val').textContent=qSteps;clearPresetHighlight();recompile();});
-    document.getElementById('res-scale').addEventListener('input',function(){qResScale=+this.value;document.getElementById('res-scale-val').textContent=qResScale.toFixed(2)+'×';clearPresetHighlight();resize();});
-    document.getElementById('stepsize').addEventListener('input',function(){qStepSize=+this.value;document.getElementById('stepsize-val').textContent=qStepSize.toFixed(2);clearPresetHighlight();recompile();});
-    document.getElementById('obs-dist').addEventListener('input',function(){qObsDist=+this.value;document.getElementById('obs-val').textContent=qObsDist+' M';clearPresetHighlight();recompile();});
-    document.getElementById('star-layers').addEventListener('input',function(){qStarLayers=+this.value;document.getElementById('starlayers-val').textContent=qStarLayers;clearPresetHighlight();recompile();});
+    document.getElementById('sel-integrator').addEventListener('change',function(){qMethod=this.value;refreshLabels();clearPH();recompile();});
+    document.getElementById('steps').addEventListener('input',function(){qSteps=+this.value;document.getElementById('steps-val').textContent=qSteps;clearPH();recompile();});
+    document.getElementById('res-scale').addEventListener('input',function(){qResScale=+this.value;document.getElementById('res-scale-val').textContent=qResScale.toFixed(2)+'×';clearPH();resize();});
+    document.getElementById('stepsize').addEventListener('input',function(){qStepSize=+this.value;document.getElementById('stepsize-val').textContent=qStepSize.toFixed(2);clearPH();recompile();});
+    document.getElementById('obs-dist').addEventListener('input',function(){qObsDist=+this.value;document.getElementById('obs-val').textContent=qObsDist+' M';clearPH();recompile();});
+    document.getElementById('star-layers').addEventListener('input',function(){qStarLayers=+this.value;document.getElementById('starlayers-val').textContent=qStarLayers;clearPH();recompile();});
 
-    // Zoom
     canvas.addEventListener('wheel',function(e){e.preventDefault();fov*=(1+e.deltaY*.001);fov=Math.max(2,Math.min(25,fov));},{passive:false});
     let ltd=0;
     canvas.addEventListener('touchstart',function(e){if(e.touches.length===2){const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;ltd=Math.sqrt(dx*dx+dy*dy);}});
     canvas.addEventListener('touchmove',function(e){if(e.touches.length===2){e.preventDefault();const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY,d=Math.sqrt(dx*dx+dy*dy);if(ltd>0){fov*=ltd/d;fov=Math.max(2,Math.min(25,fov));}ltd=d;}},{passive:false});
 
-    // Render
     function render(){
         if(autoRotate)rotAngle+=.008;
         gl.uniform2f(uniforms.u_res,canvas.width,canvas.height);
@@ -906,24 +914,16 @@ void main(){
         gl.uniform1f(uniforms.u_temp,diskTemp);
         gl.uniform1f(uniforms.u_phi0,rotAngle);
         gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-        fc++;
-        const now=performance.now();
-        if(now-lastFT>800){
-            document.getElementById('fps').textContent=Math.round(fc/((now-lastFT)*.001));
-            fc=0;lastFT=now;
-        }
+        fc++;const now=performance.now();
+        if(now-lastFT>800){document.getElementById('fps').textContent=Math.round(fc/((now-lastFT)*.001));fc=0;lastFT=now;}
         requestAnimationFrame(render);
     }
 
-    // Init
     updInfo();refreshLabels();
     loadMsg.textContent='Compiling shaders…';
     resize();
     const initResult=buildProgram();
-    if(!initResult.ok){
-        loadMsg.textContent='Shader compile failed';
-        errMsg.style.display='block';errMsg.textContent=initResult.error;return;
-    }
+    if(!initResult.ok){loadMsg.textContent='Shader compile failed';errMsg.style.display='block';errMsg.textContent=initResult.error;return;}
     loadMsg.textContent='Tracing first frame…';
     requestAnimationFrame(()=>{render();setTimeout(()=>loadEl.classList.add('hidden'),500);});
 })();
