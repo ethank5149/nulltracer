@@ -23,6 +23,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
       - PYOPENGL_PLATFORM=egl
+      # CUDA kernel compilation cache (persists across container restarts)
+      - CUPY_CACHE_DIR=/tmp/cupy_cache
     ports:
       - "8420:8420"
     restart: unless-stopped

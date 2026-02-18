@@ -829,7 +829,6 @@ The `#server-row` is shown only when a server URL is configured (via URL paramet
 
 | File | Status |
 |------|--------|
-| `nulltracer/server/generate_icon.py` | No changes |
 | `nulltracer/docker-compose.yml` | No changes |
 | `nulltracer/Caddyfile.current` | No changes |
 | `nulltracer/deploy.sh` | No changes |

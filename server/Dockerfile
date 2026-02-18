@@ -1,5 +1,6 @@
-FROM nvidia/opengl:1.2-glvnd-runtime-ubuntu22.04
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
 
+# Install Python and OpenGL libs (OpenGL kept temporarily for A/B validation)
 RUN apt-get update && apt-get install -y python3 python3-pip libegl1 libgl1 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

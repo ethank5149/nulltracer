@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from .cache import ImageCache
 from .renderer import Renderer
+from .renderer_cuda import CudaRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +58,10 @@ class RenderRequest(BaseModel):
 # ── Global state ─────────────────────────────────────────────
 
 renderer = Renderer()
+cuda_renderer = CudaRenderer()
 cache = ImageCache()
 gpu_lock = asyncio.Lock()
+cuda_lock = asyncio.Lock()
 
 # ── FastAPI app ──────────────────────────────────────────────
 
@@ -74,16 +77,28 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the renderer on server startup."""
-    logger.info("Initializing renderer...")
+    """Initialize both renderers on server startup."""
+    logger.info("Initializing OpenGL renderer...")
     renderer.initialize()
-    logger.info("Renderer ready: %s", renderer.gpu_info)
+    logger.info("OpenGL renderer ready: %s", renderer.gpu_info)
+
+    logger.info("Initializing CUDA renderer...")
+    try:
+        cuda_renderer.initialize()
+        logger.info("CUDA renderer ready: %s", cuda_renderer.gpu_info)
+    except Exception as e:
+        logger.warning("CUDA renderer failed to initialize: %s (OpenGL-only mode)", e)
 
 
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "gpu": renderer.gpu_info}
+    return {
+        "status": "ok",
+        "gpu": renderer.gpu_info,
+        "cuda_gpu": cuda_renderer.gpu_info if cuda_renderer._initialized else "not initialized",
+        "backends": ["opengl"] + (["cuda"] if cuda_renderer._initialized else []),
+    }
 
 
 @app.post("/render")
@@ -157,5 +172,75 @@ async def render(req: RenderRequest):
         headers={
             "X-Cache": "MISS",
             "X-Render-Time-Ms": f"{render_ms:.1f}",
+        },
+    )
+
+
+@app.post("/render_cuda")
+async def render_cuda(req: RenderRequest):
+    """Render via CUDA backend (for A/B validation against OpenGL /render).
+
+    Same parameters and response format as /render, but uses the CUDA
+    compute kernel with float64 precision instead of OpenGL fragment shaders.
+    """
+    if not cuda_renderer._initialized:
+        raise HTTPException(status_code=503, detail="CUDA renderer not available")
+
+    params = req.model_dump()
+    render_params = {k: v for k, v in params.items() if k not in ("format", "quality")}
+
+    # Use separate cache namespace for CUDA renders
+    cache_key_params = {**params, "_backend": "cuda"}
+    cached = cache.get(cache_key_params)
+    if cached is not None:
+        media_type = "image/jpeg" if req.format == "jpeg" else "image/webp"
+        return Response(
+            content=cached,
+            media_type=media_type,
+            headers={
+                "X-Cache": "HIT",
+                "X-Render-Time-Ms": "0",
+                "X-Backend": "cuda",
+            },
+        )
+
+    t0 = time.monotonic()
+
+    try:
+        async with cuda_lock:
+            raw_rgb = cuda_renderer.render_frame(render_params)
+    except Exception as e:
+        logger.error("CUDA render failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"CUDA render failed: {e}")
+
+    width = req.width
+    height = req.height
+    img = Image.frombytes("RGB", (width, height), raw_rgb)
+
+    buf = io.BytesIO()
+    if req.format == "jpeg":
+        img.save(buf, format="JPEG", quality=req.quality)
+        media_type = "image/jpeg"
+    else:
+        img.save(buf, format="WEBP", quality=req.quality)
+        media_type = "image/webp"
+
+    image_bytes = buf.getvalue()
+    render_ms = (time.monotonic() - t0) * 1000.0
+
+    cache.put(cache_key_params, image_bytes)
+
+    logger.info(
+        "CUDA rendered %dx%d %s in %.1fms (%d bytes)",
+        width, height, req.format, render_ms, len(image_bytes),
+    )
+
+    return Response(
+        content=image_bytes,
+        media_type=media_type,
+        headers={
+            "X-Cache": "MISS",
+            "X-Render-Time-Ms": f"{render_ms:.1f}",
+            "X-Backend": "cuda",
         },
     )
