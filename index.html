@@ -215,7 +215,7 @@
   </div>
   <div class="control-row">
     <div class="control-label"><span>Inclination</span><span class="control-value" id="incl-val">&theta; = 80.0&deg;</span></div>
-    <input type="range" id="incl" min="5" max="89" step="0.5" value="80">
+    <input type="range" id="incl" min="3" max="89" step="0.5" value="80">
   </div>
   <div class="control-row">
     <div class="control-label"><span>Disk Temperature</span><span class="control-value" id="temp-val">1.00</span></div>
@@ -324,9 +324,9 @@ uniform float u_a,u_incl,u_fov,u_disk,u_grid,u_temp,u_phi0;
 #define STAR_LAYERS ${STAR_LAYERS}
 #define BG_MODE ${BG_MODE}
 
-// Larger floor for sin^2(theta) — prevents numerical blowup near poles
-// 0.005 ≈ sin^2(4°), so we lose accuracy only within ~4° of the pole
-#define S2_FLOOR 0.005
+// Floor for sin^2(theta) — prevents numerical blowup near poles
+// 0.0008 ≈ sin^2(1.6°), narrow enough to not interfere at low inclination
+#define S2_FLOOR 0.0008
 
 float hash(vec2 p){
     p=fract(p*vec2(443.8,441.4));
@@ -601,9 +601,9 @@ void main(){
     for(int i=0;i<STEPS;i++){
         if(done)break;
         float he=H_BASE*clamp((r-rp)*.4,.04,1.);
-        // Smaller steps near poles to handle coordinate stiffness
+        // Smaller steps only very close to poles (within ~3°)
         float poleDist = min(th, PI-th);
-        he *= clamp(poleDist * 3.0, 0.15, 1.0);
+        he *= clamp(poleDist * 12.0, 0.35, 1.0);
         he=clamp(he,.012,.6);
         float oldTh=th,oldR=r,oldPhi=phi;
         float dr1,dth1,dphi1,dpr1,dpth1;
@@ -619,8 +619,8 @@ void main(){
         phi+=he*(dphi1+2.*dphi2+2.*dphi3+dphi4)/6.;
         pr+=he*(dpr1+2.*dpr2+2.*dpr3+dpr4)/6.;
         pth+=he*(dpth1+2.*dpth2+2.*dpth3+dpth4)/6.;
-        if(th<.07){th=.07;pth=abs(pth);}
-        if(th>PI-.07){th=PI-.07;pth=-abs(pth);}
+        if(th<.015){th=.015;pth=abs(pth);}
+        if(th>PI-.015){th=PI-.015;pth=-abs(pth);}
         if(r<=rp*1.01){done=true;break;}
         if(u_disk>.5){
             float cross=(oldTh-PI*.5)*(th-PI*.5);
@@ -684,17 +684,16 @@ void main(){
         dphi=clamp(dphi, -50.0, 50.0);
 
         float he=H_BASE*clamp((r-rp)*.35,.04,1.);
-        // Reduce step near poles
+        // Reduce step only very close to poles (within ~3°)
         float poleDist = min(th, PI-th);
-        he *= clamp(poleDist * 3.0, 0.15, 1.0);
+        he *= clamp(poleDist * 12.0, 0.35, 1.0);
         he=clamp(he,.012,.7);
 
         float oldTh=th,oldR=r,oldPhi=phi;
 
         // Verlet midpoint
         float rH=r+.5*he*dr,thH=th+.5*he*dth;
-        // Clamp midpoint theta away from poles
-        thH=clamp(thH, 0.06, PI-0.06);
+        thH=clamp(thH, 0.015, PI-0.015);
         float sthH=sin(thH),cthH=cos(thH);
         float s2H=max(sthH*sthH, S2_FLOOR),c2H=cthH*cthH;
         float sigH=rH*rH+a2*c2H,isigH=1./sigH;
@@ -713,9 +712,9 @@ void main(){
         th+=he*dthH;
         phi+=he*dphiH;
 
-        // Reflect at pole boundaries (wider margin)
-        if(th<0.06){th=0.06;st=1.;}
-        if(th>PI-0.06){th=PI-0.06;st=-1.;}
+        // Reflect at pole boundaries (narrow margin ~0.9°)
+        if(th<0.015){th=0.015;st=1.;}
+        if(th>PI-0.015){th=PI-0.015;st=-1.;}
 
         if(r<=rp*1.005){done=true;break;}
         if(u_disk>.5){
