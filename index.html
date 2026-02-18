@@ -353,6 +353,9 @@ uniform float u_a,u_incl,u_fov,u_disk,u_grid,u_temp,u_phi0;
 // Max azimuthal change per step (rad). Controls adaptive substep.
 #define MAX_DPHI 0.8
 
+// Max mu change per step. Prevents overshooting theta turning points.
+#define MAX_DMU 0.08
+
 float hash(vec2 p){
     p=fract(p*vec2(443.8,441.4));
     p+=dot(p,p+19.19);
@@ -705,13 +708,19 @@ void muDerivs(
     // R potential (same as theta-form)
     float T = r*r + a2 - a*b;
     float Rp = T*T - del*(q2 + bma2);
-    float sqRp = Rp > 0.0 ? sqrt(Rp) : 0.0;
 
     // Theta_mu potential — smooth quartic polynomial in mu
     // = q^2 + (a^2 - q^2 - b^2)*mu^2 - a^2*mu^4
-    // Equivalent factored form: (q^2 + a^2*mu^2)*(1-mu^2) - b^2*mu^2
+    // Factored form: (q^2 + a^2*mu^2)*(1-mu^2) - b^2*mu^2
     float Tmu = (q2 + a2*mu2) * omu2 - b2*mu2;
-    float sqTmu = Tmu > 0.0 ? sqrt(Tmu) : 0.0;
+
+    // sqrt(abs()) instead of conditional zeroing: when a ray overshoots
+    // a turning point (potential < 0), this gives a nonzero velocity that
+    // (combined with the sign flip at the start of the step) pushes the ray
+    // BACK toward the allowed region. Using max(,0) would freeze all
+    // mu-motion, trapping the ray permanently.
+    float sqRp  = sqrt(abs(Rp));
+    float sqTmu = sqrt(abs(Tmu));
 
     dr  = sr  * sqRp  * isig;
     dmu = smu * sqTmu * isig;
@@ -747,11 +756,15 @@ void main() {
     float rp = 1.0 + sqrt(max(1.0-a2, 0.0));
     vec3 color = vec3(0);
     bool done = false;
+    // Anti-oscillation: track if smu was flipped on the previous step.
+    // If so, don't flip again (prevents stuck oscillation in forbidden zone).
+    bool smuFlippedLast = false;
+    bool srFlippedLast = false;
 
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        // ---- Evaluate at current position ----
+        // ---- Turning point detection ----
         float mu2 = mu*mu;
         float omu2 = 1.0 - mu2;
         float Tmu_check = (q2 + a2*mu2)*omu2 - b2*mu2;
@@ -759,21 +772,26 @@ void main() {
         float T = r*r + a2 - a*b;
         float Rp_check = T*T - del*(q2 + bma2);
 
-        // Turning point detection — ONLY at start of step (no double-flip)
-        if (Rp_check < 0.0) sr = -sr;
-        if (Tmu_check < 0.0) smu = -smu;
+        // Only flip sign when ENTERING the forbidden zone (not if already there)
+        if (Rp_check < 0.0) {
+            if (!srFlippedLast) { sr = -sr; srFlippedLast = true; }
+        } else { srFlippedLast = false; }
+
+        if (Tmu_check < 0.0) {
+            if (!smuFlippedLast) { smu = -smu; smuFlippedLast = true; }
+        } else { smuFlippedLast = false; }
 
         float dr0, dmu0, dphi0;
         muDerivs(r, mu, a, a2, b, b2, q2, bma, bma2, sr, smu, dr0, dmu0, dphi0);
 
         // ---- Adaptive step size ----
-        // Base: shrink near horizon
         float he = H_BASE * clamp((r - rp) * 0.35, 0.04, 1.0);
         // dphi-adaptive: limit azimuthal displacement per step
         float adphi = abs(dphi0);
-        if (adphi * he > MAX_DPHI) {
-            he = MAX_DPHI / adphi;
-        }
+        if (adphi * he > MAX_DPHI) he = MAX_DPHI / adphi;
+        // dmu-adaptive: limit mu displacement to prevent turning point overshoot
+        float admu = abs(dmu0);
+        if (admu * he > MAX_DMU) he = MAX_DMU / admu;
         he = clamp(he, 0.005, 0.7);
 
         float oldR = r, oldMu = mu, oldPhi = phi;
