@@ -255,7 +255,7 @@
   <div class="control-row">
     <div class="control-label"><span>Integrator</span><span class="control-value" id="integ-label">Separated</span></div>
     <select class="ctrl-select" id="sel-integrator">
-      <option value="separated" selected>Separated eqs — fast</option>
+      <option value="separated" selected>Separated eqs (μ-form)</option>
       <option value="hamiltonian">Full Hamiltonian RK4</option>
     </select>
     <div id="hamiltonian-warn" class="warn-badge" style="display:none">Heavy — may fail on mobile / integrated GPU</div>
@@ -324,14 +324,34 @@ uniform float u_a,u_incl,u_fov,u_disk,u_grid,u_temp,u_phi0;
 #define STAR_LAYERS ${STAR_LAYERS}
 #define BG_MODE ${BG_MODE}
 
-// Smooth sin^2(theta) regularization. Using s2 + eps instead of max(s2, eps)
-// gives continuous derivatives, preventing the seams that hard floors create.
-#define S2_EPS 0.0004
+// -------------------------------------------------------
+//  POLE HANDLING STRATEGY (mu = cos theta substitution)
+//
+//  Boyer-Lindquist coords have a coordinate singularity
+//  at theta = 0, pi  (the poles). Three quantities diverge:
+//    Theta(th)   has  -b^2 cos^2th / sin^2th
+//    dphi/dlam   has  b / sin^2th
+//    (and dth/dlam inherits via sqrt(Theta))
+//
+//  Substituting mu = cos(theta), the theta potential becomes:
+//    Theta_mu = q^2 + (a^2 - q^2 - b^2) mu^2 - a^2 mu^4
+//  which is a smooth quartic polynomial with NO singularity.
+//
+//  The phi equation still has b/(1-mu^2), but physical rays
+//  with b != 0 never reach mu = +/-1 since Theta_mu(+/-1) = -b^2 < 0.
+//  Near a theta turning point, b/(1-mu_tp^2) ~ (q^2+a^2)/b
+//  which is large but the TIME SPENT there is proportional to |b|,
+//  so the total phi accumulated per pole passage is O(1).
+//
+//  We handle residual numerical issues with:
+//   1. dphi-adaptive stepping: he = min(he, MAX_PHI/|dphi|)
+//      This automatically sub-divides near theta turning points.
+//   2. Safety clamp: 1-mu^2 floored at 1e-10 (not reached physically)
+//   3. Turning point detection at start-of-step ONLY (no double flips)
+// -------------------------------------------------------
 
-// Maximum azimuthal displacement per integration step (radians).
-// Caps the *change* in phi rather than clamping the velocity,
-// so there is no discontinuity in the equations of motion.
-#define MAX_DPHI_STEP 1.5
+// Max azimuthal change per step (rad). Controls adaptive substep.
+#define MAX_DPHI 0.8
 
 float hash(vec2 p){
     p=fract(p*vec2(443.8,441.4));
@@ -345,29 +365,18 @@ float isco(float a){
     return 3.+z2-sqrt((3.-z1)*(3.+z1+2.*z2));
 }
 
-// Regularized 1/sin^2(theta) — smooth, no hard floor
-float invS2(float th) {
-    float s = sin(th);
-    return 1.0 / (s * s + S2_EPS);
-}
-
 // ===========================================================
 //  CUBE-MAP BACKGROUND
-//  Project (theta,phi) onto the 6 faces of a cube.
-//  Local (u,v) coords on each face are smooth everywhere,
-//  including at the poles of the sphere.
-//  This completely eliminates polar tiling artifacts.
+//  Project (theta,phi) onto 6 cube faces via Cartesian (x,y,z).
+//  The pole faces (+Z,-Z) use (x,y) as local coords, which are
+//  smooth at the poles: x=sin(th)cos(ph), y=sin(th)sin(ph)
+//  both -> 0 smoothly. No phi-dependence at the singularity.
 // ===========================================================
 
-// Returns vec3(face, 0, 0) via out param, plus uv on that face.
-// face: 0=+Z 1=-Z 2=+X 3=-X 4=+Y 5=-Y
 void cubeMap(float th, float ph, out float face, out vec2 uv) {
     float sth = sin(th), cth = cos(th);
-    float x = sth * cos(ph);
-    float y = sth * sin(ph);
-    float z = cth;
+    float x = sth * cos(ph), y = sth * sin(ph), z = cth;
     float ax = abs(x), ay = abs(y), az = abs(z);
-
     if (az >= ax && az >= ay) {
         face = z > 0.0 ? 0.0 : 1.0;
         uv = vec2(x, y) / az;
@@ -380,28 +389,24 @@ void cubeMap(float th, float ph, out float face, out vec2 uv) {
     }
 }
 
-// Face-local checker pattern
-float cubeChecker(vec2 uv, float divisions) {
-    vec2 cell = floor((uv * 0.5 + 0.5) * divisions);
+float cubeChecker(vec2 uv, float div) {
+    vec2 cell = floor((uv * 0.5 + 0.5) * div);
     return mod(cell.x + cell.y, 2.0);
 }
 
-// Face-local grid lines
-float cubeGrid(vec2 uv, float divisions) {
-    vec2 f = fract((uv * 0.5 + 0.5) * divisions);
-    float edgeX = abs(f.x - 0.5) * 2.0;
-    float edgeY = abs(f.y - 0.5) * 2.0;
-    return smoothstep(0.88, 0.96, max(edgeX, edgeY));
+float cubeGrid(vec2 uv, float div) {
+    vec2 f = fract((uv * 0.5 + 0.5) * div);
+    float ex = abs(f.x - 0.5) * 2.0, ey = abs(f.y - 0.5) * 2.0;
+    return smoothstep(0.88, 0.96, max(ex, ey));
 }
 
-// Face colours — distinct hue per face for orientation
 vec3 faceColor(float face) {
-    if (face < 0.5) return vec3(0.14, 0.08, 0.04);  // +Z (N pole) warm amber
-    if (face < 1.5) return vec3(0.06, 0.05, 0.14);   // -Z (S pole) deep indigo
-    if (face < 2.5) return vec3(0.04, 0.12, 0.07);   // +X forest green
-    if (face < 3.5) return vec3(0.12, 0.04, 0.08);   // -X plum
-    if (face < 4.5) return vec3(0.04, 0.08, 0.14);   // +Y steel blue
-    return vec3(0.12, 0.10, 0.04);                    // -Y olive gold
+    if (face < 0.5) return vec3(0.14, 0.08, 0.04);
+    if (face < 1.5) return vec3(0.06, 0.05, 0.14);
+    if (face < 2.5) return vec3(0.04, 0.12, 0.07);
+    if (face < 3.5) return vec3(0.12, 0.04, 0.08);
+    if (face < 4.5) return vec3(0.04, 0.08, 0.14);
+    return vec3(0.12, 0.10, 0.04);
 }
 
 // ===========================================================
@@ -414,12 +419,10 @@ vec3 bgStars(float th, float ph) {
     c += vec3(0.018, 0.014, 0.028) * mw;
     c += vec3(0.018, 0.006, 0.022) * hash(floor(vec2(th, ph) * 5.0)) * mw * 0.5;
     c += vec3(0.004, 0.012, 0.022) * hash(floor(vec2(th + 40.0, ph + 60.0) * 3.0)) * 0.25;
-
-    // Stars using cube-map cells to avoid polar artifacts
     float face; vec2 uv;
     cubeMap(th, ph, face, uv);
     for (int L = 0; L < STAR_LAYERS; L++) {
-        float sc = 10.0 + float(L) * 14.0;  // cells per face
+        float sc = 10.0 + float(L) * 14.0;
         vec2 cell = floor((uv * 0.5 + 0.5) * sc);
         vec2 seed = cell + face * 100.0 + float(L) * 47.0;
         float h = hash(seed);
@@ -439,57 +442,36 @@ vec3 bgStars(float th, float ph) {
 vec3 bgChecker(float th, float ph) {
     float face; vec2 uv;
     cubeMap(th, ph, face, uv);
-
     float check = cubeChecker(uv, 6.0);
     vec3 colA = vec3(0.05, 0.045, 0.065);
     vec3 colB = vec3(0.09, 0.07, 0.045);
     vec3 base = mix(colA, colB, check);
-
-    // Face tint
     base += faceColor(face) * (0.4 + 0.15 * check);
-
-    // Grid lines
     base += vec3(0.18, 0.15, 0.10) * cubeGrid(uv, 6.0);
-
-    // Face edge seams (highlight where cube faces meet)
-    float ax = abs(uv.x), ay = abs(uv.y);
-    float edgeDist = 1.0 - max(ax, ay);
-    float seam = 1.0 - smoothstep(0.0, 0.04, edgeDist);
-    base += vec3(0.06, 0.05, 0.04) * seam;
-
-    // Equator and prime meridian (in spherical coords, smooth away from poles)
+    float edgeDist = 1.0 - max(abs(uv.x), abs(uv.y));
+    base += vec3(0.06, 0.05, 0.04) * (1.0 - smoothstep(0.0, 0.04, edgeDist));
     float eq = 1.0 - smoothstep(0.0, 0.015, abs(th - PI * 0.5));
     base += vec3(0.22, 0.14, 0.05) * eq;
-
     float pm = 1.0 - smoothstep(0.0, 0.01, min(abs(ph), abs(ph - TAU)));
-    // Only show meridian away from poles where phi is well-defined
     pm *= smoothstep(0.0, 0.3, min(th, PI - th));
     base += vec3(0.12, 0.08, 0.18) * pm;
-
     return base;
 }
 
 vec3 bgColorMap(float th, float ph) {
     float sth = sin(th), cth = cos(th);
     float x = sth * cos(ph), y = sth * sin(ph), z = cth;
-
-    // Each axis maps to a colour channel — every direction is unique
     vec3 col;
     col.r = 0.08 + 0.35 * (x * 0.5 + 0.5);
     col.g = 0.08 + 0.35 * (y * 0.5 + 0.5);
     col.b = 0.08 + 0.35 * max(-z, 0.0);
     col += vec3(0.08, 0.04, 0.02) * max(z, 0.0);
     col = pow(col, vec3(0.8));
-
-    // Cube-map grid overlay
     float face; vec2 uv;
     cubeMap(th, ph, face, uv);
     col += vec3(0.12, 0.10, 0.08) * cubeGrid(uv, 6.0);
-
-    // Equator
     float eq = 1.0 - smoothstep(0.0, 0.015, abs(th - PI * 0.5));
     col += vec3(0.15, 0.12, 0.05) * eq;
-
     return col;
 }
 
@@ -502,8 +484,6 @@ vec3 background(float th, float ph) {
 #else
     c = bgColorMap(th, ph);
 #endif
-
-    // Coordinate grid overlay for stars mode
     if (u_grid > 0.5 && BG_MODE == 0) {
         float face; vec2 uv;
         cubeMap(th, ph, face, uv);
@@ -548,6 +528,7 @@ vec3 disk(float r, float ph, float a) {
         src += `
 // ===========================================================
 //  FULL HAMILTONIAN INTEGRATOR (RK4)
+//  Uses theta directly but with dphi-adaptive stepping.
 // ===========================================================
 
 void geoRHS(
@@ -556,121 +537,121 @@ void geoRHS(
     out float dr, out float dth, out float dphi,
     out float dpr, out float dpth
 ) {
-    float sth=sin(th), cth=cos(th);
-    float s2=sth*sth + S2_EPS, c2=cth*cth;
-    float a2=a*a, r2=r*r;
-    float sig=r2+a2*c2;
-    float del=r2-2.0*r+a2;
-    float rpa2=r2+a2;
-    float A_=rpa2*rpa2-del*a2*s2;
-    float isig=1.0/sig;
-    float sdel=max(del,1e-6);
-    float idel=1.0/sdel;
-    float is2=1.0/s2;
-    float SD=sig*sdel;
-    float iSD=1.0/SD;
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + 1e-10, c2 = cth*cth;
+    float a2 = a*a, r2 = r*r;
+    float sig = r2 + a2*c2;
+    float del = r2 - 2.0*r + a2;
+    float sdel = max(del, 1e-6);
+    float rpa2 = r2 + a2;
+    float A_ = rpa2*rpa2 - sdel*a2*s2;
+    float isig = 1.0/sig;
+    float is2 = 1.0/s2;
+    float SD = sig*sdel;
+    float iSD = 1.0/SD;
 
-    float gtt=-A_*iSD;
-    float gtf=-2.0*a*r*iSD;
-    float grr=sdel*isig;
-    float gthth=isig;
-    float gff=(sig-2.0*r)*iSD*is2;
+    float grr = sdel*isig, gthth = isig;
+    float gff = (sig - 2.0*r)*iSD*is2;
+    float gtf = -2.0*a*r*iSD;
 
-    dr=grr*pr; dth=gthth*pth; dphi=gff*b-gtf;
+    dr = grr*pr; dth = gthth*pth; dphi = gff*b - gtf;
 
-    float dsig_r=2.0*r; float ddel_r=2.0*r-2.0;
-    float dA_r=4.0*r*rpa2-ddel_r*a2*s2;
-    float dSD_r=dsig_r*sdel+sig*ddel_r;
-    float dgtt_r=-(dA_r*SD-A_*dSD_r)/(SD*SD);
-    float dgtf_r=-(2.0*a*SD-2.0*a*r*dSD_r)/(SD*SD);
-    float dgrr_r=(ddel_r*sig-sdel*dsig_r)/(sig*sig);
-    float dgthth_r=-dsig_r*isig*isig;
-    float num_ff=sig-2.0*r; float den_ff=SD*s2;
-    float dgff_r=((dsig_r-2.0)*den_ff-num_ff*dSD_r*s2)/(den_ff*den_ff);
-    dpr=-0.5*(dgtt_r-2.0*b*dgtf_r+dgrr_r*pr*pr+dgthth_r*pth*pth+dgff_r*b*b);
+    float dsig_r = 2.0*r; float ddel_r = 2.0*r - 2.0;
+    float dA_r = 4.0*r*rpa2 - ddel_r*a2*s2;
+    float dSD_r = dsig_r*sdel + sig*ddel_r;
+    float dgtt_r = -(dA_r*SD - A_*dSD_r)/(SD*SD);
+    float dgtf_r = -(2.0*a*SD - 2.0*a*r*dSD_r)/(SD*SD);
+    float dgrr_r = (ddel_r*sig - sdel*dsig_r)/(sig*sig);
+    float dgthth_r = -dsig_r*isig*isig;
+    float num_ff = sig - 2.0*r; float den_ff = SD*s2;
+    float dgff_r = ((dsig_r-2.0)*den_ff - num_ff*dSD_r*s2)/(den_ff*den_ff);
+    dpr = -0.5*(dgtt_r - 2.0*b*dgtf_r + dgrr_r*pr*pr + dgthth_r*pth*pth + dgff_r*b*b);
 
-    float dsig_th=-2.0*a2*sth*cth;
-    // Derivative of regularized s2: d(sin^2+eps)/dth = 2*sin*cos
-    float ds2_th=2.0*sth*cth;
-    float dA_th=-sdel*a2*ds2_th;
-    float dSD_th=dsig_th*sdel;
-    float dgtt_th=-(dA_th*SD-A_*dSD_th)/(SD*SD);
-    float dgtf_th=2.0*a*r*dSD_th/(SD*SD);
-    float dgrr_th=-sdel*dsig_th/(sig*sig);
-    float dgthth_th=-dsig_th*isig*isig;
-    float dgff_th=(dsig_th*den_ff-num_ff*(dsig_th*sdel*s2+SD*ds2_th))/(den_ff*den_ff);
-    dpth=-0.5*(dgtt_th-2.0*b*dgtf_th+dgrr_th*pr*pr+dgthth_th*pth*pth+dgff_th*b*b);
+    float dsig_th = -2.0*a2*sth*cth;
+    float ds2_th = 2.0*sth*cth;
+    float dA_th = -sdel*a2*ds2_th;
+    float dSD_th = dsig_th*sdel;
+    float dgtt_th = -(dA_th*SD - A_*dSD_th)/(SD*SD);
+    float dgtf_th = 2.0*a*r*dSD_th/(SD*SD);
+    float dgrr_th = -sdel*dsig_th/(sig*sig);
+    float dgthth_th = -dsig_th*isig*isig;
+    float dgff_th = (dsig_th*den_ff - num_ff*(dsig_th*sdel*s2 + SD*ds2_th))/(den_ff*den_ff);
+    dpth = -0.5*(dgtt_th - 2.0*b*dgtf_th + dgrr_th*pr*pr + dgthth_th*pth*pth + dgff_th*b*b);
 }
 
 void main() {
-    vec2 uv=v_uv;
-    float asp=u_res.x/u_res.y;
-    float alpha=uv.x*u_fov*asp, beta=uv.y*u_fov;
-    float a=u_a, a2=a*a;
-    float thObs=u_incl, sO=sin(thObs), cO=cos(thObs);
-    float b=-alpha*sO;
-    float q2=beta*beta+cO*cO*(alpha*alpha-a2);
+    vec2 uv = v_uv;
+    float asp = u_res.x/u_res.y;
+    float alpha = uv.x*u_fov*asp, beta = uv.y*u_fov;
+    float a = u_a, a2 = a*a;
+    float thObs = u_incl, sO = sin(thObs), cO = cos(thObs);
+    float b = -alpha*sO;
+    float q2 = beta*beta + cO*cO*(alpha*alpha - a2);
 
-    float r=R0, th=thObs, phi=u_phi0;
-    float sth=sin(th), cth=cos(th);
-    float s2=sth*sth+S2_EPS, c2=cth*cth;
-    float sig=r*r+a2*c2, del=r*r-2.0*r+a2;
-    float sdel=max(del,1e-6);
-    float rpa2=r*r+a2, A_=rpa2*rpa2-sdel*a2*s2;
-    float iSD=1.0/(sig*sdel), is2=1.0/s2;
-    float grr=sdel/sig, gthth_i=1.0/sig;
-    float pth=beta;
-    float rest=-A_*iSD-2.0*b*(-2.0*a*r*iSD)+gthth_i*pth*pth+(sig-2.0*r)*iSD*is2*b*b;
-    float pr2=-rest/grr;
-    float pr=pr2>0.0?-sqrt(pr2):0.0;
-    float rp=1.0+sqrt(max(1.0-a2,0.0));
-    vec3 color=vec3(0); bool done=false;
+    float r = R0, th = thObs, phi = u_phi0;
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + 1e-10, c2 = cth*cth;
+    float sig = r*r + a2*c2, del = r*r - 2.0*r + a2;
+    float sdel = max(del,1e-6);
+    float rpa2 = r*r+a2, A_ = rpa2*rpa2 - sdel*a2*s2;
+    float iSD = 1.0/(sig*sdel), is2 = 1.0/s2;
+    float grr = sdel/sig, gthi = 1.0/sig;
+    float pth = beta;
+    float rest = -A_*iSD - 2.0*b*(-2.0*a*r*iSD) + gthi*pth*pth + (sig-2.0*r)*iSD*is2*b*b;
+    float pr2 = -rest/grr;
+    float pr = pr2 > 0.0 ? -sqrt(pr2) : 0.0;
+    float rp = 1.0 + sqrt(max(1.0-a2, 0.0));
+    vec3 color = vec3(0); bool done = false;
 
-    for (int i=0; i<STEPS; i++) {
+    for (int i = 0; i < STEPS; i++) {
         if (done) break;
-        float he=H_BASE*clamp((r-rp)*0.4, 0.04, 1.0);
-        he=clamp(he, 0.012, 0.6);
-        float oldTh=th, oldR=r, oldPhi=phi;
+        float he = H_BASE * clamp((r-rp)*0.4, 0.04, 1.0);
 
+        // Estimate dphi to adapt step size
+        float sthE = sin(th);
+        float is2E = 1.0 / (sthE*sthE + 1e-10);
+        float sigE = r*r + a2*cos(th)*cos(th);
+        float dphiEst = abs(b*is2E) / sigE;
+        if (dphiEst * he > MAX_DPHI) he = MAX_DPHI / max(dphiEst, 1e-8);
+        he = clamp(he, 0.005, 0.6);
+
+        float oldTh = th, oldR = r, oldPhi = phi;
         float dr1,dth1,dphi1,dpr1,dpth1;
         float dr2,dth2,dphi2,dpr2,dpth2;
         float dr3,dth3,dphi3,dpr3,dpth3;
         float dr4,dth4,dphi4,dpr4,dpth4;
-        geoRHS(r,th,pr,pth,a,b, dr1,dth1,dphi1,dpr1,dpth1);
-        geoRHS(r+0.5*he*dr1, th+0.5*he*dth1, pr+0.5*he*dpr1, pth+0.5*he*dpth1, a,b, dr2,dth2,dphi2,dpr2,dpth2);
-        geoRHS(r+0.5*he*dr2, th+0.5*he*dth2, pr+0.5*he*dpr2, pth+0.5*he*dpth2, a,b, dr3,dth3,dphi3,dpr3,dpth3);
+        geoRHS(r,th,pr,pth, a,b, dr1,dth1,dphi1,dpr1,dpth1);
+        geoRHS(r+.5*he*dr1, th+.5*he*dth1, pr+.5*he*dpr1, pth+.5*he*dpth1, a,b, dr2,dth2,dphi2,dpr2,dpth2);
+        geoRHS(r+.5*he*dr2, th+.5*he*dth2, pr+.5*he*dpr2, pth+.5*he*dpth2, a,b, dr3,dth3,dphi3,dpr3,dpth3);
         geoRHS(r+he*dr3, th+he*dth3, pr+he*dpr3, pth+he*dpth3, a,b, dr4,dth4,dphi4,dpr4,dpth4);
+        r   += he*(dr1   + 2.0*dr2   + 2.0*dr3   + dr4  )/6.0;
+        th  += he*(dth1  + 2.0*dth2  + 2.0*dth3  + dth4 )/6.0;
+        phi += he*(dphi1 + 2.0*dphi2 + 2.0*dphi3 + dphi4)/6.0;
+        pr  += he*(dpr1  + 2.0*dpr2  + 2.0*dpr3  + dpr4 )/6.0;
+        pth += he*(dpth1 + 2.0*dpth2 + 2.0*dpth3 + dpth4)/6.0;
 
-        r   += he*(dr1  +2.0*dr2  +2.0*dr3  +dr4  )/6.0;
-        th  += he*(dth1 +2.0*dth2 +2.0*dth3 +dth4 )/6.0;
-        pr  += he*(dpr1 +2.0*dpr2 +2.0*dpr3 +dpr4 )/6.0;
-        pth += he*(dpth1+2.0*dpth2+2.0*dpth3+dpth4)/6.0;
-        // Cap phi displacement per step
-        float rawDphi = he*(dphi1+2.0*dphi2+2.0*dphi3+dphi4)/6.0;
-        phi += clamp(rawDphi, -MAX_DPHI_STEP, MAX_DPHI_STEP);
+        if (th < 0.005) { th = 0.005; pth = abs(pth); }
+        if (th > PI-0.005) { th = PI-0.005; pth = -abs(pth); }
 
-        if (th < 0.01) { th = 0.01; pth = abs(pth); }
-        if (th > PI-0.01) { th = PI-0.01; pth = -abs(pth); }
-
-        if (r <= rp*1.01) { done=true; break; }
+        if (r <= rp*1.01) { done = true; break; }
         if (u_disk > 0.5) {
-            float cross = (oldTh-PI*0.5)*(th-PI*0.5);
+            float cross = (oldTh - PI*0.5)*(th - PI*0.5);
             if (cross < 0.0) {
-                float f = clamp(abs(oldTh-PI*0.5)/max(abs(th-oldTh),1e-6), 0.0, 1.0);
-                vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a);
+                float f = clamp(abs(oldTh - PI*0.5)/max(abs(th-oldTh), 1e-6), 0.0, 1.0);
+                vec3 dc = disk(oldR + f*(r-oldR), oldPhi + f*(phi-oldPhi), a);
                 color += dc * (1.0 - clamp(length(color)*0.4, 0.0, 0.9));
             }
         }
         if (r > RESC) {
             color += background(th, mod(phi,TAU)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
-            done=true; break;
+            done = true; break;
         }
-        if (r < 0.5 || r!=r || th!=th) { done=true; break; }
+        if (r < 0.5 || r!=r || th!=th) { done = true; break; }
     }
-    float imp = length(vec2(alpha,beta));
-    float rc = 5.2-1.0*a;
-    color += vec3(0.1,0.07,0.04)*exp(-pow((imp-rc)/0.3,2.0))*0.06;
-    color *= 1.0-0.3*dot(uv,uv);
+    float imp = length(vec2(alpha, beta));
+    float rc = 5.2 - 1.0*a;
+    color += vec3(0.1,0.07,0.04)*exp(-pow((imp-rc)/0.3, 2.0))*0.06;
+    color *= 1.0 - 0.3*dot(uv,uv);
     color = color/(1.0+color);
     color = pow(color, vec3(1.0/2.2));
     gl_FragColor = vec4(color, 1);
@@ -679,98 +660,170 @@ void main() {
     } else {
         src += `
 // ===========================================================
-//  SEPARATED GEODESIC EQUATIONS (Verlet midpoint)
+//  SEPARATED GEODESIC EQUATIONS — mu = cos(theta) form
+//
+//  The Carter-separated first-order ODEs in Boyer-Lindquist
+//  coordinates use theta as the polar variable. The theta
+//  potential Theta(th) = q^2 + a^2 cos^2(th) - b^2 cot^2(th)
+//  diverges as cot^2(th) -> infinity at the poles.
+//
+//  Substituting mu = cos(theta), sin^2(theta) = 1 - mu^2:
+//
+//    Sigma dr/dlam   = sr * sqrt(R(r))
+//    Sigma dmu/dlam  = smu * sqrt(Theta_mu(mu))
+//    Sigma dphi/dlam = b/(1-mu^2) + a*(T/Delta - 1)
+//
+//  where the mu-potential is a smooth quartic:
+//    Theta_mu(mu) = q^2 + (a^2 - q^2 - b^2) mu^2 - a^2 mu^4
+//
+//  No 1/sin^2(th) anywhere in the potential. The ONLY remaining
+//  singularity is b/(1-mu^2) in dphi, which physically never
+//  activates: Theta_mu(+/-1) = -b^2 < 0 for b != 0, so rays
+//  always turn before reaching the pole.
+//
+//  Residual numerical issues from finite step size are handled
+//  by dphi-adaptive stepping: the integration step is automatically
+//  reduced whenever |dphi| is large, ensuring smooth phi evolution
+//  without any hard clamps or coordinate-based heuristics.
 // ===========================================================
 
-void main() {
-    vec2 uv=v_uv;
-    float asp=u_res.x/u_res.y;
-    float alpha=uv.x*u_fov*asp, beta=uv.y*u_fov;
-    float a=u_a, a2=a*a;
-    float thObs=u_incl, sO=sin(thObs), cO=cos(thObs);
-    float b=-alpha*sO;
-    float q2=beta*beta+cO*cO*(alpha*alpha-a2);
-    float r=R0, th=thObs, phi=u_phi0;
-    float sr=-1.0, st=beta>=0.0 ? -1.0 : 1.0;
-    float rp=1.0+sqrt(max(1.0-a2,0.0));
-    float bma=b-a, bma2=bma*bma;
-    vec3 color=vec3(0); bool done=false;
+// Evaluate separated-equation velocities for the mu-form.
+// Returns derivatives via out params. No sign flips here.
+void muDerivs(
+    float r, float mu, float a, float a2, float b, float b2,
+    float q2, float bma, float bma2,
+    float sr, float smu,
+    out float dr, out float dmu, out float dphi
+) {
+    float mu2 = mu * mu;
+    float omu2 = 1.0 - mu2;           // sin^2(theta)
+    float sig = r*r + a2*mu2;
+    float isig = 1.0 / sig;
+    float del = r*r - 2.0*r + a2;
+    float sdel = max(del, 1e-6);
 
-    for (int i=0; i<STEPS; i++) {
+    // R potential (same as theta-form)
+    float T = r*r + a2 - a*b;
+    float Rp = T*T - del*(q2 + bma2);
+    float sqRp = Rp > 0.0 ? sqrt(Rp) : 0.0;
+
+    // Theta_mu potential — smooth quartic polynomial in mu
+    // = q^2 + (a^2 - q^2 - b^2)*mu^2 - a^2*mu^4
+    // Equivalent factored form: (q^2 + a^2*mu^2)*(1-mu^2) - b^2*mu^2
+    float Tmu = (q2 + a2*mu2) * omu2 - b2*mu2;
+    float sqTmu = Tmu > 0.0 ? sqrt(Tmu) : 0.0;
+
+    dr  = sr  * sqRp  * isig;
+    dmu = smu * sqTmu * isig;
+
+    // dphi: b/(1-mu^2) + a*(T/Delta - 1), divided by Sigma.
+    // The 1/(1-mu^2) is safe: physical rays keep omu2 > b^2/(q^2+a^2).
+    // Safety floor at 1e-10 prevents literal division by zero only if
+    // a ray is numerically forced to mu=+/-1 (should not happen).
+    float iomu2 = 1.0 / max(omu2, 1e-10);
+    dphi = (b * iomu2 + a * (T/sdel - 1.0)) * isig;
+}
+
+void main() {
+    vec2 uv = v_uv;
+    float asp = u_res.x / u_res.y;
+    float alpha = uv.x * u_fov * asp, beta = uv.y * u_fov;
+    float a = u_a, a2 = a*a;
+    float thObs = u_incl, sO = sin(thObs), cO = cos(thObs);
+    float b = -alpha * sO;
+    float b2 = b * b;
+    float q2 = beta*beta + cO*cO*(alpha*alpha - a2);
+    float bma = b - a, bma2 = bma*bma;
+
+    // Initial state in mu-form
+    float r = R0;
+    float mu = cos(thObs);       // mu = cos(theta)
+    float phi = u_phi0;
+    float sr = -1.0;             // inward initially
+    // smu = sign of dmu/dlam = -sin(th) * (sign of dth/dlam)
+    // dth/dlam sign: beta >= 0 means ray launched "upward" -> dth < 0 -> dmu > 0
+    float smu = beta >= 0.0 ? 1.0 : -1.0;
+
+    float rp = 1.0 + sqrt(max(1.0-a2, 0.0));
+    vec3 color = vec3(0);
+    bool done = false;
+
+    for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        // Regularized sin^2 (smooth, no discontinuous derivative)
-        float is2 = invS2(th);
-        float cth=cos(th), c2=cth*cth;
-        float sig=r*r+a2*c2, isig=1.0/sig;
-        float del=r*r-2.0*r+a2;
-        float sdel=max(del, 1e-6);
+        // ---- Evaluate at current position ----
+        float mu2 = mu*mu;
+        float omu2 = 1.0 - mu2;
+        float Tmu_check = (q2 + a2*mu2)*omu2 - b2*mu2;
+        float del = r*r - 2.0*r + a2;
+        float T = r*r + a2 - a*b;
+        float Rp_check = T*T - del*(q2 + bma2);
 
-        float T=r*r+a2-a*b;
-        float Rp=T*T-del*(q2+bma2);
-        // Theta potential using regularized is2
-        float s2r = 1.0/is2;   // regularized sin^2
-        float Tp=q2+a2*c2-c2*b*b*is2;
-        if (Rp<0.0) { Rp=0.0; sr=-sr; }
-        if (Tp<0.0) { Tp=0.0; st=-st; }
+        // Turning point detection — ONLY at start of step (no double-flip)
+        if (Rp_check < 0.0) sr = -sr;
+        if (Tmu_check < 0.0) smu = -smu;
 
-        float dr  = sr*sqrt(Rp)*isig;
-        float dth = st*sqrt(Tp)*isig;
-        float dphi = (b*is2 - a + a*T/sdel)*isig;
+        float dr0, dmu0, dphi0;
+        muDerivs(r, mu, a, a2, b, b2, q2, bma, bma2, sr, smu, dr0, dmu0, dphi0);
 
-        float he = H_BASE*clamp((r-rp)*0.35, 0.04, 1.0);
-        he = clamp(he, 0.012, 0.7);
+        // ---- Adaptive step size ----
+        // Base: shrink near horizon
+        float he = H_BASE * clamp((r - rp) * 0.35, 0.04, 1.0);
+        // dphi-adaptive: limit azimuthal displacement per step
+        float adphi = abs(dphi0);
+        if (adphi * he > MAX_DPHI) {
+            he = MAX_DPHI / adphi;
+        }
+        he = clamp(he, 0.005, 0.7);
 
-        float oldTh=th, oldR=r, oldPhi=phi;
+        float oldR = r, oldMu = mu, oldPhi = phi;
 
-        // Verlet midpoint
-        float rH  = r  + 0.5*he*dr;
-        float thH = th + 0.5*he*dth;
-        thH = clamp(thH, 0.01, PI-0.01);
-        float is2H = invS2(thH);
-        float cthH=cos(thH), c2H=cthH*cthH;
-        float sigH=rH*rH+a2*c2H, isigH=1.0/sigH;
-        float delH=rH*rH-2.0*rH+a2;
-        float sdelH=max(delH, 1e-6);
-        float TH=rH*rH+a2-a*b;
-        float RpH=TH*TH-delH*(q2+bma2);
-        float TpH=q2+a2*c2H-c2H*b*b*is2H;
-        if (RpH<0.0) { RpH=0.0; sr=-sr; }
-        if (TpH<0.0) { TpH=0.0; st=-st; }
+        // ---- Verlet midpoint ----
+        float rH  = r  + 0.5*he*dr0;
+        float muH = mu + 0.5*he*dmu0;
+        muH = clamp(muH, -0.99995, 0.99995);
 
-        float drH  = sr*sqrt(RpH)*isigH;
-        float dthH = st*sqrt(TpH)*isigH;
-        float rawDphi = he * (b*is2H - a + a*TH/sdelH) * isigH;
+        // At midpoint, do NOT flip signs (turning already handled)
+        float drH, dmuH, dphiH;
+        muDerivs(rH, muH, a, a2, b, b2, q2, bma, bma2, sr, smu, drH, dmuH, dphiH);
 
-        r  += he * drH;
-        th += he * dthH;
-        // Cap phi change per step (not the velocity — no EOM discontinuity)
-        phi += clamp(rawDphi, -MAX_DPHI_STEP, MAX_DPHI_STEP);
+        // Full step using midpoint derivatives
+        r   += he * drH;
+        mu  += he * dmuH;
+        phi += he * dphiH;
 
-        // Reflect at poles
-        if (th < 0.01) { th = 0.01; st = 1.0; }
-        if (th > PI-0.01) { th = PI-0.01; st = -1.0; }
+        // Hard clamp mu (safety net — should never be needed for physical rays)
+        mu = clamp(mu, -0.99995, 0.99995);
 
-        if (r <= rp*1.005) { done=true; break; }
+        // ---- Termination checks ----
+        if (r <= rp * 1.005) { done = true; break; }
+
+        // Disk crossing: disk is at theta = pi/2, i.e. mu = 0
         if (u_disk > 0.5) {
-            float cross = (oldTh-PI*0.5)*(th-PI*0.5);
-            if (cross < 0.0) {
-                float f = clamp(abs(oldTh-PI*0.5)/max(abs(th-oldTh),1e-6), 0.0, 1.0);
-                vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a);
+            if (oldMu * mu < 0.0) {
+                float f = clamp(abs(oldMu) / max(abs(mu - oldMu), 1e-6), 0.0, 1.0);
+                float diskR   = oldR   + f * (r   - oldR);
+                float diskPhi = oldPhi + f * (phi - oldPhi);
+                vec3 dc = disk(diskR, diskPhi, a);
                 color += dc * (1.0 - clamp(length(color)*0.4, 0.0, 0.9));
             }
         }
+
+        // Escape: convert mu back to theta for background lookup
         if (r > RESC) {
-            color += background(th, mod(phi,TAU)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
-            done=true; break;
+            float th = acos(clamp(mu, -1.0, 1.0));
+            color += background(th, mod(phi, TAU)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
+            done = true; break;
         }
-        if (r!=r || th!=th) { done=true; break; }
+
+        if (r != r || mu != mu) { done = true; break; }
     }
-    float imp = length(vec2(alpha,beta));
-    float rc = 5.2-1.0*a;
-    color += vec3(0.1,0.07,0.04)*exp(-pow((imp-rc)/0.3,2.0))*0.06;
-    color *= 1.0-0.3*dot(uv,uv);
-    color = color/(1.0+color);
+
+    float imp = length(vec2(alpha, beta));
+    float rc = 5.2 - 1.0*a;
+    color += vec3(0.1, 0.07, 0.04) * exp(-pow((imp-rc)/0.3, 2.0)) * 0.06;
+    color *= 1.0 - 0.3 * dot(uv, uv);
+    color = color / (1.0 + color);
     color = pow(color, vec3(1.0/2.2));
     gl_FragColor = vec4(color, 1);
 }
@@ -783,105 +836,105 @@ void main() {
 //  APPLICATION
 // ============================================================
 (function(){
-    const canvas=document.getElementById('canvas');
-    const loadEl=document.getElementById('loading');
-    const loadMsg=document.getElementById('loading-msg');
-    const errMsg=document.getElementById('error-msg');
+    const canvas = document.getElementById('canvas');
+    const loadEl = document.getElementById('loading');
+    const loadMsg = document.getElementById('loading-msg');
+    const errMsg = document.getElementById('error-msg');
 
-    const gl=canvas.getContext('webgl',{antialias:false,preserveDrawingBuffer:false,powerPreference:'high-performance'});
-    if(!gl){loadMsg.textContent='WebGL not available';errMsg.style.display='block';errMsg.textContent='Try Chrome/Firefox on desktop.';return;}
+    const gl = canvas.getContext('webgl', {antialias:false, preserveDrawingBuffer:false, powerPreference:'high-performance'});
+    if (!gl) { loadMsg.textContent='WebGL not available'; errMsg.style.display='block'; errMsg.textContent='Try Chrome/Firefox on desktop.'; return; }
 
-    let spin=0.6,incl=80,diskTemp=1,showDisk=1,showGrid=1,autoRotate=false,rotAngle=0,fov=8;
-    let bgMode=1;
-    let qMethod='separated',qSteps=200,qResScale=1.0,qStepSize=0.3,qObsDist=40,qStarLayers=3;
+    let spin=0.6, incl=80, diskTemp=1, showDisk=1, showGrid=1, autoRotate=false, rotAngle=0, fov=8;
+    let bgMode = 1;
+    let qMethod='separated', qSteps=200, qResScale=1.0, qStepSize=0.3, qObsDist=40, qStarLayers=3;
 
-    let program=null,uniforms={},aPos=-1;
-    const buf=gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER,buf);
-    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
-    let fc=0,lastFT=performance.now();
+    let program=null, uniforms={}, aPos=-1;
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+    let fc=0, lastFT=performance.now();
 
-    function compile(src,type){
-        const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
-        if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))return{s:null,e:gl.getShaderInfoLog(s)};
-        return{s,e:null};
+    function compile(src, type) {
+        const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) return {s:null, e:gl.getShaderInfoLog(s)};
+        return {s, e:null};
     }
-    const vertSrc=document.getElementById('vs').textContent;
+    const vertSrc = document.getElementById('vs').textContent;
 
-    function buildProgram(){
-        if(program)gl.deleteProgram(program);
-        const fragSrc=buildFragSrc({method:qMethod,steps:qSteps,obsDist:qObsDist,starLayers:qStarLayers,stepSize:qStepSize,bgMode});
-        const vr=compile(vertSrc,gl.VERTEX_SHADER);
-        if(!vr.s)return{ok:false,error:'Vertex: '+vr.e};
-        const fr=compile(fragSrc,gl.FRAGMENT_SHADER);
-        if(!fr.s)return{ok:false,error:'Fragment: '+fr.e};
-        const p=gl.createProgram();
-        gl.attachShader(p,vr.s);gl.attachShader(p,fr.s);gl.linkProgram(p);
-        gl.deleteShader(vr.s);gl.deleteShader(fr.s);
-        if(!gl.getProgramParameter(p,gl.LINK_STATUS)){gl.deleteProgram(p);return{ok:false,error:'Link: '+gl.getProgramInfoLog(p)};}
-        program=p;gl.useProgram(program);
-        aPos=gl.getAttribLocation(program,'a_pos');
-        gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+    function buildProgram() {
+        if (program) gl.deleteProgram(program);
+        const fragSrc = buildFragSrc({method:qMethod, steps:qSteps, obsDist:qObsDist, starLayers:qStarLayers, stepSize:qStepSize, bgMode});
+        const vr = compile(vertSrc, gl.VERTEX_SHADER);
+        if (!vr.s) return {ok:false, error:'Vertex: '+vr.e};
+        const fr = compile(fragSrc, gl.FRAGMENT_SHADER);
+        if (!fr.s) return {ok:false, error:'Fragment: '+fr.e};
+        const p = gl.createProgram();
+        gl.attachShader(p, vr.s); gl.attachShader(p, fr.s); gl.linkProgram(p);
+        gl.deleteShader(vr.s); gl.deleteShader(fr.s);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { gl.deleteProgram(p); return {ok:false, error:'Link: '+gl.getProgramInfoLog(p)}; }
+        program = p; gl.useProgram(program);
+        aPos = gl.getAttribLocation(program, 'a_pos');
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
         gl.enableVertexAttribArray(aPos);
-        gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
-        uniforms={};
-        ['u_res','u_a','u_incl','u_fov','u_disk','u_grid','u_temp','u_phi0'].forEach(n=>{uniforms[n]=gl.getUniformLocation(program,n);});
-        document.getElementById('integ-info').textContent=qMethod==='hamiltonian'?'hamiltonian RK4':'separated';
-        return{ok:true};
+        gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+        uniforms = {};
+        ['u_res','u_a','u_incl','u_fov','u_disk','u_grid','u_temp','u_phi0'].forEach(n => { uniforms[n]=gl.getUniformLocation(program,n); });
+        document.getElementById('integ-info').textContent = qMethod==='hamiltonian' ? 'hamiltonian RK4' : 'separated (μ)';
+        return {ok:true};
     }
 
-    function resize(){
-        const w=Math.floor(innerWidth*qResScale),h=Math.floor(innerHeight*qResScale);
-        canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);
-        document.getElementById('res').textContent=w+'×'+h;
+    function resize() {
+        const w = Math.floor(innerWidth*qResScale), h = Math.floor(innerHeight*qResScale);
+        canvas.width=w; canvas.height=h; gl.viewport(0,0,w,h);
+        document.getElementById('res').textContent = w+'×'+h;
     }
-    addEventListener('resize',resize);
+    addEventListener('resize', resize);
 
-    function rPlus(a){return 1+Math.sqrt(Math.max(1-a*a,0));}
-    function iscoJS(a){
+    function rPlus(a) { return 1+Math.sqrt(Math.max(1-a*a,0)); }
+    function iscoJS(a) {
         const z1=1+Math.pow(1-a*a,1/3)*(Math.pow(1+a,1/3)+Math.pow(Math.max(1-a,0),1/3));
-        const z2=Math.sqrt(3*a*a+z1*z1);return 3+z2-Math.sqrt((3-z1)*(3+z1+2*z2));
+        const z2=Math.sqrt(3*a*a+z1*z1); return 3+z2-Math.sqrt((3-z1)*(3+z1+2*z2));
     }
-    function updInfo(){
-        document.getElementById('rp').textContent=rPlus(spin).toFixed(3);
-        document.getElementById('risco').textContent=iscoJS(spin).toFixed(3);
+    function updInfo() {
+        document.getElementById('rp').textContent = rPlus(spin).toFixed(3);
+        document.getElementById('risco').textContent = iscoJS(spin).toFixed(3);
     }
 
-    const presets={
-        low:{method:'separated',steps:80,resScale:0.5,stepSize:0.5,obsDist:30,starLayers:1},
-        medium:{method:'separated',steps:200,resScale:1,stepSize:0.3,obsDist:40,starLayers:3},
-        high:{method:'separated',steps:350,resScale:1.25,stepSize:0.22,obsDist:50,starLayers:4},
-        ultra:{method:'hamiltonian',steps:250,resScale:1.25,stepSize:0.35,obsDist:60,starLayers:4},
+    const presets = {
+        low:    {method:'separated', steps:80,  resScale:0.5,  stepSize:0.5,  obsDist:30, starLayers:1},
+        medium: {method:'separated', steps:200, resScale:1,    stepSize:0.3,  obsDist:40, starLayers:3},
+        high:   {method:'separated', steps:350, resScale:1.25, stepSize:0.22, obsDist:50, starLayers:4},
+        ultra:  {method:'hamiltonian',steps:250, resScale:1.25, stepSize:0.35, obsDist:60, starLayers:4},
     };
 
-    function refreshLabels(){
-        document.getElementById('integ-label').textContent=qMethod==='hamiltonian'?'Hamiltonian (RK4)':'Separated (fast)';
-        document.getElementById('steps-val').textContent=qSteps;
-        document.getElementById('res-scale-val').textContent=qResScale.toFixed(2)+'×';
-        document.getElementById('stepsize-val').textContent=qStepSize.toFixed(2);
-        document.getElementById('obs-val').textContent=qObsDist+' M';
-        document.getElementById('starlayers-val').textContent=qStarLayers;
-        document.getElementById('hamiltonian-warn').style.display=qMethod==='hamiltonian'?'inline-block':'none';
+    function refreshLabels() {
+        document.getElementById('integ-label').textContent = qMethod==='hamiltonian' ? 'Hamiltonian (RK4)' : 'Separated (μ-form)';
+        document.getElementById('steps-val').textContent = qSteps;
+        document.getElementById('res-scale-val').textContent = qResScale.toFixed(2)+'×';
+        document.getElementById('stepsize-val').textContent = qStepSize.toFixed(2);
+        document.getElementById('obs-val').textContent = qObsDist+' M';
+        document.getElementById('starlayers-val').textContent = qStarLayers;
+        document.getElementById('hamiltonian-warn').style.display = qMethod==='hamiltonian' ? 'inline-block' : 'none';
     }
 
-    let rTimer=null;
-    function recompile(){
+    let rTimer = null;
+    function recompile() {
         clearTimeout(rTimer);
-        rTimer=setTimeout(()=>{
+        rTimer = setTimeout(() => {
             resize();
-            const r=buildProgram();
-            if(!r.ok){
-                console.error('Shader fail:',r.error);
-                if(qMethod==='hamiltonian'){
-                    qMethod='separated';document.getElementById('sel-integrator').value='separated';refreshLabels();
-                    if(buildProgram().ok)alert('Hamiltonian integrator failed on your GPU. Fell back to separated equations.');
+            const r = buildProgram();
+            if (!r.ok) {
+                console.error('Shader fail:', r.error);
+                if (qMethod === 'hamiltonian') {
+                    qMethod='separated'; document.getElementById('sel-integrator').value='separated'; refreshLabels();
+                    if (buildProgram().ok) alert('Hamiltonian integrator failed on your GPU. Fell back to separated equations.');
                 }
             }
-        },120);
+        }, 120);
     }
-    function applyPreset(name){
-        const p=presets[name];if(!p)return;
-        qMethod=p.method;qSteps=p.steps;qResScale=p.resScale;qStepSize=p.stepSize;qObsDist=p.obsDist;qStarLayers=p.starLayers;
+    function applyPreset(name) {
+        const p=presets[name]; if(!p) return;
+        qMethod=p.method; qSteps=p.steps; qResScale=p.resScale; qStepSize=p.stepSize; qObsDist=p.obsDist; qStarLayers=p.starLayers;
         document.getElementById('sel-integrator').value=p.method;
         document.getElementById('steps').value=p.steps;
         document.getElementById('res-scale').value=p.resScale;
@@ -892,72 +945,72 @@ void main() {
         document.querySelectorAll('.preset-btn').forEach(b=>b.classList.toggle('active',b.dataset.preset===name));
         recompile();
     }
-    function clearPH(){document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));}
+    function clearPH() { document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active')); }
 
     // ---- UI ----
-    document.getElementById('spin').addEventListener('input',function(){spin=+this.value;document.getElementById('spin-val').textContent='a = '+spin.toFixed(3);updInfo();});
-    document.getElementById('incl').addEventListener('input',function(){incl=+this.value;document.getElementById('incl-val').innerHTML='&theta; = '+incl.toFixed(1)+'&deg;';});
-    document.getElementById('temp').addEventListener('input',function(){diskTemp=+this.value;document.getElementById('temp-val').textContent=diskTemp.toFixed(2);});
-    document.getElementById('btn-disk').addEventListener('click',function(){showDisk=showDisk>0.5?0:1;this.classList.toggle('active',showDisk>0.5);});
-    document.getElementById('btn-grid').addEventListener('click',function(){showGrid=showGrid>0.5?0:1;this.classList.toggle('active',showGrid>0.5);});
-    document.getElementById('btn-rotate').addEventListener('click',function(){autoRotate=!autoRotate;this.classList.toggle('active',autoRotate);});
-    document.getElementById('btn-settings').addEventListener('click',function(){
-        const p=document.getElementById('settings-panel');p.classList.toggle('hidden');this.classList.toggle('active',!p.classList.contains('hidden'));
+    document.getElementById('spin').addEventListener('input', function(){ spin=+this.value; document.getElementById('spin-val').textContent='a = '+spin.toFixed(3); updInfo(); });
+    document.getElementById('incl').addEventListener('input', function(){ incl=+this.value; document.getElementById('incl-val').innerHTML='&theta; = '+incl.toFixed(1)+'&deg;'; });
+    document.getElementById('temp').addEventListener('input', function(){ diskTemp=+this.value; document.getElementById('temp-val').textContent=diskTemp.toFixed(2); });
+    document.getElementById('btn-disk').addEventListener('click', function(){ showDisk=showDisk>0.5?0:1; this.classList.toggle('active',showDisk>0.5); });
+    document.getElementById('btn-grid').addEventListener('click', function(){ showGrid=showGrid>0.5?0:1; this.classList.toggle('active',showGrid>0.5); });
+    document.getElementById('btn-rotate').addEventListener('click', function(){ autoRotate=!autoRotate; this.classList.toggle('active',autoRotate); });
+    document.getElementById('btn-settings').addEventListener('click', function(){
+        const p=document.getElementById('settings-panel'); p.classList.toggle('hidden'); this.classList.toggle('active',!p.classList.contains('hidden'));
     });
-    document.getElementById('btn-legend').addEventListener('click',function(){
-        const p=document.getElementById('legend-panel');p.classList.toggle('hidden');this.classList.toggle('active',!p.classList.contains('hidden'));
+    document.getElementById('btn-legend').addEventListener('click', function(){
+        const p=document.getElementById('legend-panel'); p.classList.toggle('hidden'); this.classList.toggle('active',!p.classList.contains('hidden'));
     });
-    document.getElementById('btn-legend-close').addEventListener('click',function(){
-        document.getElementById('legend-panel').classList.add('hidden');document.getElementById('btn-legend').classList.remove('active');
+    document.getElementById('btn-legend-close').addEventListener('click', function(){
+        document.getElementById('legend-panel').classList.add('hidden'); document.getElementById('btn-legend').classList.remove('active');
     });
-    document.getElementById('btn-ann-toggle').addEventListener('click',function(){
+    document.getElementById('btn-ann-toggle').addEventListener('click', function(){
         const on=!document.getElementById('ann-container').classList.contains('annotations-hidden');
         document.getElementById('ann-container').classList.toggle('annotations-hidden',on);
         this.classList.toggle('active',!on);
     });
-    document.querySelectorAll('[data-bg]').forEach(btn=>{
-        btn.addEventListener('click',function(){
+    document.querySelectorAll('[data-bg]').forEach(btn => {
+        btn.addEventListener('click', function(){
             bgMode=parseInt(this.dataset.bg);
             document.querySelectorAll('[data-bg]').forEach(b=>b.classList.toggle('active',parseInt(b.dataset.bg)===bgMode));
             recompile();
         });
     });
-    document.querySelectorAll('.preset-btn').forEach(btn=>btn.addEventListener('click',()=>applyPreset(btn.dataset.preset)));
-    document.getElementById('sel-integrator').addEventListener('change',function(){qMethod=this.value;refreshLabels();clearPH();recompile();});
-    document.getElementById('steps').addEventListener('input',function(){qSteps=+this.value;document.getElementById('steps-val').textContent=qSteps;clearPH();recompile();});
-    document.getElementById('res-scale').addEventListener('input',function(){qResScale=+this.value;document.getElementById('res-scale-val').textContent=qResScale.toFixed(2)+'×';clearPH();resize();});
-    document.getElementById('stepsize').addEventListener('input',function(){qStepSize=+this.value;document.getElementById('stepsize-val').textContent=qStepSize.toFixed(2);clearPH();recompile();});
-    document.getElementById('obs-dist').addEventListener('input',function(){qObsDist=+this.value;document.getElementById('obs-val').textContent=qObsDist+' M';clearPH();recompile();});
-    document.getElementById('star-layers').addEventListener('input',function(){qStarLayers=+this.value;document.getElementById('starlayers-val').textContent=qStarLayers;clearPH();recompile();});
+    document.querySelectorAll('.preset-btn').forEach(btn => btn.addEventListener('click', ()=>applyPreset(btn.dataset.preset)));
+    document.getElementById('sel-integrator').addEventListener('change', function(){ qMethod=this.value; refreshLabels(); clearPH(); recompile(); });
+    document.getElementById('steps').addEventListener('input', function(){ qSteps=+this.value; document.getElementById('steps-val').textContent=qSteps; clearPH(); recompile(); });
+    document.getElementById('res-scale').addEventListener('input', function(){ qResScale=+this.value; document.getElementById('res-scale-val').textContent=qResScale.toFixed(2)+'×'; clearPH(); resize(); });
+    document.getElementById('stepsize').addEventListener('input', function(){ qStepSize=+this.value; document.getElementById('stepsize-val').textContent=qStepSize.toFixed(2); clearPH(); recompile(); });
+    document.getElementById('obs-dist').addEventListener('input', function(){ qObsDist=+this.value; document.getElementById('obs-val').textContent=qObsDist+' M'; clearPH(); recompile(); });
+    document.getElementById('star-layers').addEventListener('input', function(){ qStarLayers=+this.value; document.getElementById('starlayers-val').textContent=qStarLayers; clearPH(); recompile(); });
 
-    canvas.addEventListener('wheel',function(e){e.preventDefault();fov*=(1+e.deltaY*0.001);fov=Math.max(2,Math.min(25,fov));},{passive:false});
+    canvas.addEventListener('wheel', function(e){ e.preventDefault(); fov*=(1+e.deltaY*0.001); fov=Math.max(2,Math.min(25,fov)); }, {passive:false});
     let ltd=0;
-    canvas.addEventListener('touchstart',function(e){if(e.touches.length===2){const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;ltd=Math.sqrt(dx*dx+dy*dy);}});
-    canvas.addEventListener('touchmove',function(e){if(e.touches.length===2){e.preventDefault();const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY,d=Math.sqrt(dx*dx+dy*dy);if(ltd>0){fov*=ltd/d;fov=Math.max(2,Math.min(25,fov));}ltd=d;}},{passive:false});
+    canvas.addEventListener('touchstart', function(e){ if(e.touches.length===2){ const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY; ltd=Math.sqrt(dx*dx+dy*dy); }});
+    canvas.addEventListener('touchmove', function(e){ if(e.touches.length===2){ e.preventDefault(); const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY,d=Math.sqrt(dx*dx+dy*dy); if(ltd>0){fov*=ltd/d;fov=Math.max(2,Math.min(25,fov));}ltd=d; }}, {passive:false});
 
-    function render(){
-        if(autoRotate)rotAngle+=0.008;
-        gl.uniform2f(uniforms.u_res,canvas.width,canvas.height);
-        gl.uniform1f(uniforms.u_a,spin);
-        gl.uniform1f(uniforms.u_incl,incl*Math.PI/180);
-        gl.uniform1f(uniforms.u_fov,fov);
-        gl.uniform1f(uniforms.u_disk,showDisk);
-        gl.uniform1f(uniforms.u_grid,showGrid);
-        gl.uniform1f(uniforms.u_temp,diskTemp);
-        gl.uniform1f(uniforms.u_phi0,rotAngle);
-        gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-        fc++;const now=performance.now();
-        if(now-lastFT>800){document.getElementById('fps').textContent=Math.round(fc/((now-lastFT)*0.001));fc=0;lastFT=now;}
+    function render() {
+        if (autoRotate) rotAngle += 0.008;
+        gl.uniform2f(uniforms.u_res, canvas.width, canvas.height);
+        gl.uniform1f(uniforms.u_a, spin);
+        gl.uniform1f(uniforms.u_incl, incl*Math.PI/180);
+        gl.uniform1f(uniforms.u_fov, fov);
+        gl.uniform1f(uniforms.u_disk, showDisk);
+        gl.uniform1f(uniforms.u_grid, showGrid);
+        gl.uniform1f(uniforms.u_temp, diskTemp);
+        gl.uniform1f(uniforms.u_phi0, rotAngle);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        fc++; const now=performance.now();
+        if (now-lastFT > 800) { document.getElementById('fps').textContent=Math.round(fc/((now-lastFT)*0.001)); fc=0; lastFT=now; }
         requestAnimationFrame(render);
     }
 
-    updInfo();refreshLabels();
-    loadMsg.textContent='Compiling shaders…';
+    updInfo(); refreshLabels();
+    loadMsg.textContent = 'Compiling shaders…';
     resize();
-    const initResult=buildProgram();
-    if(!initResult.ok){loadMsg.textContent='Shader compile failed';errMsg.style.display='block';errMsg.textContent=initResult.error;return;}
-    loadMsg.textContent='Tracing first frame…';
-    requestAnimationFrame(()=>{render();setTimeout(()=>loadEl.classList.add('hidden'),500);});
+    const initResult = buildProgram();
+    if (!initResult.ok) { loadMsg.textContent='Shader compile failed'; errMsg.style.display='block'; errMsg.textContent=initResult.error; return; }
+    loadMsg.textContent = 'Tracing first frame…';
+    requestAnimationFrame(() => { render(); setTimeout(()=>loadEl.classList.add('hidden'), 500); });
 })();
 </script>
 </body>
