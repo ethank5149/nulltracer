@@ -163,8 +163,17 @@ http://nulltracer.indecisivephysicist.space:8090 {
 		try_files {path} /index.html
 		file_server
 
+		# ── HTML: always revalidate ──────────────────────────────
 		@html path *.html
 		header @html Cache-Control "no-cache"
+
+		# ── CSS & JS: aggressive cache ───────────────────────────
+		@static_assets path *.css *.js
+		header @static_assets Cache-Control "public, max-age=31536000, immutable"
+
+		# ── Images: aggressive cache ─────────────────────────────
+		@images path *.png *.svg *.jpg *.jpeg *.webp *.avif *.ico
+		header @images Cache-Control "public, max-age=31536000, immutable"
 	}
 
 	handle_errors {

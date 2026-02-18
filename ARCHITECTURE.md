@@ -46,12 +46,19 @@ sequenceDiagram
 ```
 nulltracer/server/
 ├── app.py                 # FastAPI application entry point
-├── shader.py              # Python port of buildFragSrc + vertex shader
+├── shader.py              # Thin orchestrator composing shader from modules
+├── shader_base.py         # Common shader header, defines, uniforms, shared geoRHS()
+├── backgrounds.py         # Background GLSL functions (bgStars, bgChecker, bgColorMap, disk)
+├── integrators/           # Modular integrator system
+│   ├── __init__.py        # Integrator registry mapping names to generator functions
+│   ├── rk4.py             # RK4 integrator (4th-order Runge-Kutta)
+│   ├── yoshida4.py        # Yoshida 4th-order symplectic integrator
+│   ├── yoshida6.py        # Yoshida 6th-order symplectic integrator
+│   ├── yoshida8.py        # Yoshida 8th-order symplectic integrator
+│   └── rkdp8.py           # Dormand-Prince 8th-order adaptive integrator
 ├── renderer.py            # EGL context management + OpenGL rendering
 ├── isco.py                # ISCO calculation (port of iscoJS/iscoKN)
 ├── cache.py               # LRU cache keyed on parameter hash
-├── models.py              # Pydantic request/response models
-├── config.py              # Server configuration (env vars, defaults)
 ├── Dockerfile             # GPU-enabled container definition
 ├── requirements.txt       # Python dependencies
 └── tests/
@@ -94,9 +101,46 @@ async def render(params: RenderRequest) -> Response:
 
 **Shutdown**: On shutdown, destroy the EGL context and release GPU resources.
 
-### 2.3 Shader Generation (`shader.py`)
+### 2.3 Shader Generation (Modular Architecture)
 
-This module is a **direct Python port** of the JavaScript [`buildFragSrc()`](nulltracer/index.html:308) function. It must produce byte-identical GLSL output for the same input parameters.
+The shader generation pipeline has been refactored into a modular system with separate concerns:
+
+#### Orchestrator: `shader.py`
+
+A **thin orchestrator** that composes the complete fragment shader from multiple modules. It imports from:
+- [`shader_base.py`](server/shader_base.py) — Common header, `#define` constants, uniforms, shared `geoRHS()` function
+- [`backgrounds.py`](server/backgrounds.py) — Background GLSL functions (bgStars, bgChecker, bgColorMap, disk)
+- [`integrators/`](server/integrators/) — Integrator-specific GLSL code generators
+
+The main entry point:
+
+```python
+def build_frag_src(
+    steps: int = 200,
+    method: str = "separated",
+    obs_dist: float = 40.0,
+    star_layers: int = 3,
+    step_size: float = 0.30,
+    bg_mode: int = 1,
+) -> str:
+    """Return complete GLSL fragment shader source."""
+    # Compose from modules
+    parts = [
+        base_header(),  # from shader_base
+        define_uniforms(),  # from shader_base
+        background_functions(),  # from backgrounds
+        integrator_main_loop(),  # from integrators[method]
+    ]
+    return "\n".join(parts)
+```
+
+#### Shader Base: `shader_base.py`
+
+Contains the common shader infrastructure:
+- GLSL version directive and compatibility header
+- `#define` compile-time constants (STEPS, R0, RESC, RDISK, H_BASE, etc.)
+- Uniform declarations (u_res, u_a, u_incl, u_fov, u_disk, etc.)
+- Shared mathematical functions: `geoRHS()` for geodesic equations
 
 **Compile-time `#define` constants** (baked into shader source, require recompilation when changed):
 
@@ -124,25 +168,49 @@ This module is a **direct Python port** of the JavaScript [`buildFragSrc()`](nul
 | `u_temp` | `float` | Disk temperature multiplier |
 | `u_phi0` | `float` | Rotation angle (always 0.0 for server renders) |
 | `u_Q` | `float` | Electric charge parameter |
-| `u_isco` | `float` | ISCO radius (computed by `isco.py`) |
+| `u_isco` | `float` | ISCO radius (computed by [`isco.py`](server/isco.py)) |
 
-**Integrator selection**: The `method` parameter selects between two code paths:
-- `"separated"` — Separated first-order equations with Verlet midpoint (lines 686–795 of `index.html`)
-- `"hamiltonian"` — Full Hamiltonian RK4 integrator (lines 542–684 of `index.html`)
+#### Backgrounds: `backgrounds.py`
 
-The Python function signature:
+Provides environment rendering functions:
+- `bgStars()` — Procedural star field with depth layers
+- `bgChecker()` — Checkerboard pattern background
+- `bgColorMap()` — Gradient-based color mapping
+- Disk color/temperature functions
+
+#### Integrators: `integrators/` Module System
+
+A registry-based plugin system for numerical integration schemes. Each integrator is a separate module implementing the geodesic integration main loop.
+
+**Integrator registry** ([`integrators/__init__.py`](server/integrators/__init__.py)):
 
 ```python
-def build_frag_src(
-    steps: int = 200,
-    method: str = "separated",
-    obs_dist: float = 40.0,
-    star_layers: int = 3,
-    step_size: float = 0.30,
-    bg_mode: int = 1,
-) -> str:
-    """Return complete GLSL fragment shader source."""
+INTEGRATORS = {
+    "rk4": get_rk4_loop,
+    "yoshida4": get_yoshida4_loop,
+    "yoshida6": get_yoshida6_loop,
+    "yoshida8": get_yoshida8_loop,
+    "rkdp8": get_rkdp8_loop,
+}
 ```
+
+The `method` parameter selects from this registry:
+
+| Method | Module | Description |
+|--------|--------|-------------|
+| `"rk4"` | [`rk4.py`](server/integrators/rk4.py) | 4th-order Runge-Kutta integrator |
+| `"yoshida4"` | [`yoshida4.py`](server/integrators/yoshida4.py) | 4th-order symplectic integrator |
+| `"yoshida6"` | [`yoshida6.py`](server/integrators/yoshida6.py) | 6th-order symplectic integrator |
+| `"yoshida8"` | [`yoshida8.py`](server/integrators/yoshida8.py) | 8th-order symplectic integrator |
+| `"rkdp8"` | [`rkdp8.py`](server/integrators/rkdp8.py) | Dormand-Prince adaptive 8th-order integrator |
+
+Each integrator module exports a function that returns the GLSL main loop code as a string. The orchestrator (`shader.py`) composes the complete shader by selecting the appropriate integrator module.
+
+**Benefits of modular integrators:**
+- **Separation of concerns** — Each integrator algorithm is isolated in its own module
+- **Easy extension** — Adding a new integrator requires only adding a new module to `integrators/`
+- **Code reuse** — All integrators share `geoRHS()` and other common functions from `shader_base.py`
+- **Reduced duplication** — Formerly all integrators were inline in a single 53KB shader.py
 
 **Vertex shader** is trivial and constant:
 
@@ -334,6 +402,35 @@ All configuration via environment variables with sensible defaults:
 | `CORS_ORIGINS` | `"*"` | Comma-separated allowed origins |
 | `LOG_LEVEL` | `"info"` | Logging level |
 
+### 2.10 Server Module Dependency Graph
+
+```
+app.py (FastAPI entry point)
+├── renderer.py             → Manages EGL context and OpenGL rendering
+│   └── shader.py           → Compiles shaders from modules
+├── shader.py               → Thin orchestrator composing shader
+│   ├── shader_base.py      → Common header, defines, uniforms, geoRHS()
+│   ├── backgrounds.py      → Background functions (bgStars, bgChecker, bgColorMap)
+│   └── integrators/
+│       ├── rk4.py          → RK4 integrator GLSL generator
+│       ├── yoshida4.py     → Yoshida 4th-order integrator
+│       ├── yoshida6.py     → Yoshida 6th-order integrator
+│       ├── yoshida8.py     → Yoshida 8th-order integrator
+│       └── rkdp8.py        → Dormand-Prince adaptive integrator
+├── isco.py                 → ISCO calculation (called by renderer)
+├── cache.py                → Image caching layer
+└── models.py               → Pydantic request/response validation
+```
+
+**Module responsibilities:**
+- **`shader.py`** — Composes the complete fragment shader by selecting and assembling code from submodules
+- **`shader_base.py`** — Provides common infrastructure: defines, uniforms, shared math functions
+- **`backgrounds.py`** — Generates background environment code (procedural stars, checkerboard, colormap)
+- **`integrators/`** — Registry of independent integrator algorithms; each module returns GLSL code for its main loop
+- **`renderer.py`** — Orchestrates the GPU pipeline: context creation, program compilation, rendering
+- **`isco.py`** — Computes ISCO radius from spin and charge parameters
+- **`cache.py`** — LRU image cache to avoid redundant GPU work
+
 ---
 
 ## 3. API Contract
@@ -468,9 +565,52 @@ app.add_middleware(
 
 ---
 
-## 4. Client Modifications
+## 4. Client Architecture (ES6 Modular Design)
 
-All changes are made within the existing [`nulltracer/index.html`](nulltracer/index.html) file. No additional client-side files are needed.
+The client has been refactored from a single 94KB `index.html` file into a modular ES6 architecture with separate concerns:
+
+### 4.0 Frontend File Structure
+
+```
+nulltracer/
+├── index.html              # HTML markup + vertex shader + module import
+├── styles.css              # All CSS extracted from inline <style> tags
+└── js/
+    ├── main.js             # ES6 module entry point, shared state, initialization
+    ├── shader-generator.js # buildFragSrc() for dynamic GLSL shader generation
+    ├── isco-calculator.js  # ISCO calculation functions (port of iscoJS/iscoKN)
+    ├── webgl-renderer.js   # WebGL context, program compilation, rendering loop
+    ├── server-client.js    # Server rendering fetch logic, hybrid mode switching
+    └── ui-controller.js    # DOM event handlers, slider logic, panel controls
+```
+
+**Benefits of modular architecture:**
+- **Parallel loading** — Browser downloads modules in parallel, reducing initial load time
+- **Caching** — Individual modules can be cached independently
+- **Code reuse** — Each module has a single responsibility; easy to understand and test
+- **Reduced duplication** — No longer need to maintain identical shader code in both JS and Python (server imports the JS version)
+- **Developer velocity** — Easier to locate and modify functionality within focused modules
+
+### 4.0.1 Frontend Module Dependency Graph
+
+```
+main.js (entry point)
+├── shader-generator.js     → Exports buildFragSrc(params) → string
+├── isco-calculator.js      → Exports iscoJS(), iscoKN()
+├── webgl-renderer.js       → Exports WebGLRenderer class
+│   └── shader-generator.js → Uses buildFragSrc() to compile shaders
+├── server-client.js        → Exports fetchServerRender(), hybrid mode logic
+└── ui-controller.js        → Exports UIController class
+    ├── shader-generator.js → Reads config to build shaders locally
+    ├── isco-calculator.js  → Updates ISCO display
+    └── server-client.js    → Triggers server renders on param change
+```
+
+**Key integration points:**
+- `main.js` initializes shared state and coordinates all modules
+- `shader-generator.js` is imported by both client (for local WebGL) and server (Python port for server-side rendering)
+- `ui-controller.js` listens for DOM events and coordinates parameter updates across all modules
+- `server-client.js` manages the hybrid rendering flow (debounce, fetch, crossfade)
 
 ### 4.1 Device Detection
 
@@ -498,7 +638,7 @@ This is a **suggestion** — the user can always manually toggle server renderin
 
 ### 4.2 Configuration State
 
-Add these variables to the application IIFE:
+Add these variables to the application IIFE (in `main.js`):
 
 ```javascript
 let serverUrl = "";           // Empty = disabled. Set via UI or auto-detect.
@@ -508,9 +648,9 @@ let pendingFetch = null;      // AbortController for in-flight request
 let debounceTimer = null;     // 200ms debounce timer
 ```
 
-### 4.3 Hybrid Rendering Flow
+### 4.3 Hybrid Rendering Flow (in `server-client.js` and `ui-controller.js`)
 
-#### Step 1: Local Low-Res Preview
+#### Step 1: Local Low-Res Preview (in `webgl-renderer.js`)
 
 When server rendering is enabled, override the resolution scale to render locally at a fixed low resolution for instant feedback:
 
@@ -530,7 +670,7 @@ Also reduce local quality settings when server mode is active:
 - `stepSize`: 0.5
 - `starLayers`: 1
 
-#### Step 2: Debounced Server Request
+#### Step 2: Debounced Server Request (in `server-client.js`)
 
 On any parameter change, start a 200ms debounce timer. If the user changes another parameter within 200ms, the timer resets. When the timer fires, send a render request:
 
@@ -578,7 +718,7 @@ function requestServerRender() {
 
 Call `requestServerRender()` from every parameter change handler (spin, charge, inclination, etc.) and after `recompile()`.
 
-#### Step 3: Crossfade Overlay
+#### Step 3: Crossfade Overlay (in `index.html` and `server-client.js`)
 
 Create an `<img>` element positioned over the canvas. When the server image arrives, fade it in:
 
@@ -614,7 +754,7 @@ The CSS `z-index` layering:
 - `serverImg` overlay: z-index 1
 - UI panels: z-index 20 (already set)
 
-### 4.4 Fallback Behavior
+### 4.4 Fallback Behavior (in `server-client.js`)
 
 If the server is unavailable:
 
@@ -625,7 +765,7 @@ If the server is unavailable:
 3. **Retry**: Periodically re-probe `/health` every 30 seconds when `serverAvailable === false`
 4. **Manual override**: User can always force-disable server rendering via the UI toggle
 
-### 4.5 UI Additions
+### 4.5 UI Additions (in `index.html` and `ui-controller.js`)
 
 Add a server rendering toggle to the settings panel:
 
@@ -652,61 +792,189 @@ The `#server-row` is shown only when a server URL is configured (via URL paramet
 
 ## 5. File Structure Summary
 
-### New Files
+### Frontend — ES6 Modular Architecture
 
 | File | Purpose |
 |------|---------|
-| `nulltracer/server/app.py` | FastAPI application with `/render` and `/health` endpoints |
-| `nulltracer/server/shader.py` | Python port of `buildFragSrc()` — generates identical GLSL |
-| `nulltracer/server/renderer.py` | EGL context creation, FBO management, OpenGL render calls |
-| `nulltracer/server/isco.py` | Python port of `iscoJS()` and `iscoKN()` |
-| `nulltracer/server/cache.py` | LRU image cache with memory limits |
-| `nulltracer/server/models.py` | Pydantic models for request validation |
-| `nulltracer/server/config.py` | Environment-based configuration |
-| `nulltracer/server/Dockerfile` | NVIDIA GPU-enabled container |
-| `nulltracer/server/requirements.txt` | Python dependencies |
-| `nulltracer/server/tests/test_shader.py` | Shader output parity tests |
-| `nulltracer/server/tests/test_isco.py` | ISCO calculation parity tests |
-| `nulltracer/server/tests/test_renderer.py` | End-to-end render pipeline tests |
+| [`nulltracer/index.html`](index.html:1) | HTML markup + vertex shader + ES6 module import |
+| [`nulltracer/styles.css`](styles.css:1) | All CSS extracted from inline `<style>` tags |
+| [`nulltracer/js/main.js`](js/main.js:1) | ES6 module entry point, shared state management, initialization |
+| [`nulltracer/js/shader-generator.js`](js/shader-generator.js:1) | `buildFragSrc()` for dynamic GLSL shader generation |
+| [`nulltracer/js/isco-calculator.js`](js/isco-calculator.js:1) | ISCO calculation functions (port of iscoJS/iscoKN) |
+| [`nulltracer/js/webgl-renderer.js`](js/webgl-renderer.js:1) | WebGL context, program compilation, rendering loop |
+| [`nulltracer/js/server-client.js`](js/server-client.js:1) | Server rendering fetch logic, hybrid mode switching |
+| [`nulltracer/js/ui-controller.js`](js/ui-controller.js:1) | DOM event handlers, slider logic, panel controls |
 
-### Modified Files
+### Backend — Modular Shader Architecture
 
-| File | Changes |
+| File | Purpose |
 |------|---------|
-| [`nulltracer/index.html`](nulltracer/index.html) | Add server rendering toggle, debounced fetch, crossfade overlay, device detection, fallback logic |
+| [`nulltracer/server/app.py`](server/app.py:1) | FastAPI application with `/render` and `/health` endpoints |
+| [`nulltracer/server/shader.py`](server/shader.py:1) | Thin orchestrator composing shader from modules |
+| [`nulltracer/server/shader_base.py`](server/shader_base.py:1) | Common shader header, defines, uniforms, shared `geoRHS()` |
+| [`nulltracer/server/backgrounds.py`](server/backgrounds.py:1) | Background GLSL functions (bgStars, bgChecker, bgColorMap, disk) |
+| [`nulltracer/server/integrators/__init__.py`](server/integrators/__init__.py:1) | Integrator registry mapping names to generator functions |
+| [`nulltracer/server/integrators/rk4.py`](server/integrators/rk4.py:1) | RK4 integrator (4th-order Runge-Kutta) |
+| [`nulltracer/server/integrators/yoshida4.py`](server/integrators/yoshida4.py:1) | Yoshida 4th-order symplectic integrator |
+| [`nulltracer/server/integrators/yoshida6.py`](server/integrators/yoshida6.py:1) | Yoshida 6th-order symplectic integrator |
+| [`nulltracer/server/integrators/yoshida8.py`](server/integrators/yoshida8.py:1) | Yoshida 8th-order symplectic integrator |
+| [`nulltracer/server/integrators/rkdp8.py`](server/integrators/rkdp8.py:1) | Dormand-Prince 8th-order adaptive integrator |
+| [`nulltracer/server/renderer.py`](server/renderer.py:1) | EGL context creation, FBO management, OpenGL render calls |
+| [`nulltracer/server/isco.py`](server/isco.py:1) | ISCO calculation (port of iscoJS/iscoKN) |
+| [`nulltracer/server/cache.py`](server/cache.py:1) | LRU image cache with memory limits |
+| [`nulltracer/server/Dockerfile`](server/Dockerfile:1) | NVIDIA GPU-enabled container |
+| [`nulltracer/server/requirements.txt`](server/requirements.txt:1) | Python dependencies |
+
+### Unchanged Files
+
+| File | Status |
+|------|--------|
+| `nulltracer/server/generate_icon.py` | No changes |
+| `nulltracer/docker-compose.yml` | No changes |
+| `nulltracer/Caddyfile.current` | No changes |
+| `nulltracer/deploy.sh` | No changes |
+| `nulltracer/README.md` | No changes |
 
 ---
 
-## 6. Rendering Pipeline Detail
+## 6. Performance Benefits of Modular Architecture
 
-### 6.1 Server-Side OpenGL Render Steps
+The refactored modular structure provides significant performance and maintainability improvements:
+
+### Frontend Benefits
+
+- **Reduced initial load size**: Frontend went from a single 94KB HTML file to:
+  - `index.html` (8.7KB) — markup only
+  - `styles.css` (6.4KB) — stylesheet  
+  - `js/main.js` (3.4KB) — entry point
+  - `js/shader-generator.js` (50.6KB) — downloaded on demand
+  - Total cached: ~69KB with browser parallelization
+  
+- **Parallel module loading**: Browser downloads CSS and JS modules in parallel, reducing critical path time
+
+- **Browser caching**: Each module is independently cacheable. Updates to UI code don't invalidate shader-generator cache, and vice versa
+
+- **Code splitting opportunity**: Large modules like `shader-generator.js` can be lazy-loaded, deferring expensive computation until needed
+
+### Backend Benefits
+
+- **Reduced file size**: Shader generation went from a single 53KB monolithic `shader.py` to:
+  - `shader.py` (1.7KB) — orchestrator
+  - `shader_base.py` (6.6KB) — shared infrastructure
+  - `backgrounds.py` (5KB) — background functions
+  - `integrators/` (~32KB total) — modular integrators
+  - Total: ~45KB with clear separation of concerns
+
+- **Shader program caching**: Server caches compiled shader programs by define-tuple (method, steps, obs_dist, etc.), avoiding recompilation when only uniforms change. The modular structure makes it easy to identify what changed.
+
+- **Easy extension**: Adding a new integration method requires only adding a new file to `integrators/`. No need to edit the monolithic shader.py.
+
+- **Memory efficiency**: Backend loads only the integrator code needed for the current request; unused integrators stay unloaded.
+
+- **Reduced duplication**: Server's `shader_base.py` provides shared math (geoRHS) to all integrators; no code duplication across integrator files.
+
+### Shared Benefits
+
+- **Maintainability**: Developers can understand and modify individual modules without understanding the entire system
+
+- **Testing**: Each module can be tested in isolation (e.g., shader parity tests, integrator validation tests)
+
+- **Code review**: Smaller focused files are easier to review and reason about
+
+---
+
+## 7. Rendering Pipeline Detail
+
+### 7.1 Server-Side OpenGL Render Steps
 
 ```mermaid
 flowchart TD
-    A[Receive RenderRequest] --> B{Cached?}
-    B -->|Yes| Z[Return cached image]
-    B -->|No| C[Compute ISCO from spin + charge]
-    C --> D{Shader program cached?}
-    D -->|Yes| E[Reuse compiled program]
-    D -->|No| F[Build GLSL via shader.py]
-    F --> G[Compile vertex + fragment shaders]
-    G --> H[Link program]
-    H --> I[Store in shader cache]
-    I --> E
-    E --> J[Create FBO + texture at resolution]
-    J --> K[Bind FBO, set viewport]
-    K --> L[Set all uniforms]
-    L --> M[Draw fullscreen quad - TRIANGLE_STRIP 4 verts]
-    M --> N[glFinish - wait for GPU]
-    N --> O[glReadPixels -> numpy RGBA array]
-    O --> P[Pillow Image.fromarray]
-    P --> Q[Encode JPEG or WebP at quality setting]
-    Q --> R[Store in image cache]
-    R --> S[Delete FBO + texture]
-    S --> Z
+    Start["Receive RenderRequest"]
+    
+    subgraph Cache["CACHE LOOKUP (Fast Path ⚡)"]
+        A{"Image cached?"}
+        A -->|"Yes ✓"| CacheHit["Return cached image"]
+    end
+    
+    Start --> A
+    A -->|"No"| CalcISCO["Compute ISCO from spin + charge"]
+    
+    subgraph ShaderCompile["SHADER COMPILATION & CACHING"]
+        B{"Shader program cached?"}
+        B -->|"Yes ✓"| ShaderReuse["Reuse compiled program"]
+        B -->|"No"| Build["Build GLSL via shader.py"]
+        Build --> BuildCompErr{"Build succeeded?"}
+        BuildCompErr -->|"No ✗"| ErrBuild["Log shader compilation error"]
+        ErrBuild --> CleanBuild1["Return 500 error response"]
+        BuildCompErr -->|"Yes"| Compile["Compile vertex + fragment shaders"]
+        Compile --> CompErr{"Compilation succeeded?"}
+        CompErr -->|"No ✗"| ErrComp["Log GL compilation error"]
+        ErrComp --> CleanComp["Return 500 error response"]
+        CompErr -->|"Yes"| Link["Link program"]
+        Link --> LinkErr{"Link succeeded?"}
+        LinkErr -->|"No ✗"| ErrLink["Log GL link error"]
+        ErrLink --> CleanLink["Return 500 error response"]
+        LinkErr -->|"Yes"| Store["Store in shader cache"]
+        Store --> ShaderReuse
+    end
+    
+    CalcISCO --> B
+    CleanBuild1 --> End1["End - Error Response"]
+    CleanComp --> End2["End - Error Response"]
+    CleanLink --> End3["End - Error Response"]
+    
+    subgraph GPURender["GPU RENDERING & READBACK"]
+        J{"Create FBO + texture succeeded?"}
+        J -->|"No ✗"| ErrFBO["Log FBO creation error"]
+        ErrFBO --> CleanFBO["Return 500 error response"]
+        J -->|"Yes"| Bind["Bind FBO, set viewport"]
+        Bind --> SetUniforms["Set all uniforms"]
+        SetUniforms --> Draw["Draw fullscreen quad<br/>TRIANGLE_STRIP 4 vertices"]
+        Draw --> Finish["glFinish - wait for GPU"]
+        Finish --> ReadPix["glReadPixels → numpy RGBA array"]
+        ReadPix --> ReadErr{"Read succeeded?"}
+        ReadErr -->|"No ✗"| ErrRead["Log readback error"]
+        ErrRead --> CleanRead["Clean up FBO + texture"]
+        CleanRead --> EndRead["Return 500 error response"]
+        ReadErr -->|"Yes"| ToPillow["Pillow Image.fromarray"]
+    end
+    
+    ShaderReuse --> J
+    CleanFBO --> End4["End - Error Response"]
+    CleanRead --> End5["End - Error Response"]
+    
+    subgraph ImageEncode["IMAGE ENCODING & CACHING"]
+        K["Encode JPEG/WebP at quality setting"]
+        EncErr{"Encoding succeeded?"}
+        EncErr -->|"No ✗"| ErrEnc["Log encoding error"]
+        ErrEnc --> CleanEnc["Clean up FBO + texture"]
+        CleanEnc --> EndEnc["Return 500 error response"]
+        EncErr -->|"Yes"| Cache2["Store in image cache"]
+    end
+    
+    ToPillow --> K
+    K --> EncErr
+    CleanEnc --> End6["End - Error Response"]
+    
+    subgraph ResourceCleanup["RESOURCE CLEANUP"]
+        S["Delete FBO + texture"]
+    end
+    
+    Cache2 --> S
+    S --> CacheHit
+    CacheHit --> Success["✓ Return image to client"]
+    
+    style Cache fill:#90EE90
+    style CacheHit fill:#32CD32,color:#fff
+    style ShaderReuse fill:#87CEEB
+    style GPURender fill:#FFB6C1
+    style ImageEncode fill:#DDA0DD
+    style ResourceCleanup fill:#F0E68C
+    style Start fill:#fff,stroke:#333,stroke-width:2px
+    style Success fill:#32CD32,color:#fff,stroke:#333,stroke-width:2px
 ```
 
-### 6.2 Fullscreen Quad Geometry
+### 7.2 Fullscreen Quad Geometry
 
 The server uses the same geometry as the client — a triangle strip with 4 vertices covering clip space:
 
@@ -716,7 +984,7 @@ vertices = [-1, -1,  1, -1,  -1, 1,  1, 1]
 
 The vertex shader passes `a_pos` through as `v_uv`, giving the fragment shader UV coordinates in `[-1, 1]` range — identical to the client.
 
-### 6.3 Uniform Setup
+### 7.3 Uniform Setup
 
 ```python
 def set_uniforms(program: int, params: RenderRequest, isco: float):
@@ -737,9 +1005,9 @@ Note: `u_phi0` is always `0.0` for server renders since there is no animation. I
 
 ---
 
-## 7. Key Technical Decisions
+## 8. Key Technical Decisions
 
-### 7.1 Why EGL Instead of OSMesa
+### 8.1 Why EGL Instead of OSMesa
 
 **EGL with hardware GPU** is chosen over OSMesa (software rendering) because:
 - The shader is compute-intensive (200+ integration steps per pixel)
@@ -747,28 +1015,28 @@ Note: `u_phi0` is always `0.0` for server renders since there is no animation. I
 - EGL supports headless rendering without X11/Wayland via `EGL_EXT_platform_device`
 - NVIDIA's container toolkit provides EGL support out of the box
 
-### 7.2 Why OpenGL 2.1 Compatibility Profile
+### 8.2 Why OpenGL 2.1 Compatibility Profile
 
 The client shader uses WebGL 1.0 syntax (`attribute`, `varying`, `gl_FragColor`, no `#version` directive). To keep the shader source identical:
 - Use OpenGL 2.1 compatibility profile on the server
 - Prepend only `#version 120\n` to the fragment shader source (OpenGL requires it, but the syntax is compatible)
 - This avoids maintaining two shader codepaths
 
-### 7.3 Why JPEG/WebP Instead of PNG
+### 8.3 Why JPEG/WebP Instead of PNG
 
 - **File size**: A 1920×1080 render is ~200KB as WebP quality 85, vs ~5MB as PNG
 - **Latency**: Smaller payload = faster transfer, especially on mobile networks
 - **Quality**: At quality 85+, compression artifacts are imperceptible for this type of content (smooth gradients, no sharp text)
 - **WebP preferred**: Better compression than JPEG at same quality; fallback to JPEG for older browsers
 
-### 7.4 Why Single-Worker with Lock
+### 8.4 Why Single-Worker with Lock
 
 - OpenGL contexts are not thread-safe
 - A single GPU can only execute one shader at a time anyway
 - The lock serializes requests cleanly; queued requests wait in FIFO order
 - For multi-GPU scaling, run multiple containers (one per GPU)
 
-### 7.5 Cache Key Design
+### 8.5 Cache Key Design
 
 The cache key is a truncated SHA-256 of the canonical JSON of all parameters. This means:
 - Identical parameters always produce the same key
@@ -778,7 +1046,7 @@ The cache key is a truncated SHA-256 of the canonical JSON of all parameters. Th
 
 ---
 
-## 8. Error Handling
+## 9. Error Handling
 
 | Scenario | Server Response | Client Behavior |
 |----------|----------------|-----------------|
@@ -791,7 +1059,7 @@ The cache key is a truncated SHA-256 of the canonical JSON of all parameters. Th
 
 ---
 
-## 9. Future Considerations
+## 10. Future Considerations
 
 These are **out of scope** for the initial implementation but worth noting:
 
