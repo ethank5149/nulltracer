@@ -1,0 +1,31 @@
+version: "3.8"
+
+# Nulltracer Renderer — GPU-accelerated server for hybrid rendering
+#
+# Unraid deployment:
+#   This compose file runs ONLY the renderer. Your existing Caddy container
+#   handles reverse-proxying and static file serving. See the Caddyfile for
+#   the snippet to add to your existing Caddy configuration.
+#
+# Usage:
+#   cd nulltracer
+#   docker-compose up -d
+#
+# The renderer will be available at http://<host>:8420 on your Docker network.
+# Your existing Caddy container should proxy /render and /health to this service.
+
+services:
+  renderer:
+    build: ./server
+    container_name: nulltracer-renderer
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
+      - PYOPENGL_PLATFORM=egl
+    ports:
+      - "8420:8420"
+    restart: unless-stopped
+    labels:
+      - "net.unraid.docker.managed=composeman"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/selfhosters/unraid-templates/master/templates/img/default.png"

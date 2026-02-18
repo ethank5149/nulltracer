@@ -1,0 +1,173 @@
+{
+	# Cloudflare Tunnel terminates TLS — Caddy listens plain HTTP only
+	http_port 8080
+	https_port 8443
+	auto_https off
+
+	# Structured JSON logs for easy ingestion by Loki / Grafana / etc.
+	log default {
+		output file /config/access.log {
+			roll_size 50MiB
+			roll_keep 5
+			roll_keep_for 168h # 7 days
+		}
+		format json
+		level INFO
+	}
+}
+
+# ─── Reusable snippets ────────────────────────────────────────────
+
+(security_headers) {
+	header {
+		# TLS hardening (Cloudflare sees this and forwards it)
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+
+		# Frame / embed protection
+		X-Frame-Options "SAMEORIGIN"
+		Content-Security-Policy "frame-ancestors 'self'"
+
+		# MIME-type sniffing
+		X-Content-Type-Options "nosniff"
+
+		# Referrer
+		Referrer-Policy "strict-origin-when-cross-origin"
+
+		# Permissions-Policy replaces the deprecated Feature-Policy
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+
+		# Crawler suppression
+		X-Robots-Tag "noindex, nofollow, nosnippet, noarchive"
+
+		# Remove the Caddy server header
+		-Server
+	}
+}
+
+(compression) {
+	encode zstd gzip {
+		# Only compress text-based types; skip already-compressed binaries
+		match {
+			header Content-Type text/*
+			header Content-Type application/javascript*
+			header Content-Type application/json*
+			header Content-Type application/xml*
+			header Content-Type image/svg+xml*
+		}
+	}
+}
+
+# ─── Production site (Cloudflare tunnel → :8080) ─────────────────
+# Serves the Vite build output. Only updated by deploy.sh.
+
+:8080 {
+	import security_headers
+	import compression
+
+	root * /public/music-playlists/dist
+	file_server {
+		precompressed zstd br gzip # serve .br / .gz / .zst if present
+	}
+
+	# ── HTML: always revalidate ──────────────────────────────────
+	@html path *.html
+	header @html {
+		Cache-Control "no-cache"
+	}
+
+	# ── Hashed assets (Vite output): immutable forever-cache ─────
+	@hashed_assets path /assets/*
+	header @hashed_assets {
+		Cache-Control "public, max-age=31536000, immutable"
+	}
+
+	# ── FLAC audio: week-long cache, byte-range support ──────────
+	@audio path *.flac *.mp3 *.ogg *.opus *.m4a *.wav
+	header @audio {
+		Cache-Control "public, max-age=604800, stale-while-revalidate=86400"
+		Accept-Ranges "bytes"
+	}
+
+	# ── Images: immutable forever-cache ──────────────────────────
+	@images path *.jpg *.jpeg *.png *.gif *.svg *.webp *.avif *.ico
+	header @images {
+		Cache-Control "public, max-age=31536000, immutable"
+	}
+
+	# ── Lyrics HTML: light cache, revalidate ─────────────────────
+	@lyrics path /lyrics/*
+	header @lyrics {
+		Cache-Control "public, max-age=3600, must-revalidate"
+	}
+
+	# ── Catch-all: safe default ──────────────────────────────────
+	@other {
+		not path *.html *.css *.js *.flac *.mp3 *.ogg *.opus *.m4a *.wav *.jpg *.jpeg *.png *.gif *.svg *.webp *.avif *.ico
+		not path /assets/*
+		not path /lyrics/*
+	}
+	header @other {
+		Cache-Control "public, max-age=3600"
+	}
+
+	# ── Error handling ───────────────────────────────────────────
+	handle_errors {
+		respond "{err.status_code} {err.status_text}" {err.status_code}
+	}
+}
+
+# ─── Development site (:8081, LAN access) ────────────────────────
+# Serves the source root directly. Every file edit is visible immediately.
+
+:8081 {
+	import security_headers
+	import compression
+
+	root * /public/music-playlists
+	file_server {
+		precompressed zstd br gzip
+	}
+
+	# Tag all responses so you can tell which environment you're on
+	header X-Environment "development"
+
+	# Never cache anything during development
+	header Cache-Control "no-store"
+
+	# ── Error handling ───────────────────────────────────────────
+	handle_errors {
+		respond "{err.status_code} {err.status_text}" {err.status_code}
+	}
+}
+
+# ─── Nulltracer (black hole renderer + API) ──────────────────────
+# API routes (/render, /health) are proxied to the renderer container.
+# Everything else is served as static files with SPA fallback.
+# The handle blocks are evaluated in order — first match wins.
+
+http://nulltracer.indecisivephysicist.space:8090 {
+	import security_headers
+	import compression
+
+	# ── API routes: proxy to renderer (matched first) ────────────
+	handle /render {
+		reverse_proxy 192.168.1.13:8420
+	}
+	handle /health {
+		reverse_proxy 192.168.1.13:8420
+	}
+
+	# ── Static files: everything else ────────────────────────────
+	handle {
+		root * /srv/nulltracer
+		try_files {path} /index.html
+		file_server
+
+		@html path *.html
+		header @html Cache-Control "no-cache"
+	}
+
+	handle_errors {
+		respond "{err.status_code} {err.status_text}" {err.status_code}
+	}
+}

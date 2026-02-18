@@ -12,7 +12,7 @@ Nulltracer simulates the visual appearance of black holes as they would appear t
 - **Gravitational lensing** — the bending of light from background stars and structures
 - **Frame-dragging effects** — the warping of spacetime by the black hole's rotation
 
-The simulator supports both **Kerr black holes** (spinning) and **Kerr-Newman black holes** (spinning with electric charge), allowing exploration of how these parameters affect the visual appearance.
+The simulator supports both **Kerr black holes** (spinning) and **Kerr-Newman black holes** (spinning with electric charge), allowing exploration of how these parameters affect the visual appearance. For mobile devices and low-power systems, Nulltracer can offload rendering to a GPU-accelerated server while maintaining a responsive local preview.
 
 ## Features
 
@@ -25,14 +25,145 @@ The simulator supports both **Kerr black holes** (spinning) and **Kerr-Newman bl
 - **Advanced controls** — configure integration steps, resolution scaling, step size, and observer distance
 - **Integrator options** — switch between separated first-order equations or Hamiltonian integration
 - **Full-screen capable** — for immersive visualization
+- **Hybrid server rendering** — offload GPU work to a server for mobile and low-power device support
+- **Three rendering modes** — Local Only (default), Hybrid (local preview + server quality), Server Only
+- **Mobile auto-detection** — automatically optimizes settings for mobile devices
+- **Server-side caching** — LRU cache for rendered frames to reduce redundant computations
 
 ## Usage
 
-Simply open `index.html` in a modern web browser with WebGL 2.0 support. No installation or server required — the entire application runs locally in your browser.
+Simply open `index.html` in a modern web browser with WebGL 2.0 support. For server rendering, see the [Server Rendering](#server-rendering) section below.
 
 ```
 Open nulltracer/index.html in your browser
 ```
+
+## Server Rendering
+
+The Nulltracer server provides GPU-accelerated frame rendering for mobile devices and low-power systems. The client can work in three modes: **Local Only** (default), **Hybrid**, or **Server Only**.
+
+### Quick Start (Docker)
+
+```bash
+cd nulltracer/server
+docker build -t nulltracer-server .
+docker run --gpus all -p 8420:8420 nulltracer-server
+```
+
+### Quick Start (Local)
+
+```bash
+cd nulltracer/server
+pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 8420
+```
+
+### Connecting the Client
+
+1. Open `index.html` in a browser
+2. Click the ⚙ (settings) button
+3. Enter the server URL (e.g., `http://your-server:8420`)
+4. Select **Hybrid** or **Server Only** mode
+
+### Rendering Modes
+
+- **Local Only** (default) — all rendering on client GPU, no server needed. Best for desktop browsers.
+- **Hybrid** — instant low-res local preview in the browser, plus high-quality server frames with crossfade. Optimal for mobile and low-power devices.
+- **Server Only** — dims local canvas, relies entirely on server rendering. Use when client GPU is unavailable.
+
+### API Endpoint
+
+- `POST /render` — renders a frame with specified parameters (black hole properties, ray-tracing settings), returns JPEG or WebP image
+- `GET /health` — server health check and status
+
+## Deployment
+
+The recommended deployment uses your **existing Caddy reverse proxy** (e.g., on Unraid) alongside a standalone renderer container. Caddy serves the static client and proxies API requests to the renderer, unifying everything under a single origin. This eliminates CORS issues and enables automatic same-origin server detection — the client auto-discovers the API without any manual URL configuration.
+
+### Unraid Deployment (Recommended)
+
+If you already have Caddy running as a Docker container on Unraid:
+
+#### Step 1: Build and start the renderer
+
+```bash
+# Build the image
+docker build -t nulltracer-renderer /mnt/user/scripts/nulltracer/server/
+
+# Run via docker-compose (renderer only)
+cd /mnt/user/scripts/nulltracer
+docker-compose up -d
+```
+
+Or create the container manually via the Unraid Docker tab using the template at [`nulltracer-renderer.xml`](nulltracer-renderer.xml). Key settings:
+- **Image:** `nulltracer-renderer` (built above)
+- **Port:** `8420:8420`
+- **Extra Parameters:** `--runtime=nvidia`
+- **Network:** Same network as your Caddy container
+
+#### Step 2: Mount the static files in Caddy
+
+Add a path mapping to your existing Caddy container:
+
+| Container Path | Host Path | Mode |
+|---|---|---|
+| `/srv/nulltracer` | `/mnt/user/scripts/nulltracer` | Read-Only |
+
+#### Step 3: Add the site block to your Caddyfile
+
+Add the following to your existing Caddy configuration (see [`Caddyfile`](Caddyfile) for all options):
+
+```
+nulltracer.yourdomain.com {
+    root * /srv/nulltracer
+    file_server
+
+    handle /render {
+        reverse_proxy nulltracer-renderer:8420
+    }
+    handle /health {
+        reverse_proxy nulltracer-renderer:8420
+    }
+
+    try_files {path} /index.html
+}
+```
+
+Replace `nulltracer.yourdomain.com` with your actual subdomain. Caddy handles HTTPS automatically.
+
+#### Step 4: Reload Caddy
+
+Restart your Caddy container or send a reload signal. Open `https://nulltracer.yourdomain.com` — the client will auto-detect the server and enable hybrid mode on mobile devices.
+
+### Docker Compose (Standalone)
+
+If you don't have an existing Caddy setup, the `docker-compose.yml` runs the renderer container. You'll need to set up a reverse proxy separately or access the renderer directly:
+
+```bash
+cd nulltracer
+docker-compose up -d
+```
+
+Then open `index.html` locally and enter `http://your-server:8420` as the server URL in settings.
+
+### Local Development
+
+```bash
+# Start the renderer
+cd nulltracer/server
+pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 8420
+
+# In another terminal, serve the static files (any HTTP server works)
+cd nulltracer
+python3 -m http.server 8080
+```
+
+Open `http://localhost:8080` — the client auto-detects the renderer at the same origin if you set up a reverse proxy, or enter `http://localhost:8420` manually in settings.
+
+### Same-Origin Auto-Detection
+
+When served through Caddy (or any reverse proxy), the client automatically probes `/health` at the same origin on page load. If the API responds, the server URL is configured automatically and hybrid mode is enabled on mobile devices — no manual setup required.
 
 ## Controls
 
@@ -70,6 +201,16 @@ The application solves the geodesic equations in Boyer-Lindquist coordinates, su
 - **Smooth regularization** techniques for numerical stability
 - **Equal-area sphere tiling** to eliminate polar distortion in background rendering
 
+### Server Architecture
+
+The Nulltracer server is built with **FastAPI** and a headless **EGL/OpenGL renderer** that mirrors the client's WebGL implementation:
+
+- **FastAPI + headless rendering** — uses EGL for GPU acceleration without a display server
+- **GLSL shader porting** — same core shaders as the client, generated dynamically in Python
+- **LRU cache** — 512 entries with 256MB capacity, keyed on parameter hash for frame reuse
+- **GPU serialization** — single-worker with `asyncio.Lock` to prevent concurrent GPU access
+- **Container image** — Dockerfile based on `nvidia/opengl:1.2-glvnd-runtime-ubuntu22.04`
+
 ## Version History
 
 All versions are preserved as git tags. To view a previous release, use `git checkout v0.X`:
@@ -96,9 +237,15 @@ git checkout main    # Return to the latest version
 
 ## Requirements
 
+### Client Requirements
 - **Modern web browser** with WebGL 2.0 support
 - **GPU acceleration** strongly recommended for real-time performance
 - No external dependencies or server required — runs entirely in the browser
+
+### Server Requirements (Optional)
+- **Python 3.8+**
+- **NVIDIA GPU** with EGL support (for high-quality server rendering)
+- **Docker with NVIDIA Container Toolkit** (recommended for easy deployment)
 
 ### Browser Compatibility
 
@@ -106,6 +253,26 @@ git checkout main    # Return to the latest version
 - Firefox 51+
 - Safari 15+ (on macOS/iOS)
 - Edge 79+
+
+## Project Structure
+
+```
+nulltracer/
+├── index.html                # Main client application
+├── Caddyfile                 # Caddy site block snippet (add to existing config)
+├── docker-compose.yml        # Renderer-only Docker Compose
+├── nulltracer-renderer.xml   # Unraid Docker template
+├── README.md                 # This file
+├── ARCHITECTURE.md           # Detailed technical documentation
+└── server/                   # GPU-accelerated FastAPI server
+    ├── app.py                # FastAPI application and /render endpoint
+    ├── renderer.py           # Headless EGL/OpenGL renderer
+    ├── shader.py             # GLSL shader generation
+    ├── isco.py               # Kerr-Newman ISCO calculations
+    ├── cache.py              # LRU frame cache
+    ├── requirements.txt      # Python dependencies
+    └── Dockerfile            # Docker image definition
+```
 
 ---
 

@@ -148,6 +148,21 @@
   }
   @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
 
+  #server-frame {
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    object-fit: cover; z-index: 1; pointer-events: none;
+    opacity: 0; transition: opacity 0.4s ease;
+  }
+  #server-frame.visible { opacity: 1; }
+
+  .server-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    margin-right: 4px; vertical-align: middle;
+  }
+  .server-dot.connected { background: #4a8; }
+  .server-dot.disconnected { background: #a44; }
+  .server-dot.loading { background: #a84; animation: pulse 1s infinite; }
+
   @media(max-width:720px){
     .controls{left:12px;bottom:12px;min-width:auto;max-width:calc(100vw - 24px);padding:12px 14px;}
     .settings-panel{left:12px;bottom:280px;min-width:auto;max-width:calc(100vw - 24px);padding:12px 14px;}
@@ -155,6 +170,12 @@
     .title-block{top:12px;left:12px;}
     .title-block h1{font-size:18px;}
     .readout{display:none;}
+    .panel { font-size: 9px; }
+    .controls { max-height: 50vh; overflow-y: auto; }
+    .settings-panel { bottom: auto; top: 12px; left: 12px; max-height: 60vh; overflow-y: auto; }
+    .legend-panel { display: none; }
+    .title-block h1 { font-size: 16px; }
+    .title-block .sub { font-size: 8px; }
   }
 </style>
 </head>
@@ -166,6 +187,7 @@
 </div>
 
 <canvas id="canvas"></canvas>
+<img id="server-frame" alt="">
 
 <div class="title-block">
   <h1>Kerr–Newman Spacetime</h1>
@@ -284,6 +306,30 @@
     <div class="control-label"><span>Star Layers</span><span class="control-value" id="starlayers-val">3</span></div>
     <input type="range" id="star-layers" min="1" max="4" step="1" value="3">
   </div>
+  <div class="control-row" id="server-settings">
+    <div class="panel-title" style="margin-top:4px">Server Rendering</div>
+    <div class="control-row">
+        <div class="control-label"><span>Server URL</span></div>
+        <input type="text" id="server-url" class="ctrl-select" style="width:100%" 
+               placeholder="http://localhost:8420" value="">
+    </div>
+    <div class="control-row">
+        <div class="control-label"><span>Mode</span></div>
+        <div class="toggle-row">
+            <button class="toggle-btn active" id="btn-local-only">Local Only</button>
+            <button class="toggle-btn" id="btn-hybrid">Hybrid</button>
+            <button class="toggle-btn" id="btn-server-only">Server Only</button>
+        </div>
+    </div>
+    <div class="control-row">
+        <div class="control-label"><span>Server Quality</span><span class="control-value" id="srv-quality-val">720p</span></div>
+        <select class="ctrl-select" id="srv-quality">
+            <option value="480">480p</option>
+            <option value="720" selected>720p</option>
+            <option value="1080">1080p</option>
+        </select>
+    </div>
+  </div>
 </div>
 
 <div class="readout">
@@ -293,6 +339,7 @@
   <span class="hl">integrator</span> <span id="integ-info">separated</span><br>
   <span class="hl">res</span> <span id="res">---</span><br>
   <span class="hl">fps</span> <span id="fps">--</span>
+  <br><span class="server-dot disconnected" id="server-dot"></span><span id="server-status">server off</span>
 </div>
 
 <script id="vs" type="x-shader/x-vertex">
@@ -813,6 +860,10 @@ void main() {
     let bgMode = 1;
     let qMethod='separated', qSteps=200, qResScale=1.0, qStepSize=0.3, qObsDist=40, qStarLayers=3;
 
+    // Forward declaration stub for hybrid server rendering (reassigned later)
+    let _scheduleServerRenderImpl = null;
+    function scheduleServerRender() { if (_scheduleServerRenderImpl) _scheduleServerRenderImpl(); }
+
     let program=null, uniforms={}, aPos=-1;
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -1011,6 +1062,7 @@ void main() {
         if (spin > maxA) { spin = Math.floor(maxA*500)/500; document.getElementById('spin').value = spin; document.getElementById('spin-val').textContent='a = '+spin.toFixed(3); }
         document.getElementById('charge-val').textContent='Q = '+charge.toFixed(3);
         updInfo();
+        scheduleServerRender();
     });
     // Also enforce constraint when spin changes
     document.getElementById('spin').addEventListener('input', function(){
@@ -1019,12 +1071,13 @@ void main() {
         if (charge > maxQ) { charge = Math.floor(maxQ*500)/500; document.getElementById('charge').value = charge; document.getElementById('charge-val').textContent='Q = '+charge.toFixed(3); }
         document.getElementById('spin-val').textContent='a = '+spin.toFixed(3);
         updInfo();
+        scheduleServerRender();
     });
-    document.getElementById('incl').addEventListener('input', function(){ incl=+this.value; document.getElementById('incl-val').innerHTML='&theta; = '+incl.toFixed(1)+'&deg;'; });
-    document.getElementById('temp').addEventListener('input', function(){ diskTemp=+this.value; document.getElementById('temp-val').textContent=diskTemp.toFixed(2); });
-    document.getElementById('btn-disk').addEventListener('click', function(){ showDisk=showDisk>0.5?0:1; this.classList.toggle('active',showDisk>0.5); });
-    document.getElementById('btn-grid').addEventListener('click', function(){ showGrid=showGrid>0.5?0:1; this.classList.toggle('active',showGrid>0.5); });
-    document.getElementById('btn-rotate').addEventListener('click', function(){ autoRotate=!autoRotate; this.classList.toggle('active',autoRotate); });
+    document.getElementById('incl').addEventListener('input', function(){ incl=+this.value; document.getElementById('incl-val').innerHTML='&theta; = '+incl.toFixed(1)+'&deg;'; scheduleServerRender(); });
+    document.getElementById('temp').addEventListener('input', function(){ diskTemp=+this.value; document.getElementById('temp-val').textContent=diskTemp.toFixed(2); scheduleServerRender(); });
+    document.getElementById('btn-disk').addEventListener('click', function(){ showDisk=showDisk>0.5?0:1; this.classList.toggle('active',showDisk>0.5); scheduleServerRender(); });
+    document.getElementById('btn-grid').addEventListener('click', function(){ showGrid=showGrid>0.5?0:1; this.classList.toggle('active',showGrid>0.5); scheduleServerRender(); });
+    document.getElementById('btn-rotate').addEventListener('click', function(){ autoRotate=!autoRotate; this.classList.toggle('active',autoRotate); if(!autoRotate) scheduleServerRender(); else { var sf=document.getElementById('server-frame'); if(sf) sf.classList.remove('visible'); } });
     document.getElementById('btn-settings').addEventListener('click', function(){
         const p=document.getElementById('settings-panel'); p.classList.toggle('hidden'); this.classList.toggle('active',!p.classList.contains('hidden'));
     });
@@ -1044,34 +1097,264 @@ void main() {
             bgMode=parseInt(this.dataset.bg);
             document.querySelectorAll('[data-bg]').forEach(b=>b.classList.toggle('active',parseInt(b.dataset.bg)===bgMode));
             recompile();
+            scheduleServerRender();
         });
     });
     document.querySelectorAll('.preset-btn').forEach(btn => btn.addEventListener('click', ()=>applyPreset(btn.dataset.preset)));
-    document.getElementById('sel-integrator').addEventListener('change', function(){ qMethod=this.value; refreshLabels(); clearPH(); recompile(); });
-    document.getElementById('steps').addEventListener('input', function(){ qSteps=+this.value; document.getElementById('steps-val').textContent=qSteps; clearPH(); recompile(); });
-    document.getElementById('res-scale').addEventListener('input', function(){ qResScale=+this.value; document.getElementById('res-scale-val').textContent=qResScale.toFixed(2)+'×'; clearPH(); resize(); });
-    document.getElementById('stepsize').addEventListener('input', function(){ qStepSize=+this.value; document.getElementById('stepsize-val').textContent=qStepSize.toFixed(2); clearPH(); recompile(); });
-    document.getElementById('obs-dist').addEventListener('input', function(){ qObsDist=+this.value; document.getElementById('obs-val').textContent=qObsDist+' M'; clearPH(); recompile(); });
-    document.getElementById('star-layers').addEventListener('input', function(){ qStarLayers=+this.value; document.getElementById('starlayers-val').textContent=qStarLayers; clearPH(); recompile(); });
+    document.getElementById('sel-integrator').addEventListener('change', function(){ qMethod=this.value; refreshLabels(); clearPH(); recompile(); scheduleServerRender(); });
+    document.getElementById('steps').addEventListener('input', function(){ qSteps=+this.value; document.getElementById('steps-val').textContent=qSteps; clearPH(); recompile(); scheduleServerRender(); });
+    document.getElementById('res-scale').addEventListener('input', function(){ qResScale=+this.value; document.getElementById('res-scale-val').textContent=qResScale.toFixed(2)+'×'; clearPH(); resize(); scheduleServerRender(); });
+    document.getElementById('stepsize').addEventListener('input', function(){ qStepSize=+this.value; document.getElementById('stepsize-val').textContent=qStepSize.toFixed(2); clearPH(); recompile(); scheduleServerRender(); });
+    document.getElementById('obs-dist').addEventListener('input', function(){ qObsDist=+this.value; document.getElementById('obs-val').textContent=qObsDist+' M'; clearPH(); recompile(); scheduleServerRender(); });
+    document.getElementById('star-layers').addEventListener('input', function(){ qStarLayers=+this.value; document.getElementById('starlayers-val').textContent=qStarLayers; clearPH(); recompile(); scheduleServerRender(); });
 
-    canvas.addEventListener('wheel', function(e){ e.preventDefault(); fov*=(1+e.deltaY*0.001); fov=Math.max(2,Math.min(25,fov)); }, {passive:false});
+    canvas.addEventListener('wheel', function(e){ e.preventDefault(); fov*=(1+e.deltaY*0.001); fov=Math.max(2,Math.min(25,fov)); scheduleServerRender(); }, {passive:false});
     let ltd=0;
     canvas.addEventListener('touchstart', function(e){ if(e.touches.length===2){ const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY; ltd=Math.sqrt(dx*dx+dy*dy); }});
-    canvas.addEventListener('touchmove', function(e){ if(e.touches.length===2){ e.preventDefault(); const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY,d=Math.sqrt(dx*dx+dy*dy); if(ltd>0){fov*=ltd/d;fov=Math.max(2,Math.min(25,fov));}ltd=d; }}, {passive:false});
+    canvas.addEventListener('touchmove', function(e){ if(e.touches.length===2){ e.preventDefault(); const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY,d=Math.sqrt(dx*dx+dy*dy); if(ltd>0){fov*=ltd/d;fov=Math.max(2,Math.min(25,fov));}ltd=d; scheduleServerRender(); }}, {passive:false});
+
+    // ============================================================
+    //  HYBRID SERVER RENDERING
+    // ============================================================
+    let serverUrl = '';
+    let renderMode = 'local';  // 'local' | 'hybrid' | 'server'
+    let serverQuality = 720;
+    let serverAbort = null;
+    let serverDebounce = null;
+    let serverFailCount = 0;
+    const MAX_SERVER_FAILS = 3;
+    const serverFrame = document.getElementById('server-frame');
+    const serverDot = document.getElementById('server-dot');
+    const serverStatusEl = document.getElementById('server-status');
+
+    // Detect if we're on a mobile/low-power device
+    function detectMobile() {
+        const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+        const canvas2 = document.createElement('canvas');
+        const gl2 = canvas2.getContext('webgl');
+        let isLowGPU = false;
+        if (gl2) {
+            const dbg = gl2.getExtension('WEBGL_debug_renderer_info');
+            if (dbg) {
+                const renderer = gl2.getParameter(dbg.UNMASKED_RENDERER_WEBGL).toLowerCase();
+                isLowGPU = /mali|adreno|powervr|apple gpu|intel.*hd|intel.*uhd/i.test(renderer);
+            }
+        }
+        return isMobile || isLowGPU;
+    }
+
+    // Apply mobile-optimized settings
+    function applyMobileDefaults() {
+        qMethod = 'separated'; qSteps = 80; qResScale = 0.25; qStepSize = 0.5; qObsDist = 30; qStarLayers = 1;
+        document.getElementById('sel-integrator').value = 'separated';
+        document.getElementById('steps').value = 80;
+        document.getElementById('res-scale').value = 0.25;
+        document.getElementById('stepsize').value = 0.5;
+        document.getElementById('obs-dist').value = 30;
+        document.getElementById('star-layers').value = 1;
+        refreshLabels();
+        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+        recompile();
+    }
+
+    function setServerStatus(status, text) {
+        serverDot.className = 'server-dot ' + status;
+        serverStatusEl.textContent = text || status;
+    }
+
+    async function checkServerHealth() {
+        if (!serverUrl) { setServerStatus('disconnected', 'server off'); return false; }
+        try {
+            const resp = await fetch(serverUrl + '/health', { signal: AbortSignal.timeout(3000) });
+            if (resp.ok) {
+                const data = await resp.json();
+                setServerStatus('connected', 'server ok');
+                serverFailCount = 0;
+                return true;
+            }
+        } catch (e) {}
+        setServerStatus('disconnected', 'server unreachable');
+        return false;
+    }
+
+    function buildServerParams() {
+        const aspect = innerWidth / innerHeight;
+        let w, h;
+        if (aspect >= 1) {
+            h = serverQuality;
+            w = Math.round(h * aspect);
+        } else {
+            w = serverQuality;
+            h = Math.round(w / aspect);
+        }
+        return {
+            spin: spin,
+            charge: charge,
+            inclination: incl,
+            fov: fov,
+            width: w,
+            height: h,
+            method: qMethod,
+            steps: qSteps,
+            step_size: qStepSize,
+            obs_dist: qObsDist,
+            bg_mode: bgMode,
+            show_disk: showDisk > 0.5,
+            show_grid: showGrid > 0.5,
+            disk_temp: diskTemp,
+            star_layers: qStarLayers,
+            phi0: rotAngle,
+            format: 'jpeg',
+            quality: 85
+        };
+    }
+
+    async function requestServerFrame() {
+        if (!serverUrl || renderMode === 'local') return;
+        if (serverFailCount >= MAX_SERVER_FAILS) {
+            setServerStatus('disconnected', 'server failed');
+            return;
+        }
+
+        // Cancel any in-flight request
+        if (serverAbort) { serverAbort.abort(); }
+        serverAbort = new AbortController();
+
+        setServerStatus('loading', 'rendering…');
+
+        try {
+            const params = buildServerParams();
+            const resp = await fetch(serverUrl + '/render', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(params),
+                signal: serverAbort.signal
+            });
+
+            if (!resp.ok) throw new Error('Server returned ' + resp.status);
+
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+
+            // Crossfade the server frame in
+            serverFrame.onload = function() {
+                serverFrame.classList.add('visible');
+                const cache = resp.headers.get('X-Cache') || '?';
+                const ms = resp.headers.get('X-Render-Time-Ms') || '?';
+                setServerStatus('connected', cache + ' ' + ms + 'ms');
+                URL.revokeObjectURL(url);
+            };
+            serverFrame.src = url;
+            serverFailCount = 0;
+
+        } catch (e) {
+            if (e.name === 'AbortError') return;  // Expected on cancel
+            serverFailCount++;
+            console.warn('Server render failed:', e.message, '(' + serverFailCount + '/' + MAX_SERVER_FAILS + ')');
+            if (serverFailCount >= MAX_SERVER_FAILS) {
+                setServerStatus('disconnected', 'server failed — using local');
+                serverFrame.classList.remove('visible');
+            } else {
+                setServerStatus('disconnected', 'retry…');
+            }
+        }
+    }
+
+    // Assign the real implementation to the forward-declared stub
+    _scheduleServerRenderImpl = function() {
+        if (renderMode === 'local' || !serverUrl) return;
+        // Hide server frame immediately when parameters change (show local preview)
+        serverFrame.classList.remove('visible');
+        clearTimeout(serverDebounce);
+        serverDebounce = setTimeout(requestServerFrame, 200);
+    };
+
+    // In server-only mode, hide the canvas and only show server frames
+    function updateRenderMode(mode) {
+        renderMode = mode;
+        document.getElementById('btn-local-only').classList.toggle('active', mode === 'local');
+        document.getElementById('btn-hybrid').classList.toggle('active', mode === 'hybrid');
+        document.getElementById('btn-server-only').classList.toggle('active', mode === 'server');
+
+        if (mode === 'local') {
+            serverFrame.classList.remove('visible');
+            canvas.style.opacity = '1';
+        } else if (mode === 'hybrid') {
+            canvas.style.opacity = '1';
+            scheduleServerRender();
+        } else if (mode === 'server') {
+            canvas.style.opacity = '0.15';  // Dim local, rely on server
+            scheduleServerRender();
+        }
+    }
+
+    // ---- Server UI Event Listeners ----
+    document.getElementById('server-url').addEventListener('change', function() {
+        serverUrl = this.value.replace(/\/+$/, '');  // trim trailing slashes
+        serverFailCount = 0;
+        if (serverUrl) {
+            checkServerHealth().then(ok => {
+                if (ok && renderMode !== 'local') scheduleServerRender();
+            });
+        } else {
+            setServerStatus('disconnected', 'server off');
+            serverFrame.classList.remove('visible');
+        }
+    });
+
+    document.getElementById('btn-local-only').addEventListener('click', function() { updateRenderMode('local'); });
+    document.getElementById('btn-hybrid').addEventListener('click', function() { updateRenderMode('hybrid'); });
+    document.getElementById('btn-server-only').addEventListener('click', function() { updateRenderMode('server'); });
+
+    document.getElementById('srv-quality').addEventListener('change', function() {
+        serverQuality = parseInt(this.value);
+        document.getElementById('srv-quality-val').textContent = this.value + 'p';
+        scheduleServerRender();
+    });
+
+    // Auto-detect mobile and suggest hybrid mode
+    if (detectMobile()) {
+        applyMobileDefaults();
+        // Auto-show settings panel so user can configure server
+        document.getElementById('settings-panel').classList.remove('hidden');
+        document.getElementById('btn-settings').classList.add('active');
+    }
+
+    // Auto-detect same-origin server (when served via Caddy/reverse proxy)
+    // If the page is served over HTTP/HTTPS (not file://), check if the API
+    // is available at the same origin and auto-configure the server URL.
+    if (location.protocol !== 'file:') {
+        fetch('/health', { signal: AbortSignal.timeout(2000) })
+            .then(r => r.ok ? r.json() : Promise.reject())
+            .then(data => {
+                serverUrl = location.origin;
+                document.getElementById('server-url').value = location.origin;
+                setServerStatus('connected', 'server ok');
+                serverFailCount = 0;
+                // Auto-enable hybrid mode if on mobile
+                if (detectMobile()) {
+                    updateRenderMode('hybrid');
+                }
+            })
+            .catch(() => {});  // Server not available at same origin, that's fine
+    }
 
     function render() {
         if (autoRotate) rotAngle += 0.008;
-        gl.uniform2f(uniforms.u_res, canvas.width, canvas.height);
-        gl.uniform1f(uniforms.u_a, spin);
-        gl.uniform1f(uniforms.u_incl, incl*Math.PI/180);
-        gl.uniform1f(uniforms.u_fov, fov);
-        gl.uniform1f(uniforms.u_disk, showDisk);
-        gl.uniform1f(uniforms.u_grid, showGrid);
-        gl.uniform1f(uniforms.u_temp, diskTemp);
-        gl.uniform1f(uniforms.u_phi0, rotAngle);
-        gl.uniform1f(uniforms.u_Q, charge);
-        gl.uniform1f(uniforms.u_isco, iscoJS(spin, charge));
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        // Skip expensive GPU work in server-only mode (server provides the frames)
+        if (renderMode !== 'server') {
+            gl.uniform2f(uniforms.u_res, canvas.width, canvas.height);
+            gl.uniform1f(uniforms.u_a, spin);
+            gl.uniform1f(uniforms.u_incl, incl*Math.PI/180);
+            gl.uniform1f(uniforms.u_fov, fov);
+            gl.uniform1f(uniforms.u_disk, showDisk);
+            gl.uniform1f(uniforms.u_grid, showGrid);
+            gl.uniform1f(uniforms.u_temp, diskTemp);
+            gl.uniform1f(uniforms.u_phi0, rotAngle);
+            gl.uniform1f(uniforms.u_Q, charge);
+            gl.uniform1f(uniforms.u_isco, iscoJS(spin, charge));
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
         fc++; const now=performance.now();
         if (now-lastFT > 800) { document.getElementById('fps').textContent=Math.round(fc/((now-lastFT)*0.001)); fc=0; lastFT=now; }
         requestAnimationFrame(render);
