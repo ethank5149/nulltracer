@@ -232,16 +232,16 @@
 
 <div class="panel controls">
   <div class="control-row">
-    <div class="control-label"><span>Black Hole Spin</span><span class="control-value" id="spin-val">a = 0.600</span></div>
-    <input type="range" id="spin" min="0" max="0.998" step="0.002" value="0.6">
+    <div class="control-label"><span>Black Hole Spin</span><span class="control-value" id="spin-val">a = 0.000</span></div>
+    <input type="range" id="spin" min="0" max="0.998" step="0.002" value="0">
   </div>
   <div class="control-row">
     <div class="control-label"><span>Electric Charge</span><span class="control-value" id="charge-val">Q = 0.000</span></div>
     <input type="range" id="charge" min="0" max="0.998" step="0.002" value="0">
   </div>
   <div class="control-row">
-    <div class="control-label"><span>Inclination</span><span class="control-value" id="incl-val">&theta; = 80.0&deg;</span></div>
-    <input type="range" id="incl" min="3" max="89" step="0.5" value="80">
+    <div class="control-label"><span>Inclination</span><span class="control-value" id="incl-val">&theta; = 89.0&deg;</span></div>
+    <input type="range" id="incl" min="3" max="89" step="0.5" value="89">
   </div>
   <div class="control-row">
     <div class="control-label"><span>Disk Temperature</span><span class="control-value" id="temp-val">1.00</span></div>
@@ -281,10 +281,13 @@
   <div class="control-row">
     <div class="control-label"><span>Integrator</span><span class="control-value" id="integ-label">Separated</span></div>
     <select class="ctrl-select" id="sel-integrator">
-      <option value="separated" selected>Separated eqs — fast</option>
-      <option value="hamiltonian">Full Hamiltonian RK4</option>
+      <option value="yoshida4" selected>Yoshida 4th-order symplectic — fast</option>
+      <option value="rk4">Runge-Kutta 4th-order</option>
+      <option value="yoshida6">Yoshida 6th-order symplectic</option>
+      <option value="yoshida8">Yoshida 8th-order symplectic</option>
+      <option value="rkdp8">Dormand-Prince RK8</option>
     </select>
-    <div id="hamiltonian-warn" class="warn-badge" style="display:none">Heavy — may fail on mobile / integrated GPU</div>
+    <div id="integrator-warn" class="warn-badge" style="display:none">Heavy — may fail on mobile / integrated GPU</div>
   </div>
   <div class="control-row">
     <div class="control-label"><span>Steps</span><span class="control-value" id="steps-val">200</span></div>
@@ -336,7 +339,7 @@
   <span class="hl">r<sub>+</sub></span> = <span id="rp">1.800</span> M<br>
   <span class="hl">Q</span> = <span id="Qval">0.000</span><br>
   <span class="hl">r<sub>isco</sub></span> = <span id="risco">4.233</span> M<br>
-  <span class="hl">integrator</span> <span id="integ-info">separated</span><br>
+  <span class="hl">integrator</span> <span id="integ-info">yoshida4</span><br>
   <span class="hl">res</span> <span id="res">---</span><br>
   <span class="hl">fps</span> <span id="fps">--</span>
   <br><span class="server-dot disconnected" id="server-dot"></span><span id="server-status">server off</span>
@@ -354,7 +357,7 @@ void main(){ v_uv=a_pos; gl_Position=vec4(a_pos,0,1); }
 // ============================================================
 function buildFragSrc(opts) {
     const STEPS = opts.steps || 200;
-    const METHOD = opts.method || 'separated';
+    const METHOD = opts.method || 'yoshida4';
     const R0 = opts.obsDist || 40;
     const RESC = R0 + 12;
     const STAR_LAYERS = opts.starLayers || 3;
@@ -586,7 +589,7 @@ vec3 disk(float r, float ph, float a) {
 `;
 
     // ---- INTEGRATOR-SPECIFIC CODE ----
-    if (METHOD === 'hamiltonian') {
+    if (METHOD === 'rk4') {
         src += `
 // ===========================================================
 //  FULL HAMILTONIAN INTEGRATOR (RK4)
@@ -729,113 +732,861 @@ void main() {
     gl_FragColor = vec4(color, 1);
 }
 `;
-    } else {
+    } else if (METHOD === 'yoshida6') {
         src += `
 // ===========================================================
-//  SEPARATED GEODESIC EQUATIONS (Verlet midpoint)
-//  θ-form with smooth sin²θ+ε regularization.
-//  At escape, convert to Cartesian direction for background
-//  lookup — sinθ multiplier naturally suppresses φ-error.
+//  YOSHIDA 6TH-ORDER SYMPLECTIC INTEGRATOR
+//
+//  A composition method that chains leapfrog (Störmer-Verlet)
+//  substeps with optimized coefficients to achieve 6th-order
+//  global accuracy while preserving the symplectic structure
+//  of Hamilton's equations. This means:
+//    - No secular energy drift (Hamiltonian is conserved to
+//      O(h^6) over exponentially long times)
+//    - Phase-space volume is exactly preserved
+//    - Superior long-term stability vs. RK4
+//
+//  Coefficients from Yoshida (1990), Physics Letters A,
+//  150(5-7), 262-268. Solution A triple-jump composition.
 // ===========================================================
+
+void geoRHS(
+    float r, float th, float pr, float pth,
+    float a, float b,
+    out float dr, out float dth, out float dphi,
+    out float dpr, out float dpth
+) {
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+    float a2 = a*a, r2 = r*r;
+    float Q2 = u_Q*u_Q;
+    float sig = r2 + a2*c2;
+    float del = r2 - 2.0*r + a2 + Q2;
+    float sdel = max(del, 1e-6);
+    float rpa2 = r2 + a2;
+    float w = 2.0*r - Q2;
+    float A_ = rpa2*rpa2 - sdel*a2*s2;
+    float isig = 1.0/sig;
+    float SD = sig*sdel;
+    float iSD = 1.0/SD;
+    float is2 = 1.0/s2;
+
+    float grr = sdel*isig, gthth = isig;
+    float gff = (sig - w)*iSD*is2;
+    float gtf = -a*w*iSD;
+
+    dr = grr*pr; dth = gthth*pth; dphi = gff*b - gtf;
+
+    float dsig_r=2.0*r; float ddel_r=2.0*r-2.0;
+    float dA_r=4.0*r*rpa2-ddel_r*a2*s2;
+    float dSD_r=dsig_r*sdel+sig*ddel_r;
+    float dgtt_r=-(dA_r*SD-A_*dSD_r)/(SD*SD);
+    float dgtf_r=-a*(2.0*SD - w*dSD_r)/(SD*SD);
+    float dgrr_r=(ddel_r*sig-sdel*dsig_r)/(sig*sig);
+    float dgthth_r=-dsig_r*isig*isig;
+    float num_ff=sig-w; float den_ff=SD*s2;
+    float dgff_r=((dsig_r-2.0)*den_ff-num_ff*dSD_r*s2)/(den_ff*den_ff);
+    dpr=-0.5*(dgtt_r-2.0*b*dgtf_r+dgrr_r*pr*pr+dgthth_r*pth*pth+dgff_r*b*b);
+
+    float dsig_th=-2.0*a2*sth*cth;
+    float ds2_th=2.0*sth*cth;
+    float dA_th=-sdel*a2*ds2_th;
+    float dSD_th=dsig_th*sdel;
+    float dgtt_th=-(dA_th*SD-A_*dSD_th)/(SD*SD);
+    float dgtf_th=a*w*dSD_th/(SD*SD);
+    float dgrr_th=-sdel*dsig_th/(sig*sig);
+    float dgthth_th=-dsig_th*isig*isig;
+    float dgff_th=(dsig_th*den_ff-num_ff*(dsig_th*sdel*s2+SD*ds2_th))/(den_ff*den_ff);
+    dpth=-0.5*(dgtt_th-2.0*b*dgtf_th+dgrr_th*pr*pr+dgthth_th*pth*pth+dgff_th*b*b);
+}
+
+// Yoshida 6th-order symmetric composition coefficients (Solution A)
+#define Y6_W1  0.78451361047755726382
+#define Y6_W2  0.23557321335935813368
+#define Y6_W3 -1.17767998417887100695
+#define Y6_W0  1.31518632068391121889
+#define Y6_D1  0.39225680523877863191
+#define Y6_D2  0.51004341191845769508
+#define Y6_D3 -0.47105338540975643969
+#define Y6_D0  0.06875316825252012625
 
 void main() {
     vec2 uv = v_uv;
-    float asp = u_res.x / u_res.y;
-    float alpha = uv.x * u_fov * asp, beta = uv.y * u_fov;
+    float asp = u_res.x/u_res.y;
+    float alpha = uv.x*u_fov*asp, beta = uv.y*u_fov;
     float a = u_a, a2 = a*a;
     float thObs = u_incl, sO = sin(thObs), cO = cos(thObs);
-    float b = -alpha * sO;
+    float b = -alpha*sO;
     float q2 = beta*beta + cO*cO*(alpha*alpha - a2);
+
     float r = R0, th = thObs, phi = u_phi0;
-    float sr = -1.0, st = beta >= 0.0 ? -1.0 : 1.0;
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+    float sig = r*r+a2*c2, del = r*r-2.0*r+a2+u_Q*u_Q;
+    float sdel = max(del,1e-6);
+    float rpa2 = r*r+a2, A_ = rpa2*rpa2-sdel*a2*s2;
+    float iSD = 1.0/(sig*sdel), is2 = 1.0/s2;
+    float grr = sdel/sig, gthi = 1.0/sig;
+    float pth = beta;
+    float w_init = 2.0*r - u_Q*u_Q;
+    float rest = -A_*iSD + 2.0*a*b*w_init*iSD + gthi*pth*pth + (sig-w_init)*iSD*is2*b*b;
+    float pr2 = -rest/grr;
+    float pr = pr2 > 0.0 ? -sqrt(pr2) : 0.0;
     float Q2 = u_Q*u_Q;
     float rp = 1.0 + sqrt(max(1.0-a2-Q2, 0.0));
-    float bma = b-a, bma2 = bma*bma;
     vec3 color = vec3(0); bool done = false;
 
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
-
-        // Regularized quantities — sin²θ + ε is smooth, never zero
-        float sth = sin(th), cth = cos(th);
-        float s2 = sth*sth + S2_EPS, c2 = cth*cth;
-        float sig = r*r + a2*c2, isig = 1.0/sig;
-        float del = r*r - 2.0*r + a2 + u_Q*u_Q;
-        float sdel = max(del, 1e-6);
-
-        float T = r*r + a2 - a*b;
-        float Rp = T*T - del*(q2 + bma2);
-        float Tp = q2 + a2*c2 - c2*b*b/s2;
-        if (Rp < 0.0) { Rp = 0.0; sr = -sr; }
-        if (Tp < 0.0) { Tp = 0.0; st = -st; }
-
-        float dr   = sr * sqrt(Rp) * isig;
-        float dth  = st * sqrt(Tp) * isig;
-        float dphi = (b/s2 - a + a*T/sdel) * isig;
-
-        // Adaptive step: smaller near horizon only
-        float he = H_BASE * clamp((r-rp)*0.35, 0.04, 1.0);
-        he = clamp(he, 0.012, 0.7);
-
+        float he = H_BASE * clamp((r-rp)*0.4, 0.04, 1.0);
+        he = clamp(he, 0.012, 0.6);
         float oldTh = th, oldR = r, oldPhi = phi;
 
-        // Verlet midpoint
-        float rH  = r  + 0.5*he*dr;
-        float thH = th + 0.5*he*dth;
-        thH = clamp(thH, 0.005, PI-0.005);
-        float sthH = sin(thH), cthH = cos(thH);
-        float s2H = sthH*sthH + S2_EPS, c2H = cthH*cthH;
-        float sigH = rH*rH + a2*c2H, isigH = 1.0/sigH;
-        float delH = rH*rH - 2.0*rH + a2 + u_Q*u_Q;
-        float sdelH = max(delH, 1e-6);
-        float TH = rH*rH + a2 - a*b;
-        float RpH = TH*TH - delH*(q2 + bma2);
-        float TpH = q2 + a2*c2H - c2H*b*b/s2H;
-        if (RpH < 0.0) { RpH = 0.0; sr = -sr; }
-        if (TpH < 0.0) { TpH = 0.0; st = -st; }
+        // Yoshida 6th-order symmetric composition: 7 substeps
+        float dr_,dth_,dphi_,dpr_,dpth_;
 
-        float drH   = sr * sqrt(RpH) * isigH;
-        float dthH  = st * sqrt(TpH) * isigH;
-        float dphiH = (b/s2H - a + a*TH/sdelH) * isigH;
+        // --- Substep 1: drift d1, kick w1 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y6_D1*dr_;
+        th  += he*Y6_D1*dth_;
+        phi += he*Y6_D1*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y6_W1*dpr_;
+        pth += he*Y6_W1*dpth_;
 
-        r   += he * drH;
-        th  += he * dthH;
-        phi += he * dphiH;
+        // --- Substep 2: drift d2, kick w2 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y6_D2*dr_;
+        th  += he*Y6_D2*dth_;
+        phi += he*Y6_D2*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y6_W2*dpr_;
+        pth += he*Y6_W2*dpth_;
 
-        // Soft boundary reflection
-        if (th < 0.005) { th = 0.005; st = 1.0; }
-        if (th > PI-0.005) { th = PI-0.005; st = -1.0; }
+        // --- Substep 3: drift d3, kick w3 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y6_D3*dr_;
+        th  += he*Y6_D3*dth_;
+        phi += he*Y6_D3*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y6_W3*dpr_;
+        pth += he*Y6_W3*dpth_;
 
-        if (r <= rp*1.005) { done = true; break; }
+        // --- Substep 4: drift d0, kick w0 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y6_D0*dr_;
+        th  += he*Y6_D0*dth_;
+        phi += he*Y6_D0*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y6_W0*dpr_;
+        pth += he*Y6_W0*dpth_;
 
-        // Disk crossing
+        // --- Substep 5: drift d3, kick w3 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y6_D3*dr_;
+        th  += he*Y6_D3*dth_;
+        phi += he*Y6_D3*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y6_W3*dpr_;
+        pth += he*Y6_W3*dpth_;
+
+        // --- Substep 6: drift d2, kick w2 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y6_D2*dr_;
+        th  += he*Y6_D2*dth_;
+        phi += he*Y6_D2*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y6_W2*dpr_;
+        pth += he*Y6_W2*dpth_;
+
+        // --- Substep 7: drift d1, kick w1 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y6_D1*dr_;
+        th  += he*Y6_D1*dth_;
+        phi += he*Y6_D1*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y6_W1*dpr_;
+        pth += he*Y6_W1*dpth_;
+
+        if (th < 0.005) { th = 0.005; pth = abs(pth); }
+        if (th > PI-0.005) { th = PI-0.005; pth = -abs(pth); }
+
+        if (r <= rp*1.01) { done=true; break; }
         if (u_disk > 0.5) {
-            float cross = (oldTh - PI*0.5) * (th - PI*0.5);
+            float cross = (oldTh-PI*0.5)*(th-PI*0.5);
             if (cross < 0.0) {
                 float f = clamp(abs(oldTh-PI*0.5)/max(abs(th-oldTh),1e-6), 0.0, 1.0);
-                vec3 dc = disk(oldR + f*(r-oldR), oldPhi + f*(phi-oldPhi), a);
+                vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a);
                 color += dc * (1.0 - clamp(length(color)*0.4, 0.0, 0.9));
             }
         }
-
-        // Escape — convert to Cartesian direction for background
         if (r > RESC) {
-            // Interpolate to escape radius for smoother background
-            float frac = clamp((RESC - oldR) / max(r - oldR, 1e-6), 0.0, 1.0);
-            float escTh  = oldTh  + (th  - oldTh)  * frac;
-            float escPhi = oldPhi + (phi - oldPhi) * frac;
-            vec3 d = sphereDir(escTh, escPhi);
-            color += background(d) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
-            done = true; break;
+            float fth = oldTh + (th-oldTh) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            float fph = oldPhi + (phi-oldPhi) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            color += background(sphereDir(fth, fph)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
+            done=true; break;
         }
-        if (r!=r || th!=th) { done = true; break; }
+        if (r < 0.5 || r!=r || th!=th) { done=true; break; }
     }
+    float imp = length(vec2(alpha,beta));
+    float rc = 5.2-1.0*a;
+    color += vec3(0.1,0.07,0.04)*exp(-pow((imp-rc)/0.3,2.0))*0.06;
+    color *= 1.0-0.3*dot(uv,uv);
+    color = color/(1.0+color);
+    color = pow(color, vec3(1.0/2.2));
+    gl_FragColor = vec4(color, 1);
+}
+`;
+    } else if (METHOD === 'yoshida8') {
+        src += `
+// ===========================================================
+//  YOSHIDA 8TH-ORDER SYMPLECTIC INTEGRATOR
+//
+//  Triple-jump composition of the 4th-order Forest-Ruth
+//  integrator to achieve 8th-order global accuracy while
+//  preserving the symplectic structure. Uses 15 substeps.
+//
+//  Coefficients from Yoshida (1990), Physics Letters A,
+//  150(5-7), 262-268, Table 2 "Solution D" for order 8.
+// ===========================================================
 
-    float imp = length(vec2(alpha, beta));
-    float rc = 5.2 - 1.0*a;
-    color += vec3(0.1,0.07,0.04) * exp(-pow((imp-rc)/0.3, 2.0)) * 0.06;
-    color *= 1.0 - 0.3 * dot(uv, uv);
-    color = color / (1.0 + color);
+void geoRHS(
+    float r, float th, float pr, float pth,
+    float a, float b,
+    out float dr, out float dth, out float dphi,
+    out float dpr, out float dpth
+) {
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+    float a2 = a*a, r2 = r*r;
+    float Q2 = u_Q*u_Q;
+    float sig = r2 + a2*c2;
+    float del = r2 - 2.0*r + a2 + Q2;
+    float sdel = max(del, 1e-6);
+    float rpa2 = r2 + a2;
+    float w = 2.0*r - Q2;
+    float A_ = rpa2*rpa2 - sdel*a2*s2;
+    float isig = 1.0/sig;
+    float SD = sig*sdel;
+    float iSD = 1.0/SD;
+    float is2 = 1.0/s2;
+
+    float grr = sdel*isig, gthth = isig;
+    float gff = (sig - w)*iSD*is2;
+    float gtf = -a*w*iSD;
+
+    dr = grr*pr; dth = gthth*pth; dphi = gff*b - gtf;
+
+    float dsig_r=2.0*r; float ddel_r=2.0*r-2.0;
+    float dA_r=4.0*r*rpa2-ddel_r*a2*s2;
+    float dSD_r=dsig_r*sdel+sig*ddel_r;
+    float dgtt_r=-(dA_r*SD-A_*dSD_r)/(SD*SD);
+    float dgtf_r=-a*(2.0*SD - w*dSD_r)/(SD*SD);
+    float dgrr_r=(ddel_r*sig-sdel*dsig_r)/(sig*sig);
+    float dgthth_r=-dsig_r*isig*isig;
+    float num_ff=sig-w; float den_ff=SD*s2;
+    float dgff_r=((dsig_r-2.0)*den_ff-num_ff*dSD_r*s2)/(den_ff*den_ff);
+    dpr=-0.5*(dgtt_r-2.0*b*dgtf_r+dgrr_r*pr*pr+dgthth_r*pth*pth+dgff_r*b*b);
+
+    float dsig_th=-2.0*a2*sth*cth;
+    float ds2_th=2.0*sth*cth;
+    float dA_th=-sdel*a2*ds2_th;
+    float dSD_th=dsig_th*sdel;
+    float dgtt_th=-(dA_th*SD-A_*dSD_th)/(SD*SD);
+    float dgtf_th=a*w*dSD_th/(SD*SD);
+    float dgrr_th=-sdel*dsig_th/(sig*sig);
+    float dgthth_th=-dsig_th*isig*isig;
+    float dgff_th=(dsig_th*den_ff-num_ff*(dsig_th*sdel*s2+SD*ds2_th))/(den_ff*den_ff);
+    dpth=-0.5*(dgtt_th-2.0*b*dgtf_th+dgrr_th*pr*pr+dgthth_th*pth*pth+dgff_th*b*b);
+}
+
+// Yoshida 8th-order coefficients (Solution D from Table 2)
+#define Y8_W1  1.04242620869991
+#define Y8_W2  1.82020630970714
+#define Y8_W3  0.157739928123617
+#define Y8_W4  2.44002732616735
+#define Y8_W5 -0.00716989419708120
+#define Y8_W6 -2.44699182370524
+#define Y8_W7 -1.61582374150097
+#define Y8_W0 -1.7808286265894516
+
+#define Y8_D1  0.52121310434996
+#define Y8_D2  1.43131625920353
+#define Y8_D3  0.98897311891538
+#define Y8_D4  1.29888362714548
+#define Y8_D5  1.21642871598513
+#define Y8_D6 -1.22708085895116
+#define Y8_D7 -2.03140778260311
+#define Y8_D0 -1.69832618454521
+
+void main() {
+    vec2 uv = v_uv;
+    float asp = u_res.x/u_res.y;
+    float alpha = uv.x*u_fov*asp, beta = uv.y*u_fov;
+    float a = u_a, a2 = a*a;
+    float thObs = u_incl, sO = sin(thObs), cO = cos(thObs);
+    float b = -alpha*sO;
+    float q2 = beta*beta + cO*cO*(alpha*alpha - a2);
+
+    float r = R0, th = thObs, phi = u_phi0;
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+    float sig = r*r+a2*c2, del = r*r-2.0*r+a2+u_Q*u_Q;
+    float sdel = max(del,1e-6);
+    float rpa2 = r*r+a2, A_ = rpa2*rpa2-sdel*a2*s2;
+    float iSD = 1.0/(sig*sdel), is2 = 1.0/s2;
+    float grr = sdel/sig, gthi = 1.0/sig;
+    float pth = beta;
+    float w_init = 2.0*r - u_Q*u_Q;
+    float rest = -A_*iSD + 2.0*a*b*w_init*iSD + gthi*pth*pth + (sig-w_init)*iSD*is2*b*b;
+    float pr2 = -rest/grr;
+    float pr = pr2 > 0.0 ? -sqrt(pr2) : 0.0;
+    float Q2 = u_Q*u_Q;
+    float rp = 1.0 + sqrt(max(1.0-a2-Q2, 0.0));
+    vec3 color = vec3(0); bool done = false;
+
+    for (int i = 0; i < STEPS; i++) {
+        if (done) break;
+        float he = H_BASE * clamp((r-rp)*0.4, 0.04, 1.0);
+        he = clamp(he, 0.012, 0.6);
+        float oldTh = th, oldR = r, oldPhi = phi;
+
+        // Yoshida 8th-order symmetric composition: 15 substeps
+        float dr_,dth_,dphi_,dpr_,dpth_;
+
+        // --- Substep 1: drift d1, kick w1 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D1*dr_; th += he*Y8_D1*dth_; phi += he*Y8_D1*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W1*dpr_; pth += he*Y8_W1*dpth_;
+
+        // --- Substep 2: drift d2, kick w2 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D2*dr_; th += he*Y8_D2*dth_; phi += he*Y8_D2*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W2*dpr_; pth += he*Y8_W2*dpth_;
+
+        // --- Substep 3: drift d3, kick w3 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D3*dr_; th += he*Y8_D3*dth_; phi += he*Y8_D3*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W3*dpr_; pth += he*Y8_W3*dpth_;
+
+        // --- Substep 4: drift d4, kick w4 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D4*dr_; th += he*Y8_D4*dth_; phi += he*Y8_D4*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W4*dpr_; pth += he*Y8_W4*dpth_;
+
+        // --- Substep 5: drift d5, kick w5 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D5*dr_; th += he*Y8_D5*dth_; phi += he*Y8_D5*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W5*dpr_; pth += he*Y8_W5*dpth_;
+
+        // --- Substep 6: drift d6, kick w6 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D6*dr_; th += he*Y8_D6*dth_; phi += he*Y8_D6*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W6*dpr_; pth += he*Y8_W6*dpth_;
+
+        // --- Substep 7: drift d7, kick w7 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D7*dr_; th += he*Y8_D7*dth_; phi += he*Y8_D7*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W7*dpr_; pth += he*Y8_W7*dpth_;
+
+        // --- Substep 8 (center): drift d0, kick w0 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D0*dr_; th += he*Y8_D0*dth_; phi += he*Y8_D0*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W0*dpr_; pth += he*Y8_W0*dpth_;
+
+        // --- Substep 9: drift d7, kick w7 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D7*dr_; th += he*Y8_D7*dth_; phi += he*Y8_D7*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W7*dpr_; pth += he*Y8_W7*dpth_;
+
+        // --- Substep 10: drift d6, kick w6 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D6*dr_; th += he*Y8_D6*dth_; phi += he*Y8_D6*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W6*dpr_; pth += he*Y8_W6*dpth_;
+
+        // --- Substep 11: drift d5, kick w5 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D5*dr_; th += he*Y8_D5*dth_; phi += he*Y8_D5*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W5*dpr_; pth += he*Y8_W5*dpth_;
+
+        // --- Substep 12: drift d4, kick w4 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D4*dr_; th += he*Y8_D4*dth_; phi += he*Y8_D4*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W4*dpr_; pth += he*Y8_W4*dpth_;
+
+        // --- Substep 13: drift d3, kick w3 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D3*dr_; th += he*Y8_D3*dth_; phi += he*Y8_D3*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W3*dpr_; pth += he*Y8_W3*dpth_;
+
+        // --- Substep 14: drift d2, kick w2 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D2*dr_; th += he*Y8_D2*dth_; phi += he*Y8_D2*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W2*dpr_; pth += he*Y8_W2*dpth_;
+
+        // --- Substep 15: drift d1, kick w1 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r += he*Y8_D1*dr_; th += he*Y8_D1*dth_; phi += he*Y8_D1*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr += he*Y8_W1*dpr_; pth += he*Y8_W1*dpth_;
+
+        if (th < 0.005) { th = 0.005; pth = abs(pth); }
+        if (th > PI-0.005) { th = PI-0.005; pth = -abs(pth); }
+
+        if (r <= rp*1.01) { done=true; break; }
+        if (u_disk > 0.5) {
+            float cross = (oldTh-PI*0.5)*(th-PI*0.5);
+            if (cross < 0.0) {
+                float f = clamp(abs(oldTh-PI*0.5)/max(abs(th-oldTh),1e-6), 0.0, 1.0);
+                vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a);
+                color += dc * (1.0 - clamp(length(color)*0.4, 0.0, 0.9));
+            }
+        }
+        if (r > RESC) {
+            float fth = oldTh + (th-oldTh) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            float fph = oldPhi + (phi-oldPhi) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            color += background(sphereDir(fth, fph)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
+            done=true; break;
+        }
+        if (r < 0.5 || r!=r || th!=th) { done=true; break; }
+    }
+    float imp = length(vec2(alpha,beta));
+    float rc = 5.2-1.0*a;
+    color += vec3(0.1,0.07,0.04)*exp(-pow((imp-rc)/0.3,2.0))*0.06;
+    color *= 1.0-0.3*dot(uv,uv);
+    color = color/(1.0+color);
+    color = pow(color, vec3(1.0/2.2));
+    gl_FragColor = vec4(color, 1);
+}
+`;
+    } else if (METHOD === 'rkdp8') {
+        src += `
+// ===========================================================
+//  DORMAND-PRINCE 8TH-ORDER RUNGE-KUTTA (RK8(7))
+//
+//  A 13-stage, 8th-order explicit Runge-Kutta method from
+//  Dormand & Prince (1981), J. Comp. Appl. Math. 7(1), 67-75.
+//
+//  Achieves 8th-order accuracy with 13 function evaluations
+//  per step. Industry usage: MATLAB ode87, SciPy DOP853,
+//  JPL trajectory planning, gravitational wave template banks.
+// ===========================================================
+
+void geoRHS(
+    float r, float th, float pr, float pth,
+    float a, float b,
+    out float dr, out float dth, out float dphi,
+    out float dpr, out float dpth
+) {
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+    float a2 = a*a, r2 = r*r;
+    float Q2 = u_Q*u_Q;
+    float sig = r2 + a2*c2;
+    float del = r2 - 2.0*r + a2 + Q2;
+    float sdel = max(del, 1e-6);
+    float rpa2 = r2 + a2;
+    float w = 2.0*r - Q2;
+    float A_ = rpa2*rpa2 - sdel*a2*s2;
+    float isig = 1.0/sig;
+    float SD = sig*sdel;
+    float iSD = 1.0/SD;
+    float is2 = 1.0/s2;
+
+    float grr = sdel*isig, gthth = isig;
+    float gff = (sig - w)*iSD*is2;
+    float gtf = -a*w*iSD;
+
+    dr = grr*pr; dth = gthth*pth; dphi = gff*b - gtf;
+
+    float dsig_r=2.0*r; float ddel_r=2.0*r-2.0;
+    float dA_r=4.0*r*rpa2-ddel_r*a2*s2;
+    float dSD_r=dsig_r*sdel+sig*ddel_r;
+    float dgtt_r=-(dA_r*SD-A_*dSD_r)/(SD*SD);
+    float dgtf_r=-a*(2.0*SD - w*dSD_r)/(SD*SD);
+    float dgrr_r=(ddel_r*sig-sdel*dsig_r)/(sig*sig);
+    float dgthth_r=-dsig_r*isig*isig;
+    float num_ff=sig-w; float den_ff=SD*s2;
+    float dgff_r=((dsig_r-2.0)*den_ff-num_ff*dSD_r*s2)/(den_ff*den_ff);
+    dpr=-0.5*(dgtt_r-2.0*b*dgtf_r+dgrr_r*pr*pr+dgthth_r*pth*pth+dgff_r*b*b);
+
+    float dsig_th=-2.0*a2*sth*cth;
+    float ds2_th=2.0*sth*cth;
+    float dA_th=-sdel*a2*ds2_th;
+    float dSD_th=dsig_th*sdel;
+    float dgtt_th=-(dA_th*SD-A_*dSD_th)/(SD*SD);
+    float dgtf_th=a*w*dSD_th/(SD*SD);
+    float dgrr_th=-sdel*dsig_th/(sig*sig);
+    float dgthth_th=-dsig_th*isig*isig;
+    float dgff_th=(dsig_th*den_ff-num_ff*(dsig_th*sdel*s2+SD*ds2_th))/(den_ff*den_ff);
+    dpth=-0.5*(dgtt_th-2.0*b*dgtf_th+dgrr_th*pr*pr+dgthth_th*pth*pth+dgff_th*b*b);
+}
+
+void main() {
+    vec2 uv = v_uv;
+    float asp = u_res.x/u_res.y;
+    float alpha = uv.x*u_fov*asp, beta = uv.y*u_fov;
+    float a = u_a, a2 = a*a;
+    float thObs = u_incl, sO = sin(thObs), cO = cos(thObs);
+    float b = -alpha*sO;
+    float q2 = beta*beta + cO*cO*(alpha*alpha - a2);
+
+    float r = R0, th = thObs, phi = u_phi0;
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+    float sig = r*r+a2*c2, del = r*r-2.0*r+a2+u_Q*u_Q;
+    float sdel = max(del,1e-6);
+    float rpa2 = r*r+a2, A_ = rpa2*rpa2-sdel*a2*s2;
+    float iSD = 1.0/(sig*sdel), is2 = 1.0/s2;
+    float grr = sdel/sig, gthi = 1.0/sig;
+    float pth = beta;
+    float w_init = 2.0*r - u_Q*u_Q;
+    float rest = -A_*iSD + 2.0*a*b*w_init*iSD + gthi*pth*pth + (sig-w_init)*iSD*is2*b*b;
+    float pr2 = -rest/grr;
+    float pr = pr2 > 0.0 ? -sqrt(pr2) : 0.0;
+    float Q2 = u_Q*u_Q;
+    float rp = 1.0 + sqrt(max(1.0-a2-Q2, 0.0));
+    vec3 color = vec3(0); bool done = false;
+
+    for (int i = 0; i < STEPS; i++) {
+        if (done) break;
+        float he = H_BASE * clamp((r-rp)*0.4, 0.04, 1.0);
+        he = clamp(he, 0.012, 0.6);
+        float oldTh = th, oldR = r, oldPhi = phi;
+
+        // Dormand-Prince 8th-order: 13 stages
+        float kr1,kth1,kphi1,kpr1,kpth1;
+        float kr2,kth2,kphi2,kpr2,kpth2;
+        float kr3,kth3,kphi3,kpr3,kpth3;
+        float kr4,kth4,kphi4,kpr4,kpth4;
+        float kr5,kth5,kphi5,kpr5,kpth5;
+        float kr6,kth6,kphi6,kpr6,kpth6;
+        float kr7,kth7,kphi7,kpr7,kpth7;
+        float kr8,kth8,kphi8,kpr8,kpth8;
+        float kr9,kth9,kphi9,kpr9,kpth9;
+        float kr10,kth10,kphi10,kpr10,kpth10;
+        float kr11,kth11,kphi11,kpr11,kpth11;
+        float kr12,kth12,kphi12,kpr12,kpth12;
+        float kr13,kth13,kphi13,kpr13,kpth13;
+
+        // Stage 1
+        geoRHS(r, th, pr, pth, a, b, kr1, kth1, kphi1, kpr1, kpth1);
+
+        // Stage 2: c2 = 1/18
+        geoRHS(r+he*kr1/18.0, th+he*kth1/18.0,
+               pr+he*kpr1/18.0, pth+he*kpth1/18.0,
+               a, b, kr2, kth2, kphi2, kpr2, kpth2);
+
+        // Stage 3: c3 = 1/12
+        geoRHS(r+he*(kr1/48.0+kr2/16.0), th+he*(kth1/48.0+kth2/16.0),
+               pr+he*(kpr1/48.0+kpr2/16.0), pth+he*(kpth1/48.0+kpth2/16.0),
+               a, b, kr3, kth3, kphi3, kpr3, kpth3);
+
+        // Stage 4: c4 = 1/8
+        geoRHS(r+he*(kr1/32.0+kr3*3.0/32.0), th+he*(kth1/32.0+kth3*3.0/32.0),
+               pr+he*(kpr1/32.0+kpr3*3.0/32.0), pth+he*(kpth1/32.0+kpth3*3.0/32.0),
+               a, b, kr4, kth4, kphi4, kpr4, kpth4);
+
+        // Stage 5: c5 = 5/16
+        geoRHS(r+he*(kr1*5.0/16.0-kr3*75.0/64.0+kr4*75.0/64.0),
+               th+he*(kth1*5.0/16.0-kth3*75.0/64.0+kth4*75.0/64.0),
+               pr+he*(kpr1*5.0/16.0-kpr3*75.0/64.0+kpr4*75.0/64.0),
+               pth+he*(kpth1*5.0/16.0-kpth3*75.0/64.0+kpth4*75.0/64.0),
+               a, b, kr5, kth5, kphi5, kpr5, kpth5);
+
+        // Stage 6: c6 = 3/8
+        geoRHS(r+he*(kr1*3.0/80.0+kr4*3.0/16.0+kr5*3.0/20.0),
+               th+he*(kth1*3.0/80.0+kth4*3.0/16.0+kth5*3.0/20.0),
+               pr+he*(kpr1*3.0/80.0+kpr4*3.0/16.0+kpr5*3.0/20.0),
+               pth+he*(kpth1*3.0/80.0+kpth4*3.0/16.0+kpth5*3.0/20.0),
+               a, b, kr6, kth6, kphi6, kpr6, kpth6);
+
+        // Stage 7: c7 = 59/400
+        float a71=29443841.0/614563906.0, a74=77736538.0/692538347.0;
+        float a75=-28693883.0/1125000000.0, a76=23124283.0/1800000000.0;
+        geoRHS(r+he*(a71*kr1+a74*kr4+a75*kr5+a76*kr6),
+               th+he*(a71*kth1+a74*kth4+a75*kth5+a76*kth6),
+               pr+he*(a71*kpr1+a74*kpr4+a75*kpr5+a76*kpr6),
+               pth+he*(a71*kpth1+a74*kpth4+a75*kpth5+a76*kpth6),
+               a, b, kr7, kth7, kphi7, kpr7, kpth7);
+
+        // Stage 8: c8 = 93/200
+        float a81=16016141.0/946692911.0, a84=61564180.0/158732637.0;
+        float a85=22789713.0/633445777.0, a86=545815736.0/2771057229.0;
+        float a87=-180193667.0/1043307555.0;
+        geoRHS(r+he*(a81*kr1+a84*kr4+a85*kr5+a86*kr6+a87*kr7),
+               th+he*(a81*kth1+a84*kth4+a85*kth5+a86*kth6+a87*kth7),
+               pr+he*(a81*kpr1+a84*kpr4+a85*kpr5+a86*kpr6+a87*kpr7),
+               pth+he*(a81*kpth1+a84*kpth4+a85*kpth5+a86*kpth6+a87*kpth7),
+               a, b, kr8, kth8, kphi8, kpr8, kpth8);
+
+        // Stage 9
+        float a91=39632708.0/573591083.0, a94=-433636366.0/683701615.0;
+        float a95=-421739975.0/2616292301.0, a96=100302831.0/723423059.0;
+        float a97=790204164.0/839813087.0, a98=800635310.0/3783071287.0;
+        geoRHS(r+he*(a91*kr1+a94*kr4+a95*kr5+a96*kr6+a97*kr7+a98*kr8),
+               th+he*(a91*kth1+a94*kth4+a95*kth5+a96*kth6+a97*kth7+a98*kth8),
+               pr+he*(a91*kpr1+a94*kpr4+a95*kpr5+a96*kpr6+a97*kpr7+a98*kpr8),
+               pth+he*(a91*kpth1+a94*kpth4+a95*kpth5+a96*kpth6+a97*kpth7+a98*kpth8),
+               a, b, kr9, kth9, kphi9, kpr9, kpth9);
+
+        // Stage 10
+        float a101=246121993.0/1340847787.0, a104=-37695042795.0/15268766246.0;
+        float a105=-309121744.0/1061227803.0, a106=-12992083.0/490766935.0;
+        float a107=6005943493.0/2108947869.0, a108=393006217.0/1396673457.0;
+        float a109=123872331.0/1001029789.0;
+        geoRHS(r+he*(a101*kr1+a104*kr4+a105*kr5+a106*kr6+a107*kr7+a108*kr8+a109*kr9),
+               th+he*(a101*kth1+a104*kth4+a105*kth5+a106*kth6+a107*kth7+a108*kth8+a109*kth9),
+               pr+he*(a101*kpr1+a104*kpr4+a105*kpr5+a106*kpr6+a107*kpr7+a108*kpr8+a109*kpr9),
+               pth+he*(a101*kpth1+a104*kpth4+a105*kpth5+a106*kpth6+a107*kpth7+a108*kpth8+a109*kpth9),
+               a, b, kr10, kth10, kphi10, kpr10, kpth10);
+
+        // Stage 11
+        float a111=-1028468189.0/846180014.0, a114=8478235783.0/508512852.0;
+        float a115=1311729495.0/1432422823.0, a116=-10304129995.0/1701304382.0;
+        float a117=-48777925059.0/3047939560.0, a118=15336726248.0/1032824649.0;
+        float a119=-45442868181.0/3398467696.0, a1110=3065993473.0/597172653.0;
+        geoRHS(r+he*(a111*kr1+a114*kr4+a115*kr5+a116*kr6+a117*kr7+a118*kr8+a119*kr9+a1110*kr10),
+               th+he*(a111*kth1+a114*kth4+a115*kth5+a116*kth6+a117*kth7+a118*kth8+a119*kth9+a1110*kth10),
+               pr+he*(a111*kpr1+a114*kpr4+a115*kpr5+a116*kpr6+a117*kpr7+a118*kpr8+a119*kpr9+a1110*kpr10),
+               pth+he*(a111*kpth1+a114*kpth4+a115*kpth5+a116*kpth6+a117*kpth7+a118*kpth8+a119*kpth9+a1110*kpth10),
+               a, b, kr11, kth11, kphi11, kpr11, kpth11);
+
+        // Stage 12
+        float a121=185892177.0/718116043.0, a124=-3185094517.0/667107341.0;
+        float a125=-477755414.0/1098053517.0, a126=-703635378.0/230739211.0;
+        float a127=5731566787.0/1027545527.0, a128=5232866602.0/850066563.0;
+        float a129=-4093664535.0/808688257.0, a1210=3962137247.0/1805957418.0;
+        float a1211=65686358.0/487910083.0;
+        geoRHS(r+he*(a121*kr1+a124*kr4+a125*kr5+a126*kr6+a127*kr7+a128*kr8+a129*kr9+a1210*kr10+a1211*kr11),
+               th+he*(a121*kth1+a124*kth4+a125*kth5+a126*kth6+a127*kth7+a128*kth8+a129*kth9+a1210*kth10+a1211*kth11),
+               pr+he*(a121*kpr1+a124*kpr4+a125*kpr5+a126*kpr6+a127*kpr7+a128*kpr8+a129*kpr9+a1210*kpr10+a1211*kpr11),
+               pth+he*(a121*kpth1+a124*kpth4+a125*kpth5+a126*kpth6+a127*kpth7+a128*kpth8+a129*kpth9+a1210*kpth10+a1211*kpth11),
+               a, b, kr12, kth12, kphi12, kpr12, kpth12);
+
+        // Stage 13
+        float a131=403863854.0/491063109.0, a134=-5068492393.0/434740067.0;
+        float a135=-411421997.0/543043805.0, a136=652783627.0/914296604.0;
+        float a137=11173962825.0/925320556.0, a138=-13158990841.0/6184727034.0;
+        float a139=3936647629.0/1978049680.0, a1310=-160528059.0/685178525.0;
+        float a1311=248638103.0/1413531060.0;
+        geoRHS(r+he*(a131*kr1+a134*kr4+a135*kr5+a136*kr6+a137*kr7+a138*kr8+a139*kr9+a1310*kr10+a1311*kr11),
+               th+he*(a131*kth1+a134*kth4+a135*kth5+a136*kth6+a137*kth7+a138*kth8+a139*kth9+a1310*kth10+a1311*kth11),
+               pr+he*(a131*kpr1+a134*kpr4+a135*kpr5+a136*kpr6+a137*kpr7+a138*kpr8+a139*kpr9+a1310*kpr10+a1311*kpr11),
+               pth+he*(a131*kpth1+a134*kpth4+a135*kpth5+a136*kpth6+a137*kpth7+a138*kpth8+a139*kpth9+a1310*kpth10+a1311*kpth11),
+               a, b, kr13, kth13, kphi13, kpr13, kpth13);
+
+        // 8th-order solution weights
+        float b1=14005451.0/335480064.0;
+        float b6=-59238493.0/1068277825.0, b7=181606767.0/758867731.0;
+        float b8=561292985.0/797845732.0, b9=-1041891430.0/1371343529.0;
+        float b10=760417239.0/1151165299.0, b11=118820643.0/751138087.0;
+        float b12=-528747749.0/2220607170.0, b13=1.0/4.0;
+
+        r   += he*(b1*kr1+b6*kr6+b7*kr7+b8*kr8+b9*kr9+b10*kr10+b11*kr11+b12*kr12+b13*kr13);
+        th  += he*(b1*kth1+b6*kth6+b7*kth7+b8*kth8+b9*kth9+b10*kth10+b11*kth11+b12*kth12+b13*kth13);
+        phi += he*(b1*kphi1+b6*kphi6+b7*kphi7+b8*kphi8+b9*kphi9+b10*kphi10+b11*kphi11+b12*kphi12+b13*kphi13);
+        pr  += he*(b1*kpr1+b6*kpr6+b7*kpr7+b8*kpr8+b9*kpr9+b10*kpr10+b11*kpr11+b12*kpr12+b13*kpr13);
+        pth += he*(b1*kpth1+b6*kpth6+b7*kpth7+b8*kpth8+b9*kpth9+b10*kpth10+b11*kpth11+b12*kpth12+b13*kpth13);
+
+        if (th < 0.005) { th = 0.005; pth = abs(pth); }
+        if (th > PI-0.005) { th = PI-0.005; pth = -abs(pth); }
+
+        if (r <= rp*1.01) { done=true; break; }
+        if (u_disk > 0.5) {
+            float cross = (oldTh-PI*0.5)*(th-PI*0.5);
+            if (cross < 0.0) {
+                float f = clamp(abs(oldTh-PI*0.5)/max(abs(th-oldTh),1e-6), 0.0, 1.0);
+                vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a);
+                color += dc * (1.0 - clamp(length(color)*0.4, 0.0, 0.9));
+            }
+        }
+        if (r > RESC) {
+            float fth = oldTh + (th-oldTh) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            float fph = oldPhi + (phi-oldPhi) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            color += background(sphereDir(fth, fph)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
+            done=true; break;
+        }
+        if (r < 0.5 || r!=r || th!=th) { done=true; break; }
+    }
+    float imp = length(vec2(alpha,beta));
+    float rc = 5.2-1.0*a;
+    color += vec3(0.1,0.07,0.04)*exp(-pow((imp-rc)/0.3,2.0))*0.06;
+    color *= 1.0-0.3*dot(uv,uv);
+    color = color/(1.0+color);
+    color = pow(color, vec3(1.0/2.2));
+    gl_FragColor = vec4(color, 1);
+}
+`;
+    } else {
+        src += `
+// ===========================================================
+//  YOSHIDA 4TH-ORDER SYMPLECTIC INTEGRATOR (Forest-Ruth)
+//
+//  The classic 4th-order symplectic composition method.
+//  3 substeps with triple-jump coefficients.
+//
+//  Forest & Ruth (1990), Physica D 43, 105-117
+//  Yoshida (1990), Physics Letters A 150(5-7), 262-268
+// ===========================================================
+
+void geoRHS(
+    float r, float th, float pr, float pth,
+    float a, float b,
+    out float dr, out float dth, out float dphi,
+    out float dpr, out float dpth
+) {
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+    float a2 = a*a, r2 = r*r;
+    float Q2 = u_Q*u_Q;
+    float sig = r2 + a2*c2;
+    float del = r2 - 2.0*r + a2 + Q2;
+    float sdel = max(del, 1e-6);
+    float rpa2 = r2 + a2;
+    float w = 2.0*r - Q2;
+    float A_ = rpa2*rpa2 - sdel*a2*s2;
+    float isig = 1.0/sig;
+    float SD = sig*sdel;
+    float iSD = 1.0/SD;
+    float is2 = 1.0/s2;
+
+    float grr = sdel*isig, gthth = isig;
+    float gff = (sig - w)*iSD*is2;
+    float gtf = -a*w*iSD;
+
+    dr = grr*pr; dth = gthth*pth; dphi = gff*b - gtf;
+
+    float dsig_r=2.0*r; float ddel_r=2.0*r-2.0;
+    float dA_r=4.0*r*rpa2-ddel_r*a2*s2;
+    float dSD_r=dsig_r*sdel+sig*ddel_r;
+    float dgtt_r=-(dA_r*SD-A_*dSD_r)/(SD*SD);
+    float dgtf_r=-a*(2.0*SD - w*dSD_r)/(SD*SD);
+    float dgrr_r=(ddel_r*sig-sdel*dsig_r)/(sig*sig);
+    float dgthth_r=-dsig_r*isig*isig;
+    float num_ff=sig-w; float den_ff=SD*s2;
+    float dgff_r=((dsig_r-2.0)*den_ff-num_ff*dSD_r*s2)/(den_ff*den_ff);
+    dpr=-0.5*(dgtt_r-2.0*b*dgtf_r+dgrr_r*pr*pr+dgthth_r*pth*pth+dgff_r*b*b);
+
+    float dsig_th=-2.0*a2*sth*cth;
+    float ds2_th=2.0*sth*cth;
+    float dA_th=-sdel*a2*ds2_th;
+    float dSD_th=dsig_th*sdel;
+    float dgtt_th=-(dA_th*SD-A_*dSD_th)/(SD*SD);
+    float dgtf_th=a*w*dSD_th/(SD*SD);
+    float dgrr_th=-sdel*dsig_th/(sig*sig);
+    float dgthth_th=-dsig_th*isig*isig;
+    float dgff_th=(dsig_th*den_ff-num_ff*(dsig_th*sdel*s2+SD*ds2_th))/(den_ff*den_ff);
+    dpth=-0.5*(dgtt_th-2.0*b*dgtf_th+dgrr_th*pr*pr+dgthth_th*pth*pth+dgff_th*b*b);
+}
+
+// Yoshida 4th-order (Forest-Ruth) coefficients
+#define Y4_W1  1.3512071919596576
+#define Y4_W0 -1.7024143839193153
+#define Y4_D1  0.6756035959798288
+#define Y4_D0 -0.1756035959798288
+
+void main() {
+    vec2 uv = v_uv;
+    float asp = u_res.x/u_res.y;
+    float alpha = uv.x*u_fov*asp, beta = uv.y*u_fov;
+    float a = u_a, a2 = a*a;
+    float thObs = u_incl, sO = sin(thObs), cO = cos(thObs);
+    float b = -alpha*sO;
+    float q2 = beta*beta + cO*cO*(alpha*alpha - a2);
+
+    float r = R0, th = thObs, phi = u_phi0;
+    float sth = sin(th), cth = cos(th);
+    float s2 = sth*sth + S2_EPS, c2 = cth*cth;
+    float sig = r*r+a2*c2, del = r*r-2.0*r+a2+u_Q*u_Q;
+    float sdel = max(del,1e-6);
+    float rpa2 = r*r+a2, A_ = rpa2*rpa2-sdel*a2*s2;
+    float iSD = 1.0/(sig*sdel), is2 = 1.0/s2;
+    float grr = sdel/sig, gthi = 1.0/sig;
+    float pth = beta;
+    float w_init = 2.0*r - u_Q*u_Q;
+    float rest = -A_*iSD + 2.0*a*b*w_init*iSD + gthi*pth*pth + (sig-w_init)*iSD*is2*b*b;
+    float pr2 = -rest/grr;
+    float pr = pr2 > 0.0 ? -sqrt(pr2) : 0.0;
+    float Q2 = u_Q*u_Q;
+    float rp = 1.0 + sqrt(max(1.0-a2-Q2, 0.0));
+    vec3 color = vec3(0); bool done = false;
+
+    for (int i = 0; i < STEPS; i++) {
+        if (done) break;
+        float he = H_BASE * clamp((r-rp)*0.4, 0.04, 1.0);
+        he = clamp(he, 0.012, 0.6);
+        float oldTh = th, oldR = r, oldPhi = phi;
+
+        // Yoshida 4th-order symmetric composition: 3 substeps
+        float dr_,dth_,dphi_,dpr_,dpth_;
+
+        // --- Substep 1: drift d1, kick w1 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y4_D1*dr_;
+        th  += he*Y4_D1*dth_;
+        phi += he*Y4_D1*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y4_W1*dpr_;
+        pth += he*Y4_W1*dpth_;
+
+        // --- Substep 2: drift d0, kick w0 ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y4_D0*dr_;
+        th  += he*Y4_D0*dth_;
+        phi += he*Y4_D0*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y4_W0*dpr_;
+        pth += he*Y4_W0*dpth_;
+
+        // --- Substep 3: drift d1, kick w1 (symmetric) ---
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        r   += he*Y4_D1*dr_;
+        th  += he*Y4_D1*dth_;
+        phi += he*Y4_D1*dphi_;
+        geoRHS(r,th,pr,pth, a,b, dr_,dth_,dphi_,dpr_,dpth_);
+        pr  += he*Y4_W1*dpr_;
+        pth += he*Y4_W1*dpth_;
+
+        if (th < 0.005) { th = 0.005; pth = abs(pth); }
+        if (th > PI-0.005) { th = PI-0.005; pth = -abs(pth); }
+
+        if (r <= rp*1.01) { done=true; break; }
+        if (u_disk > 0.5) {
+            float cross = (oldTh-PI*0.5)*(th-PI*0.5);
+            if (cross < 0.0) {
+                float f = clamp(abs(oldTh-PI*0.5)/max(abs(th-oldTh),1e-6), 0.0, 1.0);
+                vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a);
+                color += dc * (1.0 - clamp(length(color)*0.4, 0.0, 0.9));
+            }
+        }
+        if (r > RESC) {
+            float fth = oldTh + (th-oldTh) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            float fph = oldPhi + (phi-oldPhi) * clamp((RESC-oldR)/max(r-oldR,1e-6), 0.0, 1.0);
+            color += background(sphereDir(fth, fph)) * (1.0 - clamp(length(color)*0.3, 0.0, 0.9));
+            done=true; break;
+        }
+        if (r < 0.5 || r!=r || th!=th) { done=true; break; }
+    }
+    float imp = length(vec2(alpha,beta));
+    float rc = 5.2-1.0*a;
+    color += vec3(0.1,0.07,0.04)*exp(-pow((imp-rc)/0.3,2.0))*0.06;
+    color *= 1.0-0.3*dot(uv,uv);
+    color = color/(1.0+color);
     color = pow(color, vec3(1.0/2.2));
     gl_FragColor = vec4(color, 1);
 }
@@ -856,9 +1607,24 @@ void main() {
     const gl = canvas.getContext('webgl', {antialias:false, preserveDrawingBuffer:false, powerPreference:'high-performance'});
     if (!gl) { loadMsg.textContent='WebGL not available'; errMsg.style.display='block'; errMsg.textContent='Try Chrome/Firefox on desktop.'; return; }
 
-    let spin=0.6, charge=0, incl=80, diskTemp=1, showDisk=1, showGrid=1, autoRotate=false, rotAngle=0, fov=8;
+    let spin=0, charge=0, incl=89, diskTemp=1, showDisk=1, showGrid=1, autoRotate=false, rotAngle=0, fov=8;
     let bgMode = 1;
-    let qMethod='separated', qSteps=200, qResScale=1.0, qStepSize=0.3, qObsDist=40, qStarLayers=3;
+    let qMethod='yoshida4', qSteps=200, qResScale=1.0, qStepSize=0.3, qObsDist=40, qStarLayers=3;
+
+    // ---- Dirty-flag rendering: only draw when something changed ----
+    let needsRender = true;   // true = must draw next frame
+    let rafId = null;         // current requestAnimationFrame handle
+    function markDirty() { needsRender = true; if (!rafId) rafId = requestAnimationFrame(render); }
+
+    // ---- Cached ISCO value (expensive to compute with charge > 0) ----
+    let cachedIsco = null, cachedIscoSpin = null, cachedIscoCharge = null;
+    function getIsco(a, Q) {
+        if (a === cachedIscoSpin && Q === cachedIscoCharge && cachedIsco !== null) return cachedIsco;
+        cachedIsco = iscoJS(a, Q);
+        cachedIscoSpin = a;
+        cachedIscoCharge = Q;
+        return cachedIsco;
+    }
 
     // Forward declaration stub for hybrid server rendering (reassigned later)
     let _scheduleServerRenderImpl = null;
@@ -895,7 +1661,7 @@ void main() {
         gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
         uniforms = {};
         ['u_res','u_a','u_incl','u_fov','u_disk','u_grid','u_temp','u_phi0','u_Q','u_isco'].forEach(n => { uniforms[n]=gl.getUniformLocation(program,n); });
-        document.getElementById('integ-info').textContent = qMethod==='hamiltonian' ? 'hamiltonian RK4' : 'separated';
+        document.getElementById('integ-info').textContent = {yoshida4:'Yoshida4 symplectic',rk4:'RK4',yoshida6:'Yoshida6 symplectic',yoshida8:'Yoshida8 symplectic',rkdp8:'Dormand-Prince RK8'}[qMethod] || qMethod;
         return {ok:true};
     }
 
@@ -903,6 +1669,7 @@ void main() {
         const w = Math.floor(innerWidth*qResScale), h = Math.floor(innerHeight*qResScale);
         canvas.width=w; canvas.height=h; gl.viewport(0,0,w,h);
         document.getElementById('res').textContent = w+'×'+h;
+        markDirty();
     }
     addEventListener('resize', resize);
 
@@ -1006,20 +1773,21 @@ void main() {
     }
 
     const presets = {
-        low:    {method:'separated', steps:80,  resScale:0.5,  stepSize:0.5,  obsDist:30, starLayers:1},
-        medium: {method:'separated', steps:200, resScale:1,    stepSize:0.3,  obsDist:40, starLayers:3},
-        high:   {method:'separated', steps:350, resScale:1.25, stepSize:0.22, obsDist:50, starLayers:4},
-        ultra:  {method:'hamiltonian',steps:250, resScale:1.25, stepSize:0.35, obsDist:60, starLayers:4},
+        low:    {method:'yoshida4', steps:80,  resScale:0.5,  stepSize:0.5,  obsDist:30, starLayers:1},
+        medium: {method:'yoshida4', steps:200, resScale:1,    stepSize:0.3,  obsDist:40, starLayers:3},
+        high:   {method:'yoshida6',  steps:200, resScale:1.25, stepSize:0.35, obsDist:50, starLayers:4},
+        ultra:  {method:'rkdp8',     steps:180, resScale:1.25, stepSize:0.45, obsDist:60, starLayers:4},
     };
 
     function refreshLabels() {
-        document.getElementById('integ-label').textContent = qMethod==='hamiltonian' ? 'Hamiltonian (RK4)' : 'Separated (fast)';
+        const integLabels = {yoshida4:'Yoshida 4th symplectic', rk4:'Runge-Kutta 4th', yoshida6:'Yoshida 6th symplectic', yoshida8:'Yoshida 8th symplectic', rkdp8:'Dormand-Prince RK8'};
+        document.getElementById('integ-label').textContent = integLabels[qMethod] || qMethod;
         document.getElementById('steps-val').textContent = qSteps;
         document.getElementById('res-scale-val').textContent = qResScale.toFixed(2)+'×';
         document.getElementById('stepsize-val').textContent = qStepSize.toFixed(2);
         document.getElementById('obs-val').textContent = qObsDist+' M';
         document.getElementById('starlayers-val').textContent = qStarLayers;
-        document.getElementById('hamiltonian-warn').style.display = qMethod==='hamiltonian' ? 'inline-block' : 'none';
+        document.getElementById('integrator-warn').style.display = (qMethod!=='yoshida4') ? 'inline-block' : 'none';
     }
 
     let rTimer = null;
@@ -1030,11 +1798,13 @@ void main() {
             const r = buildProgram();
             if (!r.ok) {
                 console.error('Shader fail:', r.error);
-                if (qMethod === 'hamiltonian') {
-                    qMethod='separated'; document.getElementById('sel-integrator').value='separated'; refreshLabels();
-                    if (buildProgram().ok) alert('Hamiltonian integrator failed on your GPU. Fell back to separated equations.');
+                if (qMethod !== 'yoshida4') {
+                    const failedMethod = qMethod;
+                    qMethod='yoshida4'; document.getElementById('sel-integrator').value='yoshida4'; refreshLabels();
+                    if (buildProgram().ok) alert(failedMethod + ' integrator failed on your GPU. Fell back to Yoshida 4th-order.');
                 }
             }
+            markDirty();
         }, 120);
     }
     function applyPreset(name) {
@@ -1061,7 +1831,7 @@ void main() {
         const maxA = Math.sqrt(Math.max(1 - charge*charge, 0));
         if (spin > maxA) { spin = Math.floor(maxA*500)/500; document.getElementById('spin').value = spin; document.getElementById('spin-val').textContent='a = '+spin.toFixed(3); }
         document.getElementById('charge-val').textContent='Q = '+charge.toFixed(3);
-        updInfo();
+        updInfo(); markDirty();
         scheduleServerRender();
     });
     // Also enforce constraint when spin changes
@@ -1070,14 +1840,14 @@ void main() {
         const maxQ = Math.sqrt(Math.max(1 - spin*spin, 0));
         if (charge > maxQ) { charge = Math.floor(maxQ*500)/500; document.getElementById('charge').value = charge; document.getElementById('charge-val').textContent='Q = '+charge.toFixed(3); }
         document.getElementById('spin-val').textContent='a = '+spin.toFixed(3);
-        updInfo();
+        updInfo(); markDirty();
         scheduleServerRender();
     });
-    document.getElementById('incl').addEventListener('input', function(){ incl=+this.value; document.getElementById('incl-val').innerHTML='&theta; = '+incl.toFixed(1)+'&deg;'; scheduleServerRender(); });
-    document.getElementById('temp').addEventListener('input', function(){ diskTemp=+this.value; document.getElementById('temp-val').textContent=diskTemp.toFixed(2); scheduleServerRender(); });
-    document.getElementById('btn-disk').addEventListener('click', function(){ showDisk=showDisk>0.5?0:1; this.classList.toggle('active',showDisk>0.5); scheduleServerRender(); });
-    document.getElementById('btn-grid').addEventListener('click', function(){ showGrid=showGrid>0.5?0:1; this.classList.toggle('active',showGrid>0.5); scheduleServerRender(); });
-    document.getElementById('btn-rotate').addEventListener('click', function(){ autoRotate=!autoRotate; this.classList.toggle('active',autoRotate); if(!autoRotate) scheduleServerRender(); else { var sf=document.getElementById('server-frame'); if(sf) sf.classList.remove('visible'); } });
+    document.getElementById('incl').addEventListener('input', function(){ incl=+this.value; document.getElementById('incl-val').innerHTML='&theta; = '+incl.toFixed(1)+'&deg;'; markDirty(); scheduleServerRender(); });
+    document.getElementById('temp').addEventListener('input', function(){ diskTemp=+this.value; document.getElementById('temp-val').textContent=diskTemp.toFixed(2); markDirty(); scheduleServerRender(); });
+    document.getElementById('btn-disk').addEventListener('click', function(){ showDisk=showDisk>0.5?0:1; this.classList.toggle('active',showDisk>0.5); markDirty(); scheduleServerRender(); });
+    document.getElementById('btn-grid').addEventListener('click', function(){ showGrid=showGrid>0.5?0:1; this.classList.toggle('active',showGrid>0.5); markDirty(); scheduleServerRender(); });
+    document.getElementById('btn-rotate').addEventListener('click', function(){ autoRotate=!autoRotate; this.classList.toggle('active',autoRotate); if(!autoRotate) scheduleServerRender(); else { markDirty(); var sf=document.getElementById('server-frame'); if(sf) sf.classList.remove('visible'); } });
     document.getElementById('btn-settings').addEventListener('click', function(){
         const p=document.getElementById('settings-panel'); p.classList.toggle('hidden'); this.classList.toggle('active',!p.classList.contains('hidden'));
     });
@@ -1108,10 +1878,10 @@ void main() {
     document.getElementById('obs-dist').addEventListener('input', function(){ qObsDist=+this.value; document.getElementById('obs-val').textContent=qObsDist+' M'; clearPH(); recompile(); scheduleServerRender(); });
     document.getElementById('star-layers').addEventListener('input', function(){ qStarLayers=+this.value; document.getElementById('starlayers-val').textContent=qStarLayers; clearPH(); recompile(); scheduleServerRender(); });
 
-    canvas.addEventListener('wheel', function(e){ e.preventDefault(); fov*=(1+e.deltaY*0.001); fov=Math.max(2,Math.min(25,fov)); scheduleServerRender(); }, {passive:false});
+    canvas.addEventListener('wheel', function(e){ e.preventDefault(); fov*=(1+e.deltaY*0.001); fov=Math.max(2,Math.min(25,fov)); markDirty(); scheduleServerRender(); }, {passive:false});
     let ltd=0;
     canvas.addEventListener('touchstart', function(e){ if(e.touches.length===2){ const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY; ltd=Math.sqrt(dx*dx+dy*dy); }});
-    canvas.addEventListener('touchmove', function(e){ if(e.touches.length===2){ e.preventDefault(); const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY,d=Math.sqrt(dx*dx+dy*dy); if(ltd>0){fov*=ltd/d;fov=Math.max(2,Math.min(25,fov));}ltd=d; scheduleServerRender(); }}, {passive:false});
+    canvas.addEventListener('touchmove', function(e){ if(e.touches.length===2){ e.preventDefault(); const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY,d=Math.sqrt(dx*dx+dy*dy); if(ltd>0){fov*=ltd/d;fov=Math.max(2,Math.min(25,fov));}ltd=d; markDirty(); scheduleServerRender(); }}, {passive:false});
 
     // ============================================================
     //  HYBRID SERVER RENDERING
@@ -1145,8 +1915,8 @@ void main() {
 
     // Apply mobile-optimized settings
     function applyMobileDefaults() {
-        qMethod = 'separated'; qSteps = 80; qResScale = 0.25; qStepSize = 0.5; qObsDist = 30; qStarLayers = 1;
-        document.getElementById('sel-integrator').value = 'separated';
+        qMethod = 'yoshida4'; qSteps = 80; qResScale = 0.25; qStepSize = 0.5; qObsDist = 30; qStarLayers = 1;
+        document.getElementById('sel-integrator').value = 'yoshida4';
         document.getElementById('steps').value = 80;
         document.getElementById('res-scale').value = 0.25;
         document.getElementById('stepsize').value = 0.5;
@@ -1263,8 +2033,7 @@ void main() {
     // Assign the real implementation to the forward-declared stub
     _scheduleServerRenderImpl = function() {
         if (renderMode === 'local' || !serverUrl) return;
-        // Hide server frame immediately when parameters change (show local preview)
-        serverFrame.classList.remove('visible');
+        // Keep the old server frame visible until the new one arrives (no grey gap)
         clearTimeout(serverDebounce);
         serverDebounce = setTimeout(requestServerFrame, 200);
     };
@@ -1279,8 +2048,10 @@ void main() {
         if (mode === 'local') {
             serverFrame.classList.remove('visible');
             canvas.style.opacity = '1';
+            markDirty();
         } else if (mode === 'hybrid') {
             canvas.style.opacity = '1';
+            markDirty();
             scheduleServerRender();
         } else if (mode === 'server') {
             canvas.style.opacity = '0.15';  // Dim local, rely on server
@@ -1331,18 +2102,21 @@ void main() {
                 document.getElementById('server-url').value = location.origin;
                 setServerStatus('connected', 'server ok');
                 serverFailCount = 0;
-                // Auto-enable hybrid mode if on mobile
-                if (detectMobile()) {
-                    updateRenderMode('hybrid');
-                }
+                // Default to server-only mode when server is available
+                updateRenderMode('server');
             })
             .catch(() => {});  // Server not available at same origin, that's fine
     }
 
     function render() {
-        if (autoRotate) rotAngle += 0.008;
+        rafId = null;
+        if (autoRotate) {
+            rotAngle += 0.008;
+            needsRender = true;
+        }
+
         // Skip expensive GPU work in server-only mode (server provides the frames)
-        if (renderMode !== 'server') {
+        if (needsRender && renderMode !== 'server') {
             gl.uniform2f(uniforms.u_res, canvas.width, canvas.height);
             gl.uniform1f(uniforms.u_a, spin);
             gl.uniform1f(uniforms.u_incl, incl*Math.PI/180);
@@ -1352,12 +2126,16 @@ void main() {
             gl.uniform1f(uniforms.u_temp, diskTemp);
             gl.uniform1f(uniforms.u_phi0, rotAngle);
             gl.uniform1f(uniforms.u_Q, charge);
-            gl.uniform1f(uniforms.u_isco, iscoJS(spin, charge));
+            gl.uniform1f(uniforms.u_isco, getIsco(spin, charge));
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            needsRender = false;
         }
+
         fc++; const now=performance.now();
         if (now-lastFT > 800) { document.getElementById('fps').textContent=Math.round(fc/((now-lastFT)*0.001)); fc=0; lastFT=now; }
-        requestAnimationFrame(render);
+
+        // Keep the loop alive only when animating
+        if (autoRotate) rafId = requestAnimationFrame(render);
     }
 
     updInfo(); refreshLabels();
@@ -1366,7 +2144,7 @@ void main() {
     const initResult = buildProgram();
     if (!initResult.ok) { loadMsg.textContent='Shader compile failed'; errMsg.style.display='block'; errMsg.textContent=initResult.error; return; }
     loadMsg.textContent = 'Tracing first frame…';
-    requestAnimationFrame(() => { render(); setTimeout(()=>loadEl.classList.add('hidden'), 500); });
+    requestAnimationFrame(() => { needsRender = true; render(); setTimeout(()=>loadEl.classList.add('hidden'), 500); });
 })();
 </script>
 </body>

@@ -209,7 +209,7 @@ class Renderer:
     def _get_program(self, opts: dict) -> int:
         """Get or compile+cache a shader program for the given options."""
         cache_key = (
-            opts.get("method", "separated"),
+            opts.get("method", "yoshida4"),
             opts.get("steps", 200),
             opts.get("obsDist", 40),
             opts.get("starLayers", 3),
@@ -305,7 +305,7 @@ class Renderer:
 
         # Build shader options (these affect #defines, requiring recompilation)
         shader_opts = {
-            "method": params.get("method", "separated"),
+            "method": params.get("method", "yoshida4"),
             "steps": params.get("steps", 200),
             "obsDist": params.get("obs_dist", 40),
             "starLayers": params.get("star_layers", 3),
