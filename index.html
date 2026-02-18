@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kerr Black Hole — Geodesic Ray Tracer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Cormorant+Garamond:wght@300;400;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    overflow: hidden;
+    font-family: 'IBM Plex Mono', monospace;
+    color: #c8bfa9;
+    cursor: crosshair;
+  }
+
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  .ui-layer {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  /* Title block */
+  .title-block {
+    position: fixed;
+    top: 28px;
+    left: 32px;
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  .title-block h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-weight: 300;
+    font-size: 28px;
+    letter-spacing: 0.08em;
+    color: #e8dfd0;
+    text-shadow: 0 0 40px rgba(255,180,100,0.15);
+    margin-bottom: 4px;
+  }
+
+  .title-block .subtitle {
+    font-size: 10px;
+    font-weight: 300;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: #7a7060;
+  }
+
+  /* Controls panel */
+  .controls {
+    position: fixed;
+    bottom: 28px;
+    left: 32px;
+    z-index: 20;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: rgba(10, 8, 6, 0.75);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(200, 180, 140, 0.08);
+    border-radius: 12px;
+    padding: 20px 24px;
+    min-width: 280px;
+  }
+
+  .control-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .control-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #8a7e6c;
+  }
+
+  .control-value {
+    font-size: 13px;
+    font-weight: 500;
+    color: #d4c8b0;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 2px;
+    background: rgba(200, 180, 140, 0.12);
+    border-radius: 1px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #c8b890;
+    border: 2px solid rgba(10, 8, 6, 0.6);
+    box-shadow: 0 0 12px rgba(200, 170, 100, 0.25);
+    cursor: grab;
+    transition: box-shadow 0.2s;
+  }
+
+  input[type="range"]::-webkit-slider-thumb:hover {
+    box-shadow: 0 0 20px rgba(200, 170, 100, 0.45);
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #c8b890;
+    border: 2px solid rgba(10, 8, 6, 0.6);
+    box-shadow: 0 0 12px rgba(200, 170, 100, 0.25);
+    cursor: grab;
+  }
+
+  /* Toggles */
+  .toggle-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .toggle-btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: #6a6050;
+    background: rgba(200, 180, 140, 0.04);
+    border: 1px solid rgba(200, 180, 140, 0.1);
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: all 0.25s;
+    pointer-events: auto;
+  }
+
+  .toggle-btn.active {
+    color: #d4c8b0;
+    background: rgba(200, 180, 140, 0.1);
+    border-color: rgba(200, 180, 140, 0.25);
+  }
+
+  .toggle-btn:hover {
+    border-color: rgba(200, 180, 140, 0.2);
+  }
+
+  /* Info readout */
+  .readout {
+    position: fixed;
+    bottom: 28px;
+    right: 32px;
+    z-index: 20;
+    pointer-events: none;
+    text-align: right;
+    font-size: 10px;
+    font-weight: 300;
+    letter-spacing: 0.12em;
+    color: #5a5040;
+    line-height: 1.8;
+  }
+
+  .readout .highlight {
+    color: #8a7e6c;
+  }
+
+  /* Loading overlay */
+  .loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0a0806;
+    transition: opacity 1.2s ease;
+  }
+
+  .loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .loading-text {
+    font-family: 'Cormorant Garamond', serif;
+    font-weight: 300;
+    font-size: 18px;
+    color: #6a6050;
+    letter-spacing: 0.15em;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+  <div class="loading-text">Compiling geodesic integrator...</div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<div class="title-block">
+  <h1>Kerr Spacetime</h1>
+  <div class="subtitle">Null geodesic ray tracer &mdash; GPU accelerated</div>
+</div>
+
+<div class="controls" id="controls">
+  <div class="control-row">
+    <div class="control-label">
+      <span>Black Hole Spin</span>
+      <span class="control-value" id="spin-val">a = 0.600</span>
+    </div>
+    <input type="range" id="spin" min="0" max="0.998" step="0.002" value="0.6">
+  </div>
+
+  <div class="control-row">
+    <div class="control-label">
+      <span>Observer Inclination</span>
+      <span class="control-value" id="incl-val">&theta; = 80.0&deg;</span>
+    </div>
+    <input type="range" id="incl" min="5" max="89" step="0.5" value="80">
+  </div>
+
+  <div class="control-row">
+    <div class="control-label">
+      <span>Disk Temperature</span>
+      <span class="control-value" id="temp-val">1.00</span>
+    </div>
+    <input type="range" id="temp" min="0.2" max="2.5" step="0.05" value="1.0">
+  </div>
+
+  <div class="control-row">
+    <div class="control-label"><span>Layers</span></div>
+    <div class="toggle-row">
+      <button class="toggle-btn active" id="btn-disk" onclick="toggleDisk()">Accretion Disk</button>
+      <button class="toggle-btn active" id="btn-grid" onclick="toggleGrid()">Celestial Grid</button>
+      <button class="toggle-btn" id="btn-rotate" onclick="toggleRotate()">Auto Rotate</button>
+    </div>
+  </div>
+</div>
+
+<div class="readout" id="readout">
+  <span class="highlight">r<sub>+</sub></span> = <span id="rp">1.800</span> M<br>
+  <span class="highlight">r<sub>isco</sub></span> = <span id="risco">4.233</span> M<br>
+  <span class="highlight">resolution</span> <span id="res">---</span><br>
+  <span class="highlight">fps</span> <span id="fps">--</span>
+</div>
+
+<!-- ===================== VERTEX SHADER ===================== -->
+<script id="vert-shader" type="x-shader/x-vertex">
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main() {
+    v_uv = a_pos;
+    gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+</script>
+
+<!-- ===================== FRAGMENT SHADER ===================== -->
+<script id="frag-shader" type="x-shader/x-fragment">
+precision highp float;
+
+varying vec2 v_uv;
+uniform vec2 u_resolution;
+uniform float u_spin;       // Kerr spin parameter a (0..~1)
+uniform float u_incl;       // observer inclination in radians
+uniform float u_time;
+uniform float u_fov;        // field of view in M
+uniform float u_showDisk;   // 1.0 = show accretion disk
+uniform float u_showGrid;   // 1.0 = show celestial grid
+uniform float u_diskTemp;   // temperature multiplier
+uniform float u_rotate;     // rotation angle
+
+#define PI 3.14159265359
+#define TWO_PI 6.28318530718
+#define MAX_STEPS 350
+#define R_OBS 80.0
+#define R_ESC 100.0
+#define R_DISK_OUT 20.0
+
+// ---- Hash for star field ----
+float hash(vec2 p) {
+    p = fract(p * vec2(443.897, 441.423));
+    p += dot(p, p + 19.19);
+    return fract(p.x * p.y);
+}
+
+float hash3(vec3 p) {
+    p = fract(p * vec3(443.897, 441.423, 437.195));
+    p += dot(p, p.yzx + 19.19);
+    return fract((p.x + p.y) * p.z);
+}
+
+// ---- Kerr metric quantities ----
+float Sigma(float r, float costh, float a) {
+    return r * r + a * a * costh * costh;
+}
+
+float Delta(float r, float a) {
+    return r * r - 2.0 * r + a * a;
+}
+
+// Compute ISCO radius for prograde orbit
+float computeISCO(float a) {
+    float z1 = 1.0 + pow(1.0 - a * a, 1.0 / 3.0) * (pow(1.0 + a, 1.0 / 3.0) + pow(max(1.0 - a, 0.0), 1.0 / 3.0));
+    float z2 = sqrt(3.0 * a * a + z1 * z1);
+    return 3.0 + z2 - sqrt((3.0 - z1) * (3.0 + z1 + 2.0 * z2));
+}
+
+// ---- Geodesic RHS: Hamiltonian formulation ----
+// State: (r, theta, p_r, p_theta)
+// Conserved: p_t = -1, p_phi = b
+// We also compute dphi/dlambda
+
+void geodesicRHS(
+    float r, float th, float pr, float pth,
+    float a, float b,
+    out float dr, out float dth, out float dphi,
+    out float dpr, out float dpth
+) {
+    float sth = sin(th);
+    float cth = cos(th);
+    float s2 = sth * sth;
+    float c2 = cth * cth;
+
+    float sig = r * r + a * a * c2;
+    float del = r * r - 2.0 * r + a * a;
+    float a2 = a * a;
+    float r2 = r * r;
+    float rpa2 = r2 + a2; // r^2 + a^2
+    float A = rpa2 * rpa2 - del * a2 * s2;
+
+    float inv_sig = 1.0 / sig;
+    float inv_del = 1.0 / del;
+    float inv_s2 = 1.0 / max(s2, 1e-10);
+
+    // Inverse metric components
+    float gtt = -A * inv_sig * inv_del;
+    float gtf = -2.0 * a * r * inv_sig * inv_del;
+    float grr = del * inv_sig;
+    float gthth = inv_sig;
+    float gff = (sig - 2.0 * r) * inv_sig * inv_del * inv_s2;
+
+    // Equations of motion
+    // dr/dl = dH/dp_r = g^rr * p_r
+    dr = grr * pr;
+    // dth/dl = dH/dp_th = g^thth * p_th
+    dth = gthth * pth;
+    // dphi/dl = g^ff * b + g^tf * (-1)
+    dphi = gff * b - gtf;
+
+    // dp_r/dl = -dH/dr
+    // Need partial derivatives of inverse metric w.r.t. r
+    float dsig_dr = 2.0 * r;
+    float ddel_dr = 2.0 * r - 2.0;
+    float dA_dr = 4.0 * r * rpa2 - ddel_dr * a2 * s2;
+
+    // d(g^tt)/dr = d(-A/(sig*del))/dr
+    float SD = sig * del;
+    float inv_SD = inv_sig * inv_del;
+    float dSD_dr = dsig_dr * del + sig * ddel_dr;
+    float dgtt_dr = -(dA_dr * SD - A * dSD_dr) / (SD * SD);
+
+    // d(g^tf)/dr = d(-2ar/(sig*del))/dr
+    float dgtf_dr = -(2.0 * a * SD - 2.0 * a * r * dSD_dr) / (SD * SD);
+
+    // d(g^rr)/dr = d(del/sig)/dr
+    float dgrr_dr = (ddel_dr * sig - del * dsig_dr) / (sig * sig);
+
+    // d(g^thth)/dr = d(1/sig)/dr = -dsig_dr/sig^2
+    float dgthth_dr = -dsig_dr * inv_sig * inv_sig;
+
+    // d(g^ff)/dr = d((sig-2r)/(sig*del*s2))/dr
+    float num_ff = sig - 2.0 * r;
+    float den_ff = SD * s2;
+    float dnum_ff_dr = dsig_dr - 2.0;
+    float dden_ff_dr = dSD_dr * s2;
+    float dgff_dr = (dnum_ff_dr * den_ff - num_ff * dden_ff_dr) / (den_ff * den_ff);
+
+    // dp_r/dl = -0.5 * (dg^tt/dr * pt^2 + 2*dg^tf/dr * pt*pf + dg^rr/dr * pr^2 + dg^thth/dr * pth^2 + dg^ff/dr * pf^2)
+    // pt = -1, pf = b
+    dpr = -0.5 * (dgtt_dr - 2.0 * b * dgtf_dr + dgrr_dr * pr * pr + dgthth_dr * pth * pth + dgff_dr * b * b);
+
+    // dp_th/dl = -dH/dth
+    // Partial derivatives w.r.t. theta
+    float dsig_dth = -2.0 * a2 * sth * cth;
+    // del doesn't depend on theta
+    float dA_dth = -del * a2 * 2.0 * sth * cth;
+    float ds2_dth = 2.0 * sth * cth;
+
+    float dSD_dth = dsig_dth * del;
+    float dgtt_dth = -(dA_dth * SD - A * dSD_dth) / (SD * SD);
+
+    float dgtf_dth = -(-2.0 * a * r) * (-dSD_dth) / (SD * SD);
+    // = 2ar * dSD_dth / (SD*SD) ... wait let me redo
+    // g^tf = -2ar / (sig*del), del doesn't depend on th
+    // g^tf = -2ar / (SD)
+    // dg^tf/dth = -2ar * (-dSD_dth) / SD^2 = 2ar * dSD_dth / SD^2
+    dgtf_dth = 2.0 * a * r * dSD_dth / (SD * SD);
+
+    float dgthth_dth = -dsig_dth * inv_sig * inv_sig;
+
+    float dgrr_dth = -del * dsig_dth / (sig * sig);
+
+    // g^ff = (sig - 2r) / (sig * del * s2)
+    float dnum_ff_dth = dsig_dth;
+    float dden_ff_dth = dsig_dth * del * s2 + sig * del * ds2_dth;
+    float dgff_dth = (dnum_ff_dth * den_ff - num_ff * dden_ff_dth) / (den_ff * den_ff);
+
+    dpth = -0.5 * (dgtt_dth - 2.0 * b * dgtf_dth + dgrr_dth * pr * pr + dgthth_dth * pth * pth + dgff_dth * b * b);
+}
+
+// ---- RK4 integrator step ----
+void rk4Step(
+    inout float r, inout float th, inout float phi,
+    inout float pr, inout float pth,
+    float a, float b, float h
+) {
+    float dr1, dth1, dphi1, dpr1, dpth1;
+    float dr2, dth2, dphi2, dpr2, dpth2;
+    float dr3, dth3, dphi3, dpr3, dpth3;
+    float dr4, dth4, dphi4, dpr4, dpth4;
+
+    geodesicRHS(r, th, pr, pth, a, b, dr1, dth1, dphi1, dpr1, dpth1);
+
+    float r2_ = r + 0.5*h*dr1;
+    float th2 = th + 0.5*h*dth1;
+    float pr2 = pr + 0.5*h*dpr1;
+    float pth2 = pth + 0.5*h*dpth1;
+    geodesicRHS(r2_, th2, pr2, pth2, a, b, dr2, dth2, dphi2, dpr2, dpth2);
+
+    float r3_ = r + 0.5*h*dr2;
+    float th3 = th + 0.5*h*dth2;
+    float pr3 = pr + 0.5*h*dpr2;
+    float pth3 = pth + 0.5*h*dpth2;
+    geodesicRHS(r3_, th3, pr3, pth3, a, b, dr3, dth3, dphi3, dpr3, dpth3);
+
+    float r4_ = r + h*dr3;
+    float th4 = th + h*dth3;
+    float pr4 = pr + h*dpr3;
+    float pth4 = pth + h*dpth3;
+    geodesicRHS(r4_, th4, pr4, pth4, a, b, dr4, dth4, dphi4, dpr4, dpth4);
+
+    r   += h * (dr1   + 2.0*dr2   + 2.0*dr3   + dr4)   / 6.0;
+    th  += h * (dth1  + 2.0*dth2  + 2.0*dth3  + dth4)  / 6.0;
+    phi += h * (dphi1 + 2.0*dphi2 + 2.0*dphi3 + dphi4) / 6.0;
+    pr  += h * (dpr1  + 2.0*dpr2  + 2.0*dpr3  + dpr4)  / 6.0;
+    pth += h * (dpth1 + 2.0*dpth2 + 2.0*dpth3 + dpth4) / 6.0;
+}
+
+// ---- Star field rendering ----
+vec3 starField(float theta, float phi) {
+    // Background color: very dark blue
+    vec3 bg = vec3(0.005, 0.006, 0.015);
+
+    // Milky Way band (approximate as a bright belt near theta = PI/2)
+    float milky = exp(-12.0 * pow(theta - PI * 0.5, 2.0));
+    bg += vec3(0.012, 0.010, 0.018) * milky;
+
+    // Nebula clouds
+    float n1 = hash(vec2(floor(theta * 8.0), floor(phi * 8.0)));
+    float n2 = hash(vec2(floor(theta * 4.0 + 100.0), floor(phi * 4.0 + 200.0)));
+    bg += vec3(0.015, 0.005, 0.02) * n1 * milky * 0.6;
+    bg += vec3(0.005, 0.01, 0.02) * n2 * 0.3;
+
+    // Stars at multiple scales
+    float brightness = 0.0;
+    vec3 starColor = vec3(1.0);
+
+    for (int layer = 0; layer < 3; layer++) {
+        float scale = 80.0 + float(layer) * 120.0;
+        vec2 cell = floor(vec2(theta, phi) * scale);
+        float h = hash(cell + float(layer) * 100.0);
+
+        if (h > 0.96) {
+            vec2 starPos = (cell + 0.3 + 0.4 * vec2(hash(cell + 0.5), hash(cell + 1.5))) / scale;
+            float dist = length(vec2(theta, phi) - starPos) * scale;
+            float star = exp(-dist * dist * 8.0);
+
+            float temp = hash(cell + 77.0);
+            vec3 sCol;
+            if (temp < 0.2) sCol = vec3(1.0, 0.75, 0.5);       // warm orange
+            else if (temp < 0.6) sCol = vec3(1.0, 0.95, 0.85);  // white-yellow
+            else if (temp < 0.8) sCol = vec3(0.85, 0.9, 1.0);   // blue-white
+            else sCol = vec3(0.7, 0.8, 1.0);                     // blue
+
+            float mag = 0.5 + 1.5 * hash(cell + 33.0);
+            brightness += star * mag;
+            starColor = sCol;
+        }
+    }
+
+    bg += starColor * brightness;
+
+    // Celestial coordinate grid
+    if (u_showGrid > 0.5) {
+        float gridTh = abs(fract(theta / PI * 12.0) - 0.5) * 2.0;
+        float gridPhi = abs(fract(phi / TWO_PI * 24.0) - 0.5) * 2.0;
+        float grid = smoothstep(0.98, 0.995, max(gridTh, gridPhi));
+        bg += vec3(0.025, 0.02, 0.015) * grid;
+
+        // Equatorial line
+        float eqLine = 1.0 - smoothstep(0.0, 0.015, abs(theta - PI * 0.5));
+        bg += vec3(0.04, 0.02, 0.01) * eqLine;
+    }
+
+    return bg;
+}
+
+// ---- Accretion disk color ----
+vec3 diskColor(float r, float phi, float a) {
+    float r_isco = computeISCO(a);
+    if (r < r_isco * 0.95 || r > R_DISK_OUT) return vec3(0.0);
+
+    // Temperature profile: T ~ r^(-3/4), peaks near ISCO
+    float x = r / r_isco;
+    float temp = pow(x, -0.75) * u_diskTemp;
+
+    // Disk surface brightness ~ T^4 / r
+    float intensity = pow(temp, 4.0) / (r * 0.5);
+    intensity *= smoothstep(r_isco * 0.95, r_isco * 1.2, r);
+    intensity *= smoothstep(R_DISK_OUT, R_DISK_OUT * 0.7, r);
+
+    // Doppler boosting: approaching side brighter
+    // For prograde disk, orbital velocity ~ 1/sqrt(r) roughly
+    float v_orb = 1.0 / sqrt(r);
+    float doppler = 1.0 + 0.7 * v_orb * sin(phi);
+    float boost = pow(max(doppler, 0.1), 3.0);
+    intensity *= boost;
+
+    // Blackbody-like color
+    float t = clamp(temp * boost * 0.5, 0.0, 3.0);
+    vec3 col;
+    if (t < 0.5) {
+        col = mix(vec3(0.15, 0.02, 0.0), vec3(0.6, 0.1, 0.01), t * 2.0);
+    } else if (t < 1.0) {
+        col = mix(vec3(0.6, 0.1, 0.01), vec3(1.0, 0.45, 0.05), (t - 0.5) * 2.0);
+    } else if (t < 1.8) {
+        col = mix(vec3(1.0, 0.45, 0.05), vec3(1.0, 0.85, 0.5), (t - 1.0) / 0.8);
+    } else {
+        col = mix(vec3(1.0, 0.85, 0.5), vec3(1.0, 1.0, 1.0), clamp((t - 1.8) / 1.2, 0.0, 1.0));
+    }
+
+    // Turbulence texture
+    float turb = 0.7 + 0.3 * hash(vec2(r * 5.0, phi * 3.0));
+    float turb2 = 0.8 + 0.2 * hash(vec2(r * 20.0, phi * 10.0));
+
+    return col * intensity * turb * turb2 * 2.0;
+}
+
+// ---- Main ray tracer ----
+void main() {
+    vec2 uv = v_uv;
+    float aspect = u_resolution.x / u_resolution.y;
+
+    // Screen coordinates in units of M
+    float alpha = uv.x * u_fov * aspect;
+    float beta = uv.y * u_fov;
+
+    float a = u_spin;
+    float theta_obs = u_incl;
+    float sobs = sin(theta_obs);
+    float cobs = cos(theta_obs);
+
+    // Impact parameters
+    float b = -alpha * sobs;
+    float q2 = beta * beta + cobs * cobs * (alpha * alpha - a * a);
+
+    // Initial conditions at observer
+    float r = R_OBS;
+    float th = theta_obs;
+    float phi = u_rotate;
+
+    // Initial momenta
+    // p_theta from Theta(theta_obs) = beta^2
+    float pth = beta;
+
+    // p_r from null condition H = 0
+    // Compute H with p_r = 0 first, then solve for p_r
+    float sth = sin(th);
+    float cth_i = cos(th);
+    float s2 = sth * sth;
+    float c2 = cth_i * cth_i;
+    float sig = r * r + a * a * c2;
+    float del = r * r - 2.0 * r + a * a;
+    float rpa2 = r * r + a * a;
+    float Aval = rpa2 * rpa2 - del * a * a * s2;
+
+    float gtt = -Aval / (sig * del);
+    float gtf = -2.0 * a * r / (sig * del);
+    float grr = del / sig;
+    float gthth_init = 1.0 / sig;
+    float gff = (sig - 2.0 * r) / (sig * del * max(s2, 1e-10));
+
+    // H = 0.5*(gtt - 2*b*gtf + grr*pr^2 + gthth*pth^2 + gff*b^2) = 0
+    // => grr*pr^2 = -(gtt - 2*b*gtf + gthth*pth^2 + gff*b^2)
+    float rest = gtt - 2.0 * b * gtf + gthth_init * pth * pth + gff * b * b;
+    float pr2 = -rest / grr;
+
+    // p_r < 0 for ingoing ray (toward BH)
+    float pr = (pr2 > 0.0) ? -sqrt(pr2) : 0.0;
+
+    // Event horizon
+    float r_plus = 1.0 + sqrt(max(1.0 - a * a, 0.0));
+
+    // Adaptive step size
+    float h_base = 0.4;
+
+    // Accumulated color
+    vec3 color = vec3(0.0);
+    bool terminated = false;
+
+    float prev_th = th;
+
+    for (int i = 0; i < MAX_STEPS; i++) {
+        if (terminated) break;
+
+        // Adaptive step: smaller near horizon
+        float h = h_base * min(1.0, (r - r_plus) * 0.5);
+        h = max(h, 0.02);
+        h = min(h, 1.0);
+
+        float old_r = r;
+        float old_th = th;
+        float old_phi = phi;
+
+        rk4Step(r, th, phi, pr, pth, a, b, h);
+
+        // Keep theta in [epsilon, pi-epsilon]
+        if (th < 0.001) { th = 0.001; pth = abs(pth); }
+        if (th > PI - 0.001) { th = PI - 0.001; pth = -abs(pth); }
+
+        // Check: hit event horizon
+        if (r <= r_plus * 1.02) {
+            // Black hole shadow - very faint glow at edge
+            float edgeDist = (r - r_plus) / r_plus;
+            color = vec3(0.0);
+            terminated = true;
+            break;
+        }
+
+        // Check: disk intersection (theta crosses PI/2)
+        if (u_showDisk > 0.5) {
+            float cross = (old_th - PI * 0.5) * (th - PI * 0.5);
+            if (cross < 0.0) {
+                // Linear interpolate to find crossing point
+                float frac = (PI * 0.5 - old_th) / (th - old_th);
+                float disk_r = old_r + frac * (r - old_r);
+                float disk_phi = old_phi + frac * (phi - old_phi);
+                float r_isco = computeISCO(a);
+
+                if (disk_r > r_isco * 0.95 && disk_r < R_DISK_OUT) {
+                    vec3 dCol = diskColor(disk_r, disk_phi, a);
+                    if (length(dCol) > 0.01) {
+                        // Semi-transparent disk (accumulate multiple crossings)
+                        float opacity = clamp(length(dCol) * 0.4, 0.0, 0.95);
+                        color += dCol * (1.0 - min(length(color), 1.0));
+                        // Don't terminate - allow secondary images through the disk
+                    }
+                }
+            }
+        }
+
+        // Check: escaped
+        if (r > R_ESC) {
+            // Map to celestial sphere
+            vec3 sky = starField(th, mod(phi, TWO_PI));
+
+            // Einstein ring glow near critical impact parameters
+            float totalDeflection = abs(phi - u_rotate);
+            float ringGlow = exp(-2.0 * pow(abs(totalDeflection - PI) / 0.3, 2.0)) * 0.08;
+            sky += vec3(0.15, 0.12, 0.08) * ringGlow;
+
+            color += sky * (1.0 - min(length(color) * 0.3, 0.9));
+            terminated = true;
+            break;
+        }
+
+        // Safety: if r goes negative or NaN
+        if (r < 0.5 || r != r) {
+            color = vec3(0.0);
+            terminated = true;
+            break;
+        }
+    }
+
+    // If not terminated after MAX_STEPS, assume captured
+    if (!terminated) {
+        color = vec3(0.0);
+    }
+
+    // Photon ring glow: bright ring at the boundary of the shadow
+    float shadowR = length(vec2(alpha, beta));
+    float critR = 2.6 * (1.0 + 0.3 * a); // approximate critical impact parameter
+    float photonRingGlow = exp(-pow((shadowR - critR) / 0.15, 2.0)) * 0.04;
+    color += vec3(0.12, 0.09, 0.06) * photonRingGlow;
+
+    // Vignette
+    float vig = 1.0 - 0.4 * dot(uv, uv);
+    color *= vig;
+
+    // Tone mapping (simple Reinhard)
+    color = color / (1.0 + color);
+
+    // Gamma correction
+    color = pow(color, vec3(1.0 / 2.2));
+
+    gl_FragColor = vec4(color, 1.0);
+}
+</script>
+
+<!-- ===================== JAVASCRIPT ===================== -->
+<script>
+(function() {
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl', {
+        antialias: false,
+        preserveDrawingBuffer: false,
+        powerPreference: 'high-performance'
+    });
+
+    if (!gl) {
+        document.getElementById('loading').innerHTML =
+            '<div class="loading-text">WebGL not available in this browser.</div>';
+        return;
+    }
+
+    // State
+    let spin = 0.6;
+    let incl = 80.0;
+    let diskTemp = 1.0;
+    let showDisk = 1.0;
+    let showGrid = 1.0;
+    let autoRotate = false;
+    let rotateAngle = 0.0;
+    let fov = 8.0;
+    let pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+
+    // FPS tracking
+    let frameCount = 0;
+    let lastFPSTime = performance.now();
+    let currentFPS = 0;
+
+    // Compile shader
+    function compileShader(source, type) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error('Shader error:', gl.getShaderInfoLog(shader));
+            return null;
+        }
+        return shader;
+    }
+
+    const vertSrc = document.getElementById('vert-shader').textContent;
+    const fragSrc = document.getElementById('frag-shader').textContent;
+
+    const vertShader = compileShader(vertSrc, gl.VERTEX_SHADER);
+    const fragShader = compileShader(fragSrc, gl.FRAGMENT_SHADER);
+
+    if (!vertShader || !fragShader) {
+        document.getElementById('loading').innerHTML =
+            '<div class="loading-text">Shader compilation failed. Your GPU may not support this.</div>';
+        return;
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vertShader);
+    gl.attachShader(program, fragShader);
+    gl.linkProgram(program);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error('Program link error:', gl.getProgramInfoLog(program));
+        return;
+    }
+
+    gl.useProgram(program);
+
+    // Fullscreen quad
+    const quadVerts = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, quadVerts, gl.STATIC_DRAW);
+
+    const aPos = gl.getAttribLocation(program, 'a_pos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    // Uniforms
+    const uResolution = gl.getUniformLocation(program, 'u_resolution');
+    const uSpin = gl.getUniformLocation(program, 'u_spin');
+    const uIncl = gl.getUniformLocation(program, 'u_incl');
+    const uTime = gl.getUniformLocation(program, 'u_time');
+    const uFov = gl.getUniformLocation(program, 'u_fov');
+    const uShowDisk = gl.getUniformLocation(program, 'u_showDisk');
+    const uShowGrid = gl.getUniformLocation(program, 'u_showGrid');
+    const uDiskTemp = gl.getUniformLocation(program, 'u_diskTemp');
+    const uRotate = gl.getUniformLocation(program, 'u_rotate');
+
+    // Resize handler
+    function resize() {
+        const w = Math.floor(window.innerWidth * pixelRatio);
+        const h = Math.floor(window.innerHeight * pixelRatio);
+        canvas.width = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
+        document.getElementById('res').textContent = w + ' × ' + h;
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Helpers
+    function computeHorizon(a) {
+        return 1.0 + Math.sqrt(Math.max(1.0 - a * a, 0.0));
+    }
+
+    function computeISCO_js(a) {
+        const z1 = 1 + Math.pow(1 - a*a, 1/3) * (Math.pow(1+a, 1/3) + Math.pow(Math.max(1-a,0), 1/3));
+        const z2 = Math.sqrt(3*a*a + z1*z1);
+        return 3 + z2 - Math.sqrt((3-z1)*(3+z1+2*z2));
+    }
+
+    function updateReadout() {
+        document.getElementById('rp').textContent = computeHorizon(spin).toFixed(3);
+        document.getElementById('risco').textContent = computeISCO_js(spin).toFixed(3);
+    }
+
+    // UI bindings
+    const spinSlider = document.getElementById('spin');
+    const inclSlider = document.getElementById('incl');
+    const tempSlider = document.getElementById('temp');
+
+    spinSlider.addEventListener('input', function() {
+        spin = parseFloat(this.value);
+        document.getElementById('spin-val').textContent = 'a = ' + spin.toFixed(3);
+        updateReadout();
+    });
+
+    inclSlider.addEventListener('input', function() {
+        incl = parseFloat(this.value);
+        document.getElementById('incl-val').innerHTML = '&theta; = ' + incl.toFixed(1) + '&deg;';
+    });
+
+    tempSlider.addEventListener('input', function() {
+        diskTemp = parseFloat(this.value);
+        document.getElementById('temp-val').textContent = diskTemp.toFixed(2);
+    });
+
+    // Toggle functions (global)
+    window.toggleDisk = function() {
+        showDisk = showDisk > 0.5 ? 0.0 : 1.0;
+        document.getElementById('btn-disk').classList.toggle('active', showDisk > 0.5);
+    };
+
+    window.toggleGrid = function() {
+        showGrid = showGrid > 0.5 ? 0.0 : 1.0;
+        document.getElementById('btn-grid').classList.toggle('active', showGrid > 0.5);
+    };
+
+    window.toggleRotate = function() {
+        autoRotate = !autoRotate;
+        document.getElementById('btn-rotate').classList.toggle('active', autoRotate);
+    };
+
+    // Mouse / scroll for FOV
+    canvas.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        fov *= (1.0 + e.deltaY * 0.001);
+        fov = Math.max(2.0, Math.min(25.0, fov));
+    }, { passive: false });
+
+    // Touch zoom
+    let lastTouchDist = 0;
+    canvas.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 2) {
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            lastTouchDist = Math.sqrt(dx*dx + dy*dy);
+        }
+    });
+
+    canvas.addEventListener('touchmove', function(e) {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (lastTouchDist > 0) {
+                fov *= lastTouchDist / dist;
+                fov = Math.max(2.0, Math.min(25.0, fov));
+            }
+            lastTouchDist = dist;
+        }
+    }, { passive: false });
+
+    // Render loop
+    let startTime = performance.now();
+
+    function render() {
+        const now = performance.now();
+        const t = (now - startTime) * 0.001;
+
+        if (autoRotate) {
+            rotateAngle += 0.005;
+        }
+
+        gl.uniform2f(uResolution, canvas.width, canvas.height);
+        gl.uniform1f(uSpin, spin);
+        gl.uniform1f(uIncl, incl * Math.PI / 180.0);
+        gl.uniform1f(uTime, t);
+        gl.uniform1f(uFov, fov);
+        gl.uniform1f(uShowDisk, showDisk);
+        gl.uniform1f(uShowGrid, showGrid);
+        gl.uniform1f(uDiskTemp, diskTemp);
+        gl.uniform1f(uRotate, rotateAngle);
+
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        // FPS
+        frameCount++;
+        if (now - lastFPSTime > 800) {
+            currentFPS = Math.round(frameCount / ((now - lastFPSTime) * 0.001));
+            document.getElementById('fps').textContent = currentFPS;
+            frameCount = 0;
+            lastFPSTime = now;
+        }
+
+        requestAnimationFrame(render);
+    }
+
+    // Hide loading overlay and start
+    updateReadout();
+    setTimeout(() => {
+        document.getElementById('loading').classList.add('hidden');
+        render();
+    }, 600);
+})();
+</script>
+</body>
+</html>
