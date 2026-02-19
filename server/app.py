@@ -2,27 +2,28 @@
 FastAPI application for the Nulltracer server-side renderer.
 
 Provides a POST /render endpoint that accepts render parameters,
-renders a black hole frame via headless OpenGL, and returns a
+renders a black hole frame via CUDA compute kernels, and returns a
 JPEG or WebP image.
 """
 
 import asyncio
 import io
+import json
 import logging
+import struct
 import time
 
-# Configure root logger so all module loggers (renderer, shader, etc.) are visible
+# Configure root logger so all module loggers (renderer, etc.) are visible
 logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s: %(message)s")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel, Field, model_validator
 
 from .cache import ImageCache
-from .renderer import Renderer
-from .renderer_cuda import CudaRenderer
+from .renderer import CudaRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +58,9 @@ class RenderRequest(BaseModel):
 
 # ── Global state ─────────────────────────────────────────────
 
-renderer = Renderer()
-cuda_renderer = CudaRenderer()
+renderer = CudaRenderer()
 cache = ImageCache()
 gpu_lock = asyncio.Lock()
-cuda_lock = asyncio.Lock()
 
 # ── FastAPI app ──────────────────────────────────────────────
 
@@ -77,38 +76,13 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize renderers on server startup.
-
-    CUDA renderer is the primary backend. OpenGL renderer is optional
-    (kept temporarily for A/B validation during the CUDA migration).
-    The server starts successfully if at least one backend initializes.
-    """
-    opengl_ok = False
-    cuda_ok = False
-
-    # Try OpenGL renderer (optional — may fail in CUDA-only containers)
-    logger.info("Initializing OpenGL renderer...")
-    try:
-        renderer.initialize()
-        logger.info("OpenGL renderer ready: %s", renderer.gpu_info)
-        opengl_ok = True
-    except Exception as e:
-        logger.warning("OpenGL renderer failed to initialize: %s (CUDA-only mode)", e)
-
-    # Initialize CUDA renderer (primary backend)
+    """Initialize the CUDA renderer on server startup."""
     logger.info("Initializing CUDA renderer...")
     try:
-        cuda_renderer.initialize()
-        logger.info("CUDA renderer ready: %s", cuda_renderer.gpu_info)
-        cuda_ok = True
+        renderer.initialize()
+        logger.info("CUDA renderer ready: %s", renderer.gpu_info)
     except Exception as e:
-        logger.warning("CUDA renderer failed to initialize: %s", e)
-
-    if not opengl_ok and not cuda_ok:
-        raise RuntimeError("No rendering backend available. Both OpenGL and CUDA failed to initialize.")
-
-    logger.info("Backends available: %s",
-                ", ".join(b for b, ok in [("OpenGL", opengl_ok), ("CUDA", cuda_ok)] if ok))
+        raise RuntimeError(f"CUDA renderer failed to initialize: {e}")
 
 
 @app.get("/health")
@@ -117,34 +91,26 @@ async def health():
     return {
         "status": "ok",
         "gpu": renderer.gpu_info,
-        "cuda_gpu": cuda_renderer.gpu_info if cuda_renderer._initialized else "not initialized",
-        "backends": (["opengl"] if renderer._initialized else []) + (["cuda"] if cuda_renderer._initialized else []),
+        "backends": ["cuda"] if renderer._initialized else [],
     }
 
 
 @app.post("/render")
 async def render(req: RenderRequest):
-    """Render a black hole frame and return the image.
+    """Render a black hole frame via CUDA and return the image.
 
-    Checks the LRU cache first. On cache miss, renders via headless
-    OpenGL (if available) or falls back to CUDA, encodes to JPEG/WebP,
+    Checks the LRU cache first. On cache miss, renders via CUDA
+    compute kernels with float64 precision, encodes to JPEG/WebP,
     caches, and returns the image.
     """
-    # If OpenGL is not available, redirect to CUDA backend
     if not renderer._initialized:
-        if cuda_renderer._initialized:
-            return await render_cuda(req)
-        raise HTTPException(status_code=503, detail="No rendering backend available")
-    # Build the full parameter dict for cache keying and rendering
-    params = req.model_dump()
+        raise HTTPException(status_code=503, detail="CUDA renderer not available")
 
-    # Separate format/quality from render params for cache key
-    # (format and quality affect encoding, not the raw render)
+    params = req.model_dump()
     render_params = {k: v for k, v in params.items() if k not in ("format", "quality")}
-    cache_key_params = params  # include format+quality in cache key
 
     # Check cache
-    cached = cache.get(cache_key_params)
+    cached = cache.get(params)
     if cached is not None:
         media_type = "image/jpeg" if req.format == "jpeg" else "image/webp"
         return Response(
@@ -153,6 +119,7 @@ async def render(req: RenderRequest):
             headers={
                 "X-Cache": "HIT",
                 "X-Render-Time-Ms": "0",
+                "X-Backend": "cuda",
             },
         )
 
@@ -160,14 +127,11 @@ async def render(req: RenderRequest):
     t0 = time.monotonic()
 
     try:
-        # Serialize GPU access. We run synchronously on the main thread
-        # because the EGL/OpenGL context is thread-local and was created
-        # on this thread. With --workers 1 and the gpu_lock, this is safe.
         async with gpu_lock:
             raw_rgb = renderer.render_frame(render_params)
     except Exception as e:
-        logger.error("Render failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Render failed: {e}")
+        logger.error("CUDA render failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"CUDA render failed: {e}")
 
     # Encode to image format
     width = req.width
@@ -186,76 +150,7 @@ async def render(req: RenderRequest):
     render_ms = (time.monotonic() - t0) * 1000.0
 
     # Cache the result
-    cache.put(cache_key_params, image_bytes)
-
-    logger.info(
-        "Rendered %dx%d %s in %.1fms (%d bytes)",
-        width, height, req.format, render_ms, len(image_bytes),
-    )
-
-    return Response(
-        content=image_bytes,
-        media_type=media_type,
-        headers={
-            "X-Cache": "MISS",
-            "X-Render-Time-Ms": f"{render_ms:.1f}",
-        },
-    )
-
-
-@app.post("/render_cuda")
-async def render_cuda(req: RenderRequest):
-    """Render via CUDA backend (for A/B validation against OpenGL /render).
-
-    Same parameters and response format as /render, but uses the CUDA
-    compute kernel with float64 precision instead of OpenGL fragment shaders.
-    """
-    if not cuda_renderer._initialized:
-        raise HTTPException(status_code=503, detail="CUDA renderer not available")
-
-    params = req.model_dump()
-    render_params = {k: v for k, v in params.items() if k not in ("format", "quality")}
-
-    # Use separate cache namespace for CUDA renders
-    cache_key_params = {**params, "_backend": "cuda"}
-    cached = cache.get(cache_key_params)
-    if cached is not None:
-        media_type = "image/jpeg" if req.format == "jpeg" else "image/webp"
-        return Response(
-            content=cached,
-            media_type=media_type,
-            headers={
-                "X-Cache": "HIT",
-                "X-Render-Time-Ms": "0",
-                "X-Backend": "cuda",
-            },
-        )
-
-    t0 = time.monotonic()
-
-    try:
-        async with cuda_lock:
-            raw_rgb = cuda_renderer.render_frame(render_params)
-    except Exception as e:
-        logger.error("CUDA render failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"CUDA render failed: {e}")
-
-    width = req.width
-    height = req.height
-    img = Image.frombytes("RGB", (width, height), raw_rgb)
-
-    buf = io.BytesIO()
-    if req.format == "jpeg":
-        img.save(buf, format="JPEG", quality=req.quality)
-        media_type = "image/jpeg"
-    else:
-        img.save(buf, format="WEBP", quality=req.quality)
-        media_type = "image/webp"
-
-    image_bytes = buf.getvalue()
-    render_ms = (time.monotonic() - t0) * 1000.0
-
-    cache.put(cache_key_params, image_bytes)
+    cache.put(params, image_bytes)
 
     logger.info(
         "CUDA rendered %dx%d %s in %.1fms (%d bytes)",
@@ -295,7 +190,7 @@ async def debug_ray(
     import numpy as _np
     import cupy as _cp
 
-    if not cuda_renderer._initialized:
+    if not renderer._initialized:
         raise HTTPException(status_code=503, detail="CUDA renderer not available")
 
     from .isco import isco as _isco
@@ -424,7 +319,7 @@ void debug_trace(const RenderParams *pp, double *output) {
 
     kernel = _cp.RawKernel(debug_src, 'debug_trace', options=('--std=c++14',))
 
-    from .renderer_cuda import RenderParams as RP
+    from .renderer import RenderParams as RP
     rp_struct = RP(
         width=width, height=height,
         spin=float(spin), charge=float(charge),
@@ -444,7 +339,7 @@ void debug_trace(const RenderParams *pp, double *output) {
     d_output[200] = float(ix)
     d_output[201] = float(iy)
 
-    async with cuda_lock:
+    async with gpu_lock:
         kernel((1,), (1,), (d_params, d_output))
         _cp.cuda.Stream.null.synchronize()
 
@@ -471,3 +366,153 @@ void debug_trace(const RenderParams *pp, double *output) {
         "r_trajectory_sample": [result[20 + i] for i in range(min(100, steps_used))],
         "he_first_20": [result[120 + i] for i in range(min(20, steps_used))],
     }
+
+
+# ── WebSocket streaming endpoint ────────────────────────────
+
+
+@app.websocket("/stream")
+async def stream(websocket: WebSocket):
+    await websocket.accept()
+    client_info = websocket.client
+    logger.info("WebSocket client connected: %s", client_info)
+
+    # Shared state between receiver and render loop
+    latest_request = None        # Most recent validated (render_params, fmt, quality, width, height)
+    request_event = asyncio.Event()  # Signaled when a new request arrives
+    closed = False
+
+    async def receiver():
+        """Read messages from the client, validate, and update latest_request."""
+        nonlocal latest_request, closed
+        try:
+            while True:
+                data = await websocket.receive_text()
+                try:
+                    raw = json.loads(data)
+                    req = RenderRequest(**raw)
+                except Exception as e:
+                    await websocket.send_text(json.dumps({"error": str(e)}))
+                    continue
+
+                render_params = req.model_dump()
+                fmt = render_params.pop("format", "jpeg")
+                quality = render_params.pop("quality", 80)
+                width = render_params["width"]
+                height = render_params["height"]
+
+                latest_request = (render_params, fmt, quality, width, height)
+                request_event.set()
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.debug("WS receiver ended: %s", e)
+        finally:
+            closed = True
+            request_event.set()  # Unblock render loop so it can exit
+
+    async def render_loop():
+        """Wait for requests and render the latest one."""
+        nonlocal latest_request
+        try:
+            while not closed:
+                # Wait for a new request
+                await request_event.wait()
+                request_event.clear()
+
+                if closed:
+                    break
+
+                # Grab the latest request (may have been updated multiple times)
+                current = latest_request
+                if current is None:
+                    continue
+
+                render_params, fmt, quality, width, height = current
+
+                # Check cache first
+                cached = cache.get(render_params)
+                if cached:
+                    fmt_byte = 1 if fmt == "webp" else 0
+                    header = struct.pack("<HHB3x", width, height, fmt_byte)
+                    try:
+                        await websocket.send_bytes(header + cached)
+                    except Exception:
+                        break
+                    continue
+
+                # Check if a newer request arrived while we were checking cache
+                if latest_request is not current:
+                    continue
+
+                # Acquire GPU and render
+                t0 = time.time()
+                async with gpu_lock:
+                    # Check again after acquiring lock — a newer request may have arrived
+                    if latest_request is not current:
+                        continue
+
+                    try:
+                        raw_rgb = await asyncio.get_running_loop().run_in_executor(
+                            None, renderer.render_frame, render_params
+                        )
+                    except Exception as e:
+                        try:
+                            await websocket.send_text(json.dumps({"error": f"Render failed: {e}"}))
+                        except Exception:
+                            break
+                        continue
+
+                render_ms = (time.time() - t0) * 1000
+
+                # Discard if a newer request arrived during rendering
+                if latest_request is not current:
+                    logger.debug("WS render discarded (stale) after %.1fms", render_ms)
+                    continue
+
+                # Encode image
+                img = Image.frombytes("RGB", (width, height), raw_rgb)
+                img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+                buf = io.BytesIO()
+                if fmt == "webp":
+                    img.save(buf, "WEBP", quality=quality)
+                    fmt_byte = 1
+                else:
+                    img.save(buf, "JPEG", quality=quality)
+                    fmt_byte = 0
+                image_bytes = buf.getvalue()
+
+                # Cache the result
+                cache.put(render_params, image_bytes)
+
+                # Send frame with header
+                header = struct.pack("<HHB3x", width, height, fmt_byte)
+                try:
+                    await websocket.send_bytes(header + image_bytes)
+                    logger.debug("WS frame sent: %dx%d %s %.1fms", width, height, fmt, render_ms)
+                except Exception:
+                    break
+        except Exception as e:
+            logger.error("WS render loop error: %s", e)
+
+    # Run receiver and render loop concurrently
+    receiver_task = asyncio.create_task(receiver())
+    render_task = asyncio.create_task(render_loop())
+
+    try:
+        # Wait for either task to finish (receiver finishes on disconnect)
+        done, pending = await asyncio.wait(
+            [receiver_task, render_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    except Exception as e:
+        logger.error("WS stream error: %s", e)
+    finally:
+        logger.info("WebSocket client disconnected: %s", client_info)

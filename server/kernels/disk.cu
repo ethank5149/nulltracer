@@ -1,7 +1,7 @@
 /* ============================================================
  *  DISK — Accretion disk emission and color (float32)
  *
- *  Ported from js/shader-generator.js GLSL disk() / blackbody()
+ *  Originally ported from GLSL disk() / blackbody()
  *  functions.  Uses proper blackbody spectrum coloring and full
  *  GR redshift for Kerr-Newman metric.
  *

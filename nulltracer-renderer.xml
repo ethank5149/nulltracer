@@ -12,7 +12,7 @@
   <Overview>
     GPU-accelerated Kerr-Newman black hole ray tracer — server-side renderer.
     Provides a FastAPI endpoint that renders black hole visualizations using
-    headless EGL/OpenGL, enabling mobile devices to offload heavy GPU work.
+    CUDA compute kernels, enabling mobile devices to offload heavy GPU work.
     
     Pair with your existing Caddy reverse proxy to serve the full application.
     See the Caddyfile in the nulltracer directory for the configuration snippet.
@@ -64,7 +64,7 @@
     Target="NVIDIA_DRIVER_CAPABILITIES"
     Default="all"
     Mode=""
-    Description="NVIDIA driver capabilities needed for EGL/OpenGL rendering"
+    Description="NVIDIA driver capabilities needed for CUDA compute"
     Type="Variable"
     Display="advanced"
     Required="true"

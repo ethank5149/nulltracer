@@ -1,10 +1,10 @@
 # Nulltracer
 
-**A GPU-accelerated Kerr-Newman black hole ray tracer** — an interactive WebGL application that visualizes the appearance of rotating and electrically charged black holes by tracing light paths (null geodesics) through curved spacetime.
+**A GPU-accelerated Kerr-Newman black hole ray tracer** — a CUDA-powered server application that visualizes the appearance of rotating and electrically charged black holes by tracing light paths (null geodesics) through curved spacetime. A thin browser client displays rendered frames with interactive parameter controls.
 
 ## Overview
 
-Nulltracer simulates the visual appearance of black holes as they would appear to an external observer. By tracing null geodesics (light paths) through Kerr-Newman spacetime using GPU-accelerated WebGL fragment shaders, the application renders realistic depictions of black hole phenomena including:
+Nulltracer simulates the visual appearance of black holes as they would appear to an external observer. By tracing null geodesics (light paths) through Kerr-Newman spacetime using GPU-accelerated CUDA compute kernels, the application renders realistic depictions of black hole phenomena including:
 
 - The **black hole shadow** — the dark silhouette cast by the event horizon
 - **Photon rings** — unstable light orbits around the black hole
@@ -12,35 +12,36 @@ Nulltracer simulates the visual appearance of black holes as they would appear t
 - **Gravitational lensing** — the bending of light from background stars and structures
 - **Frame-dragging effects** — the warping of spacetime by the black hole's rotation
 
-The simulator supports both **Kerr black holes** (spinning) and **Kerr-Newman black holes** (spinning with electric charge), allowing exploration of how these parameters affect the visual appearance. For mobile devices and low-power systems, Nulltracer can offload rendering to a GPU-accelerated server while maintaining a responsive local preview.
+The simulator supports both **Kerr black holes** (spinning) and **Kerr-Newman black holes** (spinning with electric charge), allowing exploration of how these parameters affect the visual appearance. All rendering is performed on a CUDA-enabled GPU server, which the browser client communicates with via HTTP.
 
 ## Features
 
-- **Real-time interactive rendering** — adjust black hole parameters and see results instantly
+- **Server-based CUDA rendering** — all ray tracing performed on GPU-accelerated CUDA compute kernels
 - **Kerr-Newman metric support** — model rotating, electrically charged black holes
-- **Interactive controls** — modify spin parameter (a), electric charge (Q), and observer inclination (θ)
+- **Interactive browser controls** — modify spin parameter (a), electric charge (Q), and observer inclination (θ) and receive updated frames in real time
 - **Multiple background modes** — Stars (cube-mapped), Checker pattern, or Color-mapped sphere
 - **Accretion disk rendering** — with Doppler temperature boosting
-- **Quality presets** — Low, Medium, High, and Ultra quality settings with performance tuning
-- **Advanced controls** — configure integration steps, resolution scaling, step size, and observer distance
-- **Integrator options** — switch between separated first-order equations or Hamiltonian integration
-- **Full-screen capable** — for immersive visualization
-- **Hybrid server rendering** — offload GPU work to a server for mobile and low-power device support
-- **Three rendering modes** — Local Only (default), Hybrid (local preview + server quality), Server Only
-- **Mobile auto-detection** — automatically optimizes settings for mobile devices
-- **Server-side caching** — LRU cache for rendered frames to reduce redundant computations
+- **Quality presets** — Low, Medium, High, and Ultra quality settings with resolution and integration tuning
+- **Advanced controls** — configure integration steps, ray step size, and observer distance
+- **Integrator options** — RK4, Yoshida 4th/6th/8th order, or RKDP8 adaptive methods
+- **Full precision computation** — float64 precision for accurate geodesic integration
+- **Server-side LRU caching** — intelligent frame caching to reduce redundant computations
+- **One thread per pixel** — maximum CUDA parallelism for performance
+- **Single GPU server model** — simple deployment and configuration
 
 ## Usage
 
-Simply open `index.html` in a modern web browser with WebGL 2.0 support. For server rendering, see the [Server Rendering](#server-rendering) section below.
+Nulltracer requires a CUDA-enabled GPU server to operate. Start the server first, then open the client in your browser.
 
 ```
-Open nulltracer/index.html in your browser
+Open nulltracer/index.html in your browser (after starting the server)
 ```
+
+On page load, the client automatically probes `/health` on the same origin. If a server responds, rendering is enabled. Otherwise, the UI shows a connection error.
 
 ## Server Rendering
 
-The Nulltracer server provides GPU-accelerated frame rendering for mobile devices and low-power systems. The client can work in three modes: **Local Only** (default), **Hybrid**, or **Server Only**.
+The Nulltracer server is a FastAPI application that performs all ray tracing using CUDA compute kernels. It is required for operation.
 
 ### Quick Start (Docker)
 
@@ -60,16 +61,10 @@ uvicorn app:app --host 0.0.0.0 --port 8420
 
 ### Connecting the Client
 
-1. Open `index.html` in a browser
-2. Click the ⚙ (settings) button
-3. Enter the server URL (e.g., `http://your-server:8420`)
-4. Select **Hybrid** or **Server Only** mode
-
-### Rendering Modes
-
-- **Local Only** (default) — all rendering on client GPU, no server needed. Best for desktop browsers.
-- **Hybrid** — instant low-res local preview in the browser, plus high-quality server frames with crossfade. Optimal for mobile and low-power devices.
-- **Server Only** — dims local canvas, relies entirely on server rendering. Use when client GPU is unavailable.
+1. Start the server (Docker or local)
+2. Open `index.html` in a browser (served from the same origin as the server via Caddy, or locally on a different port)
+3. The client automatically probes `/health` and connects if available
+4. If served from a different origin, the server URL can be entered manually via the settings panel
 
 ### API Endpoint
 
@@ -133,7 +128,7 @@ Replace `nulltracer.yourdomain.com` with your actual subdomain. Caddy handles HT
 
 #### Step 4: Reload Caddy
 
-Restart your Caddy container or send a reload signal. Open `https://nulltracer.yourdomain.com` — the client will auto-detect the server and enable hybrid mode on mobile devices.
+Restart your Caddy container or send a reload signal. Open `https://nulltracer.yourdomain.com` — the client will auto-detect the server via the `/health` endpoint.
 
 ### Docker Compose (Standalone)
 
@@ -163,7 +158,7 @@ Open `http://localhost:8080` — the client auto-detects the renderer at the sam
 
 ### Same-Origin Auto-Detection
 
-When served through Caddy (or any reverse proxy), the client automatically probes `/health` at the same origin on page load. If the API responds, the server URL is configured automatically and hybrid mode is enabled on mobile devices — no manual setup required.
+When served through Caddy (or any reverse proxy), the client automatically probes `/health` at the same origin on page load. If the API responds, the server URL is configured automatically — no manual setup required.
 
 ## Controls
 
@@ -172,7 +167,7 @@ When served through Caddy (or any reverse proxy), the client automatically probe
 - **Inclination (θ):** Change observer viewing angle relative to the black hole's rotation axis
 - **Disk Temperature:** Adjust the color temperature of the accretion disk
 - **Quality Preset:** Choose from Low/Medium/High/Ultra to balance visual fidelity and performance
-- **Integration Method:** Select between Separated equations (faster) or Hamiltonian (more stable)
+- **Integration Method:** Select between different integration algorithms (RK4, Yoshida, RKDP8)
 - **Integration Steps:** Control ray-tracing precision
 - **Resolution Scaling:** Adjust internal rendering resolution for performance
 - **Background Mode:** Switch between different background textures and patterns
@@ -181,7 +176,7 @@ When served through Caddy (or any reverse proxy), the client automatically probe
 
 ### Ray Tracing Approach
 
-Nulltracer uses **WebGL 2.0 fragment shaders** to perform real-time ray tracing. Each pixel on screen corresponds to a light ray traced backward from the observer's eye through spacetime. The integration follows the equations of motion for null geodesics in the Kerr-Newman metric.
+Nulltracer uses **CUDA compute kernels** to perform ray tracing on the server. Each pixel is computed by a separate thread, with each thread tracing a light ray backward from the observer's eye through spacetime in float64 precision. The integration follows the equations of motion for null geodesics in the Kerr-Newman metric.
 
 ### Kerr-Newman Metric
 
@@ -191,8 +186,13 @@ The application solves the geodesic equations in Boyer-Lindquist coordinates, su
 
 ### Integration Methods
 
-1. **Separated First-Order Equations** (~40% faster) — optimized for performance
-2. **Hamiltonian Integration** — uses conserved quantities for improved numerical stability
+The server supports multiple high-order integration methods:
+
+1. **RK4** — classical 4th-order Runge-Kutta, good balance of speed and stability
+2. **Yoshida 4th-order** — symplectic method, preserves phase space structure
+3. **Yoshida 6th-order** — higher-order symplectic, improved accuracy
+4. **Yoshida 8th-order** — maximum-order symplectic for highest precision
+5. **RKDP8** — adaptive 8th-order Runge-Kutta-Dormand-Prince, automatically adjusts step size
 
 ### Optimizations
 
@@ -203,13 +203,14 @@ The application solves the geodesic equations in Boyer-Lindquist coordinates, su
 
 ### Server Architecture
 
-The Nulltracer server is built with **FastAPI** and a headless **EGL/OpenGL renderer** that mirrors the client's WebGL implementation:
+The Nulltracer server is built with **FastAPI** and **CuPy CUDA compute kernels**:
 
-- **FastAPI + headless rendering** — uses EGL for GPU acceleration without a display server
-- **GLSL shader porting** — same core shaders as the client, generated dynamically in Python
-- **LRU cache** — 512 entries with 256MB capacity, keyed on parameter hash for frame reuse
+- **FastAPI** — async HTTP server for parameter acceptance and image delivery
+- **CuPy RawKernel** — custom-compiled CUDA kernels in C++ with one thread per pixel
+- **Float64 precision** — all geodesic calculations use 64-bit floating point for accuracy
+- **LRU frame cache** — intelligent caching by parameter hash to avoid redundant computation
 - **GPU serialization** — single-worker with `asyncio.Lock` to prevent concurrent GPU access
-- **Container image** — Dockerfile based on `nvidia/opengl:1.2-glvnd-runtime-ubuntu22.04`
+- **NVIDIA Container Toolkit** — Dockerfile based on `nvidia/cuda:12.2.0-devel-ubuntu22.04` for easy deployment
 
 ## Version History
 
@@ -238,13 +239,14 @@ git checkout main    # Return to the latest version
 ## Requirements
 
 ### Client Requirements
-- **Modern web browser** with WebGL 2.0 support
-- **GPU acceleration** strongly recommended for real-time performance
-- No external dependencies or server required — runs entirely in the browser
+- **Modern web browser** (Chrome 56+, Firefox 51+, Safari 15+, Edge 79+)
+- **Network connection** to the CUDA render server
+- No local GPU required — browser is a thin client that displays server-rendered JPEG images
 
-### Server Requirements (Optional)
+### Server Requirements (Required)
 - **Python 3.8+**
-- **NVIDIA GPU** with EGL support (for high-quality server rendering)
+- **NVIDIA GPU** with CUDA support (RTX 3090, A100, H100, etc.)
+- **CUDA Toolkit 12.x** with cupy-cuda12x installed
 - **Docker with NVIDIA Container Toolkit** (recommended for easy deployment)
 
 ### Browser Compatibility
@@ -258,20 +260,34 @@ git checkout main    # Return to the latest version
 
 ```
 nulltracer/
-├── index.html                # Main client application
-├── Caddyfile                 # Caddy site block snippet (add to existing config)
-├── docker-compose.yml        # Renderer-only Docker Compose
+├── index.html                # Browser client UI — parameter controls and image display
+├── styles.css                # Client stylesheet
+├── js/                        # Client JavaScript
+│   ├── main.js               # App initialization
+│   ├── server-client.js      # HTTP /render communication and /health auto-detection
+│   └── ui-controller.js      # Slider/button event handlers
+├── Caddyfile.current          # Caddy reverse proxy configuration (optional)
+├── docker-compose.yml        # Docker Compose configuration for renderer
 ├── nulltracer-renderer.xml   # Unraid Docker template
 ├── README.md                 # This file
 ├── ARCHITECTURE.md           # Detailed technical documentation
-└── server/                   # GPU-accelerated FastAPI server
-    ├── app.py                # FastAPI application and /render endpoint
-    ├── renderer.py           # Headless EGL/OpenGL renderer
-    ├── shader.py             # GLSL shader generation
+└── server/                   # CUDA-accelerated FastAPI server
+    ├── app.py                # FastAPI application and /render, /health endpoints
+    ├── renderer.py           # CuPy CUDA renderer (entry point)
     ├── isco.py               # Kerr-Newman ISCO calculations
     ├── cache.py              # LRU frame cache
     ├── requirements.txt      # Python dependencies
-    └── Dockerfile            # Docker image definition
+    ├── Dockerfile            # Docker image definition
+    └── kernels/              # CUDA compute kernels (C++)
+        ├── geodesic_base.cu  # Metric functions and geodesic integration
+        ├── backgrounds.cu    # Background rendering (stars, checker, colormap)
+        ├── disk.cu           # Accretion disk emission and color
+        └── integrators/      # Integration method kernels
+            ├── rk4.cu        # 4th-order Runge-Kutta
+            ├── yoshida4.cu   # 4th-order symplectic
+            ├── yoshida6.cu   # 6th-order symplectic
+            ├── yoshida8.cu   # 8th-order symplectic
+            └── rkdp8.cu      # Adaptive Runge-Kutta-Dormand-Prince
 ```
 
 ---

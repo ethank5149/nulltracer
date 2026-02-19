@@ -5,7 +5,14 @@ body{
   background:#000;overflow:hidden;
   font-family:'IBM Plex Mono',monospace;color:#c8bfa9;cursor:crosshair;
 }
-canvas{display:block;width:100vw;height:100vh;}
+
+#server-frame {
+  display:block;width:100vw;height:100vh;
+  position:fixed;top:0;left:0;
+  object-fit:cover;z-index:1;
+  opacity:0;transition:opacity 0.4s ease;
+}
+#server-frame.visible { opacity:1; }
 
 .title-block{
   position:fixed;top:24px;left:28px;z-index:20;pointer-events:none;
@@ -131,6 +138,13 @@ select.ctrl-select option{background:#1a1510;color:#c8bfa9;}
   background:#0a0806;transition:opacity 1.2s ease;
 }
 .loading-overlay.hidden{opacity:0;pointer-events:none;}
+.loading-spinner{
+  width:32px;height:32px;border-radius:50%;
+  border:2px solid rgba(200,180,140,.1);
+  border-top-color:rgba(200,180,140,.5);
+  animation:spin 1s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
 .loading-text{
   font-family:'Cormorant Garamond',serif;font-weight:300;font-size:18px;
   color:#6a6050;letter-spacing:.15em;animation:pulse 2s ease-in-out infinite;
@@ -140,13 +154,6 @@ select.ctrl-select option{background:#1a1510;color:#c8bfa9;}
   text-align:center;line-height:1.6;display:none;white-space:pre-wrap;
 }
 @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
-
-#server-frame {
-  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-  object-fit: cover; z-index: 1; pointer-events: none;
-  opacity: 0; transition: opacity 0.4s ease;
-}
-#server-frame.visible { opacity: 1; }
 
 .server-dot {
   display: inline-block; width: 6px; height: 6px; border-radius: 50%;

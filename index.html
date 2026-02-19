@@ -9,11 +9,11 @@
 <body>
 
 <div class="loading-overlay" id="loading">
-  <div class="loading-text" id="loading-msg">Compiling geodesic integrator…</div>
+  <div class="loading-spinner"></div>
+  <div class="loading-text" id="loading-msg">Connecting to render server…</div>
   <div class="error-text" id="error-msg"></div>
 </div>
 
-<canvas id="canvas"></canvas>
 <img id="server-frame" alt="">
 
 <div class="title-block">
@@ -114,15 +114,11 @@
       <option value="yoshida8">Yoshida 8th-order symplectic</option>
       <option value="rkdp8">Dormand-Prince RK8</option>
     </select>
-    <div id="integrator-warn" class="warn-badge" style="display:none">Heavy — may fail on mobile / integrated GPU</div>
+    <div id="integrator-warn" class="warn-badge" style="display:none">Heavy — may be slower</div>
   </div>
   <div class="control-row">
     <div class="control-label"><span>Steps</span><span class="control-value" id="steps-val">200</span></div>
     <input type="range" id="steps" min="60" max="500" step="10" value="200">
-  </div>
-  <div class="control-row">
-    <div class="control-label"><span>Resolution</span><span class="control-value" id="res-scale-val">1.00×</span></div>
-    <input type="range" id="res-scale" min="0.25" max="2.0" step="0.05" value="1.0">
   </div>
   <div class="control-row">
     <div class="control-label"><span>Step Size</span><span class="control-value" id="stepsize-val">0.30</span></div>
@@ -144,14 +140,6 @@
                placeholder="http://localhost:8420" value="">
     </div>
     <div class="control-row">
-        <div class="control-label"><span>Mode</span></div>
-        <div class="toggle-row">
-            <button class="toggle-btn active" id="btn-local-only">Local Only</button>
-            <button class="toggle-btn" id="btn-hybrid">Hybrid</button>
-            <button class="toggle-btn" id="btn-server-only">Server Only</button>
-        </div>
-    </div>
-    <div class="control-row">
         <div class="control-label"><span>Server Quality</span><span class="control-value" id="srv-quality-val">720p</span></div>
         <select class="ctrl-select" id="srv-quality">
             <option value="480">480p</option>
@@ -163,20 +151,11 @@
 </div>
 
 <div class="readout">
-  <span class="hl">r<sub>+</sub></span> = <span id="rp">1.800</span> M<br>
-  <span class="hl">Q</span> = <span id="Qval">0.000</span><br>
-  <span class="hl">r<sub>isco</sub></span> = <span id="risco">4.233</span> M<br>
   <span class="hl">integrator</span> <span id="integ-info">yoshida4</span><br>
   <span class="hl">res</span> <span id="res">---</span><br>
   <span class="hl">fps</span> <span id="fps">--</span>
   <br><span class="server-dot disconnected" id="server-dot"></span><span id="server-status">server off</span>
 </div>
-
-<script id="vs" type="x-shader/x-vertex">
-attribute vec2 a_pos;
-varying vec2 v_uv;
-void main(){ v_uv=a_pos; gl_Position=vec4(a_pos,0,1); }
-</script>
 
 <script type="module" src="js/main.js"></script>
 </body>

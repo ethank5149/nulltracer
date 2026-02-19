@@ -5,7 +5,7 @@
  *  All geodesic integration in float64; color output in float32.
  *
  *  This file is loaded as a complete CUDA kernel source by
- *  renderer_cuda.py via CuPy RawKernel.
+ *  renderer.py via CuPy RawKernel.
  * ============================================================ */
 
 #include "../geodesic_base.cu"

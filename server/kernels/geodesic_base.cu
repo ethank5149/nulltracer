@@ -147,11 +147,11 @@ __device__ void initRay(
 ) {
     double asp = p.width / p.height;
     /* Map pixel to normalized [-1, 1] coordinates.
-     * ux: left=-1, right=+1 (same as OpenGL).
-     * uy: bottom=-1, top=+1 — same convention as OpenGL's v_uv.y.
-     * iy=0 maps to uy≈-1 (bottom of screen), matching glReadPixels row order.
-     * The caller (renderer_cuda.py) applies np.flipud() to get top-to-bottom,
-     * exactly like the OpenGL path does after glReadPixels(). */
+     * ux: left=-1, right=+1.
+     * uy: bottom=-1, top=+1 (bottom-to-top row order).
+     * iy=0 maps to uy≈-1 (bottom of image).
+     * The caller (renderer.py) applies np.flipud() to produce standard
+     * top-to-bottom image order. */
     double ux = (2.0 * (ix + 0.5) / p.width  - 1.0);
     double uy = (2.0 * (iy + 0.5) / p.height - 1.0);
 

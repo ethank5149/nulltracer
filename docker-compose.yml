@@ -1,6 +1,6 @@
 version: "3.8"
 
-# Nulltracer Renderer — GPU-accelerated server for hybrid rendering
+# Nulltracer Renderer — GPU-accelerated server for CUDA rendering
 #
 # Unraid deployment:
 #   This compose file runs ONLY the renderer. Your existing Caddy container
@@ -22,7 +22,6 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - PYOPENGL_PLATFORM=egl
       # CUDA kernel compilation cache (persists across container restarts)
       - CUPY_CACHE_DIR=/tmp/cupy_cache
     ports:

@@ -1,12 +1,12 @@
 // ============================================================
 //  MAIN ENTRY POINT
-//  Imports all modules and wires them together.
+//  Imports server-client and UI modules, wires them together.
+//  No local WebGL rendering — server is the sole renderer.
 // ============================================================
 
-import { iscoJS } from './isco-calculator.js';
-import { initWebGL, setStateRef, markDirty, buildProgram, resize } from './webgl-renderer.js';
-import { initUI, updInfo, refreshLabels, recompile, applyMobileDefaults } from './ui-controller.js';
-import { initServerClient, detectMobile, autoDetectServer } from './server-client.js';
+import { initUI, refreshLabels } from './ui-controller.js';
+import { initServerClient, autoDetectServer, scheduleServerRender } from './server-client.js';
+import { initWsClient, setFallbackRender, connectWebSocket } from './ws-client.js';
 
 // ============================================================
 //  SHARED APPLICATION STATE
@@ -29,74 +29,49 @@ const state = {
     qStepSize: 0.3,
     qObsDist: 40,
     qStarLayers: 3,
-    renderMode: 'local',
-
-    // Cached ISCO value (expensive to compute with charge > 0)
-    _cachedIsco: null,
-    _cachedIscoSpin: null,
-    _cachedIscoCharge: null,
-    getIsco(a, Q) {
-        if (a === this._cachedIscoSpin && Q === this._cachedIscoCharge && this._cachedIsco !== null) return this._cachedIsco;
-        this._cachedIsco = iscoJS(a, Q);
-        this._cachedIscoSpin = a;
-        this._cachedIscoCharge = Q;
-        return this._cachedIsco;
-    }
+    renderMode: 'server',
 };
 
 // ============================================================
 //  INITIALIZATION
 // ============================================================
-const canvas = document.getElementById('canvas');
 const loadEl = document.getElementById('loading');
 const loadMsg = document.getElementById('loading-msg');
-const errMsg = document.getElementById('error-msg');
 
-const gl = initWebGL(canvas, loadMsg, errMsg);
-if (!gl) {
-    // WebGL not available — initWebGL already showed the error
-} else {
-    // Wire up shared state to renderer
-    setStateRef(state);
+loadMsg.textContent = 'Connecting to render server…';
 
-    // Initialize server client
-    initServerClient({
-        serverFrame: document.getElementById('server-frame'),
-        serverDot: document.getElementById('server-dot'),
-        serverStatusEl: document.getElementById('server-status'),
-        canvas: canvas,
-        stateRef: state
-    });
-
-    // Initialize UI (event handlers, sliders, etc.)
-    initUI(state);
-
-    // Auto-detect mobile and suggest hybrid mode
-    if (detectMobile()) {
-        applyMobileDefaults();
-        // Auto-show settings panel so user can configure server
-        document.getElementById('settings-panel').classList.remove('hidden');
-        document.getElementById('btn-settings').classList.add('active');
+// Initialize server client
+initServerClient({
+    serverFrame: document.getElementById('server-frame'),
+    serverDot: document.getElementById('server-dot'),
+    serverStatusEl: document.getElementById('server-status'),
+    stateRef: state,
+    onFirstFrame() {
+        // Hide loading overlay once the first server frame arrives
+        loadEl.classList.add('hidden');
     }
+});
 
-    // Run initial setup
-    updInfo();
-    refreshLabels();
-    loadMsg.textContent = 'Compiling shaders…';
-    resize();
-    const initResult = buildProgram();
-    if (!initResult.ok) {
-        loadMsg.textContent = 'Shader compile failed';
-        errMsg.style.display = 'block';
-        errMsg.textContent = initResult.error;
-    } else {
-        loadMsg.textContent = 'Tracing first frame…';
-        requestAnimationFrame(() => {
-            markDirty();
-            setTimeout(() => loadEl.classList.add('hidden'), 500);
-        });
+// Initialize WebSocket client with same DOM refs and state
+initWsClient({
+    serverFrame: document.getElementById('server-frame'),
+    serverDot: document.getElementById('server-dot'),
+    serverStatusEl: document.getElementById('server-status'),
+    stateRef: state,
+    onFirstFrame: () => {
+        document.getElementById('loading')?.classList.add('hidden');
     }
+});
 
-    // Auto-detect same-origin server
-    autoDetectServer();
-}
+// Set HTTP fallback for when WebSocket is not connected
+setFallbackRender(scheduleServerRender);
+
+// Initialize UI (event handlers, sliders, etc.)
+initUI(state);
+
+// Populate initial label values
+refreshLabels();
+
+// Auto-detect same-origin server and begin rendering
+autoDetectServer();
+connectWebSocket(location.origin);

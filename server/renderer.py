@@ -1,289 +1,198 @@
 """
-Headless OpenGL renderer using EGL for offscreen rendering.
+CUDA renderer using CuPy RawKernel for Kerr-Newman black hole ray tracing.
 
-Creates an EGL context with a pbuffer surface, compiles GLSL shaders,
-renders to an FBO, and reads back pixels as raw RGB bytes.
+Replaces the EGL/OpenGL renderer with direct CUDA compute kernels.
+All geodesic integration uses float64 for maximum accuracy.
 """
 
 import ctypes
 import logging
 import math
+import os
+from pathlib import Path
 from typing import Optional
 
+import cupy as cp
 import numpy as np
-from OpenGL import EGL
-from OpenGL.GL import *
 
 from .isco import isco
-from .shader import VERTEX_SHADER_SRC, build_frag_src
 
 logger = logging.getLogger(__name__)
 
-# Cache key type: tuple of (method, steps, obsDist, starLayers, stepSize, bgMode)
-_CacheKey = tuple
+# Path to kernel source files
+_KERNEL_DIR = Path(__file__).parent / "kernels"
+_INTEGRATOR_DIR = _KERNEL_DIR / "integrators"
+
+# Map method names to kernel source files and entry point names
+_KERNEL_REGISTRY = {
+    "yoshida4": ("yoshida4.cu", "trace_yoshida4"),
+    "rk4":      ("rk4.cu",      "trace_rk4"),
+    "yoshida6": ("yoshida6.cu", "trace_yoshida6"),
+    "yoshida8": ("yoshida8.cu", "trace_yoshida8"),
+    "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
+}
 
 
-class Renderer:
-    """Headless EGL/OpenGL renderer for black hole ray tracing."""
+class RenderParams(ctypes.Structure):
+    """C-compatible struct matching the CUDA RenderParams definition.
+
+    Must be kept in sync with server/kernels/geodesic_base.cu.
+    """
+    # All fields are c_double to guarantee identical layout between
+    # Python ctypes and CUDA compiler (no alignment padding issues).
+    # Integer values are stored as double and cast to int in the kernel.
+    _fields_ = [
+        ("width",       ctypes.c_double),
+        ("height",      ctypes.c_double),
+        ("spin",        ctypes.c_double),
+        ("charge",      ctypes.c_double),
+        ("incl",        ctypes.c_double),
+        ("fov",         ctypes.c_double),
+        ("phi0",        ctypes.c_double),
+        ("isco",        ctypes.c_double),
+        ("steps",       ctypes.c_double),
+        ("obs_dist",    ctypes.c_double),
+        ("esc_radius",  ctypes.c_double),
+        ("disk_outer",  ctypes.c_double),
+        ("step_size",   ctypes.c_double),
+        ("bg_mode",     ctypes.c_double),
+        ("star_layers", ctypes.c_double),
+        ("show_disk",   ctypes.c_double),
+        ("show_grid",   ctypes.c_double),
+        ("disk_temp",   ctypes.c_double),
+    ]
+
+
+class CudaRenderer:
+    """CUDA-based renderer for black hole ray tracing using CuPy."""
 
     def __init__(self):
-        self._dpy = None
-        self._ctx = None
-        self._surface = None
-        self._fbo: Optional[int] = None
-        self._rbo_color: Optional[int] = None
-        self._vao: Optional[int] = None
-        self._vbo: Optional[int] = None
-        self._program_cache: dict[_CacheKey, int] = {}
-        self._current_fbo_size: tuple[int, int] = (0, 0)
+        self._kernel_cache: dict[str, cp.RawKernel] = {}
         self._gpu_info: str = "unknown"
         self._initialized = False
 
     def initialize(self) -> None:
-        """Initialize EGL display, context, and surface."""
+        """Initialize CUDA context and query GPU info."""
         if self._initialized:
             return
 
-        # Get default display
-        dpy = EGL.eglGetDisplay(EGL.EGL_DEFAULT_DISPLAY)
-        if dpy == EGL.EGL_NO_DISPLAY:
-            raise RuntimeError("Failed to get EGL display")
+        try:
+            # Force CUDA context creation
+            cp.cuda.Device(0).use()
 
-        # Initialize EGL
-        major = ctypes.c_long()
-        minor = ctypes.c_long()
-        if not EGL.eglInitialize(dpy, major, minor):
-            raise RuntimeError("Failed to initialize EGL")
-        logger.info("EGL initialized: %d.%d", major.value, minor.value)
+            # Query GPU info
+            props = cp.cuda.runtime.getDeviceProperties(0)
+            name = props["name"].decode() if isinstance(props["name"], bytes) else props["name"]
+            mem_gb = props["totalGlobalMem"] / (1024**3)
+            cc = f"{props['major']}.{props['minor']}"
+            self._gpu_info = f"{name} ({mem_gb:.1f} GB, compute {cc})"
+            logger.info("CUDA GPU: %s", self._gpu_info)
 
-        # Configure for offscreen rendering
-        config_attribs = (EGL.EGLint * 13)(
-            EGL.EGL_SURFACE_TYPE, EGL.EGL_PBUFFER_BIT,
-            EGL.EGL_RENDERABLE_TYPE, EGL.EGL_OPENGL_BIT,
-            EGL.EGL_RED_SIZE, 8,
-            EGL.EGL_GREEN_SIZE, 8,
-            EGL.EGL_BLUE_SIZE, 8,
-            EGL.EGL_NONE,
-        )
+            # Log CUDA version
+            cuda_ver = cp.cuda.runtime.runtimeGetVersion()
+            logger.info("CUDA runtime version: %d", cuda_ver)
 
-        config = EGL.EGLConfig()
-        num_configs = ctypes.c_long()
-        if not EGL.eglChooseConfig(dpy, config_attribs, config, 1, num_configs):
-            raise RuntimeError("Failed to choose EGL config")
-        if num_configs.value == 0:
-            raise RuntimeError("No suitable EGL config found")
+            # Pre-compile the default kernel (yoshida4)
+            self._get_kernel("yoshida4")
+            logger.info("Default kernel (yoshida4) pre-compiled")
 
-        # Bind OpenGL API (not OpenGL ES)
-        if not EGL.eglBindAPI(EGL.EGL_OPENGL_API):
-            raise RuntimeError("Failed to bind OpenGL API")
-
-        # Create context
-        ctx = EGL.eglCreateContext(dpy, config, EGL.EGL_NO_CONTEXT, None)
-        if ctx == EGL.EGL_NO_CONTEXT:
-            raise RuntimeError("Failed to create EGL context")
-
-        # Try surfaceless context first (works on NVIDIA EGL in containers),
-        # fall back to pbuffer surface if surfaceless fails.
-        surface = EGL.EGL_NO_SURFACE
-        if EGL.eglMakeCurrent(dpy, EGL.EGL_NO_SURFACE, EGL.EGL_NO_SURFACE, ctx):
-            logger.info("Using surfaceless EGL context (rendering to FBO)")
-        else:
-            logger.info("Surfaceless context not supported, trying pbuffer surface")
-            pbuffer_attribs = (EGL.EGLint * 5)(
-                EGL.EGL_WIDTH, 1,
-                EGL.EGL_HEIGHT, 1,
-                EGL.EGL_NONE,
-            )
-            surface = EGL.eglCreatePbufferSurface(dpy, config, pbuffer_attribs)
-            if surface == EGL.EGL_NO_SURFACE:
-                raise RuntimeError("Failed to create EGL pbuffer surface")
-            if not EGL.eglMakeCurrent(dpy, surface, surface, ctx):
-                raise RuntimeError("Failed to make EGL context current")
-
-        self._dpy = dpy
-        self._ctx = ctx
-        self._surface = surface
-
-        # Query GPU info
-        vendor = glGetString(GL_VENDOR)
-        renderer = glGetString(GL_RENDERER)
-        version = glGetString(GL_VERSION)
-        glsl_version = glGetString(GL_SHADING_LANGUAGE_VERSION)
-        if vendor and renderer:
-            self._gpu_info = f"{vendor.decode()} {renderer.decode()} ({version.decode() if version else 'unknown'})"
-        else:
-            self._gpu_info = "EGL headless (info unavailable)"
-        logger.info("GPU: %s", self._gpu_info)
-        logger.info("GLSL version: %s", glsl_version.decode() if glsl_version else "unknown")
-        logger.info("OpenGL version: %s", version.decode() if version else "unknown")
-
-        # Set up fullscreen quad VBO
-        self._setup_quad()
-
-        # Create initial FBO
-        self._fbo = glGenFramebuffers(1)
-        self._rbo_color = glGenRenderbuffers(1)
+        except Exception as e:
+            logger.error("CUDA initialization failed: %s", e, exc_info=True)
+            raise RuntimeError(f"CUDA initialization failed: {e}")
 
         self._initialized = True
-        logger.info("Renderer initialized successfully")
+        logger.info("CUDA renderer initialized successfully")
 
     @property
     def gpu_info(self) -> str:
         """Return GPU information string."""
         return self._gpu_info
 
-    def _make_current(self) -> None:
-        """Make the EGL context current on the calling thread.
+    def _load_kernel_source(self, method: str) -> tuple[str, str]:
+        """Load CUDA kernel source for the given integration method.
 
-        OpenGL contexts are thread-local. Since render_frame() runs in a
-        thread pool via asyncio.to_thread(), we must call eglMakeCurrent()
-        on each render thread before any GL calls.
+        Returns (source_code, entry_point_name).
         """
-        if not EGL.eglMakeCurrent(self._dpy, self._surface, self._surface, self._ctx):
-            raise RuntimeError("Failed to make EGL context current on render thread")
-
-    def _setup_quad(self) -> None:
-        """Set up a fullscreen quad (2 triangles covering clip space [-1,1])."""
-        # Vertex data: 2 triangles forming a quad
-        vertices = np.array([
-            -1.0, -1.0,
-             1.0, -1.0,
-            -1.0,  1.0,
-            -1.0,  1.0,
-             1.0, -1.0,
-             1.0,  1.0,
-        ], dtype=np.float32)
-
-        self._vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
-        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
-
-    def _ensure_fbo_size(self, width: int, height: int) -> None:
-        """Resize the FBO renderbuffer if needed."""
-        if self._current_fbo_size == (width, height):
-            return
-
-        glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
-        glBindRenderbuffer(GL_RENDERBUFFER, self._rbo_color)
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGB8, width, height)
-        glFramebufferRenderbuffer(
-            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-            GL_RENDERBUFFER, self._rbo_color
-        )
-
-        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
-        if status != GL_FRAMEBUFFER_COMPLETE:
-            raise RuntimeError(f"Framebuffer incomplete: {status}")
-
-        glBindFramebuffer(GL_FRAMEBUFFER, 0)
-        self._current_fbo_size = (width, height)
-        logger.debug("FBO resized to %dx%d", width, height)
-
-    def _compile_shader(self, source: str, shader_type: int) -> int:
-        """Compile a single shader and return its handle."""
-        shader_type_name = "vertex" if shader_type == GL_VERTEX_SHADER else "fragment"
-        shader = glCreateShader(shader_type)
-        if shader == 0:
-            raise RuntimeError(f"glCreateShader({shader_type_name}) returned 0")
-
-        glShaderSource(shader, source)
-        glCompileShader(shader)
-
-        status = glGetShaderiv(shader, GL_COMPILE_STATUS)
-        info_log = glGetShaderInfoLog(shader)
-        info_str = info_log.decode() if isinstance(info_log, bytes) else info_log
-
-        if info_str:
-            logger.info("%s shader info log: %s", shader_type_name, info_str.strip())
-
-        if not status:
-            # Dump full source for debugging
-            logger.error("Full %s shader source:\n%s", shader_type_name, source)
-            glDeleteShader(shader)
-            raise RuntimeError(f"{shader_type_name} shader compilation failed:\n{info_str}")
-
-        logger.info("%s shader compiled successfully (handle=%d)", shader_type_name, shader)
-        return shader
-
-    def _get_program(self, opts: dict) -> int:
-        """Get or compile+cache a shader program for the given options."""
-        cache_key = (
-            opts.get("method", "yoshida4"),
-            opts.get("steps", 200),
-            opts.get("obsDist", 40),
-            opts.get("starLayers", 3),
-            opts.get("stepSize", 0.30),
-            opts.get("bgMode", 1),
-        )
-
-        if cache_key in self._program_cache:
-            return self._program_cache[cache_key]
-
-        logger.info("Compiling shader program for key: %s", cache_key)
-
-        # Clear any pending GL errors before shader compilation
-        while glGetError() != GL_NO_ERROR:
-            pass
-
-        frag_src = build_frag_src(opts)
-
-        # Log shader source length for diagnostics
-        logger.info("Fragment shader source length: %d chars", len(frag_src))
-
-        vert_shader = self._compile_shader(VERTEX_SHADER_SRC, GL_VERTEX_SHADER)
-        frag_shader = self._compile_shader(frag_src, GL_FRAGMENT_SHADER)
-
-        program = glCreateProgram()
-        if program == 0:
-            raise RuntimeError("glCreateProgram() returned 0 — GL context may be lost")
-
-        glAttachShader(program, vert_shader)
-        err_attach1 = glGetError()
-        glAttachShader(program, frag_shader)
-        err_attach2 = glGetError()
-        if err_attach1 != GL_NO_ERROR or err_attach2 != GL_NO_ERROR:
-            logger.error("glAttachShader errors: vert=%s, frag=%s", err_attach1, err_attach2)
-
-        glLinkProgram(program)
-
-        gl_err = glGetError()
-        link_status = glGetProgramiv(program, GL_LINK_STATUS)
-        if not link_status:
-            log = glGetProgramInfoLog(program)
-            log_str = log.decode() if isinstance(log, bytes) else log
-            # Also capture individual shader info logs for diagnostics
-            vert_log = glGetShaderInfoLog(vert_shader)
-            frag_log = glGetShaderInfoLog(frag_shader)
-            vert_log_str = vert_log.decode() if isinstance(vert_log, bytes) else vert_log
-            frag_log_str = frag_log.decode() if isinstance(frag_log, bytes) else frag_log
-            logger.error("Shader link failed. Link status: %s, glGetError: %s", link_status, gl_err)
-            logger.error("Link log: [%s]", log_str)
-            logger.error("Vertex shader info log: [%s]", vert_log_str)
-            logger.error("Fragment shader info log: [%s]", frag_log_str)
-            logger.error("Vertex shader source:\n%s", VERTEX_SHADER_SRC)
-            logger.error("Fragment shader source (first 2000 chars):\n%s", frag_src[:2000])
-            # Also try to validate shaders individually
-            vert_status = glGetShaderiv(vert_shader, GL_COMPILE_STATUS)
-            frag_status = glGetShaderiv(frag_shader, GL_COMPILE_STATUS)
-            logger.error("Vert compile status: %s, Frag compile status: %s", vert_status, frag_status)
-            glDeleteProgram(program)
-            glDeleteShader(vert_shader)
-            glDeleteShader(frag_shader)
-            raise RuntimeError(
-                f"Shader program linking failed:\n"
-                f"Link: {log_str}\nVert: {vert_log_str}\nFrag: {frag_log_str}\n"
-                f"glError: {gl_err}, vert_compiled: {vert_status}, frag_compiled: {frag_status}"
+        if method not in _KERNEL_REGISTRY:
+            raise ValueError(
+                f"Unknown integration method '{method}'. "
+                f"Available: {list(_KERNEL_REGISTRY.keys())}"
             )
 
-        # Shaders can be detached and deleted after linking
-        glDetachShader(program, vert_shader)
-        glDetachShader(program, frag_shader)
-        glDeleteShader(vert_shader)
-        glDeleteShader(frag_shader)
+        filename, entry_point = _KERNEL_REGISTRY[method]
+        source_path = _INTEGRATOR_DIR / filename
 
-        self._program_cache[cache_key] = program
-        return program
+        if not source_path.exists():
+            raise FileNotFoundError(f"Kernel source not found: {source_path}")
+
+        # Read the kernel source
+        source = source_path.read_text()
+
+        # CuPy RawKernel doesn't support #include, so we need to
+        # inline the included files. Replace #include directives
+        # with the actual file contents.
+        source = self._resolve_includes(source, source_path.parent)
+
+        return source, entry_point
+
+    def _resolve_includes(self, source: str, base_dir: Path) -> str:
+        """Resolve #include directives by inlining file contents.
+
+        CuPy's RawKernel doesn't support the #include preprocessor
+        directive, so we manually inline all includes.
+        """
+        import re
+        include_pattern = re.compile(r'#include\s+"([^"]+)"')
+
+        resolved = set()  # Track resolved files to avoid duplicates
+
+        def replace_include(match):
+            rel_path = match.group(1)
+            abs_path = (base_dir / rel_path).resolve()
+
+            # Avoid double-inclusion (header guards handle this in real CUDA,
+            # but we need to handle it here since we're inlining)
+            if abs_path in resolved:
+                return f"/* Already included: {rel_path} */"
+            resolved.add(abs_path)
+
+            if not abs_path.exists():
+                raise FileNotFoundError(
+                    f"Include file not found: {rel_path} "
+                    f"(resolved to {abs_path})"
+                )
+
+            included_source = abs_path.read_text()
+            # Recursively resolve includes in the included file
+            included_source = self._resolve_includes(
+                included_source, abs_path.parent
+            )
+            return f"/* Begin include: {rel_path} */\n{included_source}\n/* End include: {rel_path} */"
+
+        return include_pattern.sub(replace_include, source)
+
+    def _get_kernel(self, method: str) -> cp.RawKernel:
+        """Get or compile a CUDA kernel for the given method."""
+        if method in self._kernel_cache:
+            return self._kernel_cache[method]
+
+        logger.info("Compiling CUDA kernel for method: %s", method)
+        source, entry_point = self._load_kernel_source(method)
+
+        # Compile with CuPy RawKernel
+        # Options: enable double precision, set architecture
+        kernel = cp.RawKernel(
+            source,
+            entry_point,
+            options=(
+                "--std=c++14",
+                "-use_fast_math",  # Fast math for float32 (doesn't affect float64)
+            ),
+        )
+
+        self._kernel_cache[method] = kernel
+        logger.info("Kernel '%s' compiled (entry: %s)", method, entry_point)
+        return kernel
 
     def render_frame(self, params: dict) -> bytes:
         """Render a single frame and return raw RGB pixel data.
@@ -302,105 +211,98 @@ class Renderer:
 
         width = params.get("width", 1280)
         height = params.get("height", 720)
+        method = params.get("method", "yoshida4")
 
-        # Build shader options (these affect #defines, requiring recompilation)
-        shader_opts = {
-            "method": params.get("method", "yoshida4"),
-            "steps": params.get("steps", 200),
-            "obsDist": params.get("obs_dist", 40),
-            "starLayers": params.get("star_layers", 3),
-            "stepSize": params.get("step_size", 0.30),
-            "bgMode": params.get("bg_mode", 1),
-        }
-
-        program = self._get_program(shader_opts)
-
-        # Ensure FBO is the right size
-        self._ensure_fbo_size(width, height)
-
-        # Bind FBO and set viewport
-        glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
-        glViewport(0, 0, width, height)
-
-        # Use shader program
-        glUseProgram(program)
+        # Get compiled kernel
+        kernel = self._get_kernel(method)
 
         # Compute ISCO
         spin = params.get("spin", 0.6)
         charge = params.get("charge", 0.0)
         isco_radius = isco(spin, charge)
 
-        # Set uniforms
-        incl_rad = math.radians(params.get("inclination", 80.0))
+        # Build RenderParams struct
+        obs_dist = float(params.get("obs_dist", 40))
+        logger.info(
+            "CUDA render params: %dx%d method=%s spin=%.3f charge=%.3f incl=%.1f° "
+            "fov=%.1f steps=%d obs_dist=%.0f step_size=%.2f bg_mode=%d "
+            "show_disk=%s show_grid=%s disk_temp=%.2f star_layers=%d isco=%.4f",
+            width, height, method, spin, charge,
+            float(params.get("inclination", 80.0)),
+            float(params.get("fov", 8.0)),
+            int(params.get("steps", 200)),
+            obs_dist,
+            float(params.get("step_size", 0.30)),
+            int(params.get("bg_mode", 1)),
+            params.get("show_disk", True),
+            params.get("show_grid", True),
+            float(params.get("disk_temp", 1.0)),
+            int(params.get("star_layers", 3)),
+            float(isco_radius),
+        )
+        rp = RenderParams(
+            width=width,
+            height=height,
+            spin=float(spin),
+            charge=float(charge),
+            incl=math.radians(float(params.get("inclination", 80.0))),
+            fov=float(params.get("fov", 8.0)),
+            phi0=float(params.get("phi0", 0.0)),
+            isco=float(isco_radius),
+            steps=int(params.get("steps", 200)),
+            obs_dist=obs_dist,
+            esc_radius=obs_dist + 12.0,
+            disk_outer=14.0,
+            step_size=float(params.get("step_size", 0.30)),
+            bg_mode=int(params.get("bg_mode", 1)),
+            star_layers=int(params.get("star_layers", 3)),
+            show_disk=1 if params.get("show_disk", True) else 0,
+            show_grid=1 if params.get("show_grid", True) else 0,
+            disk_temp=float(params.get("disk_temp", 1.0)),
+        )
 
-        loc = lambda name: glGetUniformLocation(program, name)
-        glUniform2f(loc("u_res"), float(width), float(height))
-        glUniform1f(loc("u_a"), float(spin))
-        glUniform1f(loc("u_incl"), float(incl_rad))
-        glUniform1f(loc("u_fov"), float(params.get("fov", 8.0)))
-        glUniform1f(loc("u_disk"), 1.0 if params.get("show_disk", True) else 0.0)
-        glUniform1f(loc("u_grid"), 1.0 if params.get("show_grid", True) else 0.0)
-        glUniform1f(loc("u_temp"), float(params.get("disk_temp", 1.0)))
-        glUniform1f(loc("u_phi0"), float(params.get("phi0", 0.0)))
-        glUniform1f(loc("u_Q"), float(charge))
-        glUniform1f(loc("u_isco"), float(isco_radius))
+        # Copy params struct to GPU as a byte array
+        params_bytes = bytes(rp)
+        h_params = np.frombuffer(params_bytes, dtype=np.uint8)
+        d_params = cp.asarray(h_params)
 
-        # Bind VBO and set vertex attribute
-        glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
-        a_pos_loc = glGetAttribLocation(program, "a_pos")
-        glEnableVertexAttribArray(a_pos_loc)
-        glVertexAttribPointer(a_pos_loc, 2, GL_FLOAT, GL_FALSE, 0, None)
+        # Allocate output buffer on GPU (RGB, uint8)
+        d_output = cp.zeros(height * width * 3, dtype=cp.uint8)
 
-        # Clear and draw
-        glClearColor(0.0, 0.0, 0.0, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT)
-        glDrawArrays(GL_TRIANGLES, 0, 6)
+        # Launch kernel
+        block_size = (16, 16)
+        grid_size = (
+            (width + block_size[0] - 1) // block_size[0],
+            (height + block_size[1] - 1) // block_size[1],
+        )
 
-        # Read pixels
-        glFinish()
-        pixels = glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE)
-        pixel_array = np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 3)
+        kernel(
+            grid_size,
+            block_size,
+            (d_params, d_output),
+        )
 
-        # Flip vertically (OpenGL origin is bottom-left)
+        # Synchronize and read back
+        cp.cuda.Stream.null.synchronize()
+
+        # Copy to host
+        h_output = d_output.get()
+
+        # Reshape to (H, W, 3) — kernel writes in row-major order
+        # with iy=0 at bottom (same as OpenGL's glReadPixels convention).
+        pixel_array = h_output.reshape(height, width, 3)
+
+        # Flip vertically to get top-to-bottom row order,
+        # matching the OpenGL renderer's np.flipud() at readback.
         pixel_array = np.flipud(pixel_array)
-
-        # Clean up state
-        glDisableVertexAttribArray(a_pos_loc)
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
-        glUseProgram(0)
-        glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
         return pixel_array.tobytes()
 
     def shutdown(self) -> None:
-        """Clean up OpenGL and EGL resources."""
+        """Clean up CUDA resources."""
         if not self._initialized:
             return
 
-        # Delete cached programs
-        for program in self._program_cache.values():
-            glDeleteProgram(program)
-        self._program_cache.clear()
-
-        # Delete FBO and RBO
-        if self._fbo is not None:
-            glDeleteFramebuffers(1, [self._fbo])
-        if self._rbo_color is not None:
-            glDeleteRenderbuffers(1, [self._rbo_color])
-        if self._vbo is not None:
-            glDeleteBuffers(1, [self._vbo])
-
-        # Tear down EGL
-        if self._dpy is not None:
-            EGL.eglMakeCurrent(
-                self._dpy, EGL.EGL_NO_SURFACE,
-                EGL.EGL_NO_SURFACE, EGL.EGL_NO_CONTEXT
-            )
-            if self._surface is not None and self._surface != EGL.EGL_NO_SURFACE:
-                EGL.eglDestroySurface(self._dpy, self._surface)
-            if self._ctx is not None:
-                EGL.eglDestroyContext(self._dpy, self._ctx)
-            EGL.eglTerminate(self._dpy)
-
+        self._kernel_cache.clear()
         self._initialized = False
-        logger.info("Renderer shut down")
+        logger.info("CUDA renderer shut down")

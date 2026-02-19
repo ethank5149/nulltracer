@@ -1,7 +1,7 @@
 /* ============================================================
  *  BACKGROUNDS — Procedural background rendering (float32)
  *
- *  Ported from server/backgrounds.py GLSL.
+ *  Originally ported from GLSL background rendering functions.
  *  All functions take a Cartesian direction vector (dx, dy, dz)
  *  and never use θ or φ directly — pole-safe by construction.
  *
