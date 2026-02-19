@@ -38,25 +38,28 @@ class RenderParams(ctypes.Structure):
 
     Must be kept in sync with server/kernels/geodesic_base.cu.
     """
+    # All fields are c_double to guarantee identical layout between
+    # Python ctypes and CUDA compiler (no alignment padding issues).
+    # Integer values are stored as double and cast to int in the kernel.
     _fields_ = [
-        ("width",       ctypes.c_int),
-        ("height",      ctypes.c_int),
+        ("width",       ctypes.c_double),
+        ("height",      ctypes.c_double),
         ("spin",        ctypes.c_double),
         ("charge",      ctypes.c_double),
         ("incl",        ctypes.c_double),
         ("fov",         ctypes.c_double),
         ("phi0",        ctypes.c_double),
         ("isco",        ctypes.c_double),
-        ("steps",       ctypes.c_int),
+        ("steps",       ctypes.c_double),
         ("obs_dist",    ctypes.c_double),
         ("esc_radius",  ctypes.c_double),
         ("disk_outer",  ctypes.c_double),
         ("step_size",   ctypes.c_double),
-        ("bg_mode",     ctypes.c_int),
-        ("star_layers", ctypes.c_int),
-        ("show_disk",   ctypes.c_int),
-        ("show_grid",   ctypes.c_int),
-        ("disk_temp",   ctypes.c_float),
+        ("bg_mode",     ctypes.c_double),
+        ("star_layers", ctypes.c_double),
+        ("show_disk",   ctypes.c_double),
+        ("show_grid",   ctypes.c_double),
+        ("disk_temp",   ctypes.c_double),
     ]
 
 
@@ -220,6 +223,23 @@ class CudaRenderer:
 
         # Build RenderParams struct
         obs_dist = float(params.get("obs_dist", 40))
+        logger.info(
+            "CUDA render params: %dx%d method=%s spin=%.3f charge=%.3f incl=%.1f° "
+            "fov=%.1f steps=%d obs_dist=%.0f step_size=%.2f bg_mode=%d "
+            "show_disk=%s show_grid=%s disk_temp=%.2f star_layers=%d isco=%.4f",
+            width, height, method, spin, charge,
+            float(params.get("inclination", 80.0)),
+            float(params.get("fov", 8.0)),
+            int(params.get("steps", 200)),
+            obs_dist,
+            float(params.get("step_size", 0.30)),
+            int(params.get("bg_mode", 1)),
+            params.get("show_disk", True),
+            params.get("show_grid", True),
+            float(params.get("disk_temp", 1.0)),
+            int(params.get("star_layers", 3)),
+            float(isco_radius),
+        )
         rp = RenderParams(
             width=width,
             height=height,
@@ -241,10 +261,10 @@ class CudaRenderer:
             disk_temp=float(params.get("disk_temp", 1.0)),
         )
 
-        # Copy params struct to GPU
+        # Copy params struct to GPU as a byte array
         params_bytes = bytes(rp)
-        d_params = cp.cuda.alloc(len(params_bytes))
-        d_params.copy_from_host(params_bytes, len(params_bytes))
+        h_params = np.frombuffer(params_bytes, dtype=np.uint8)
+        d_params = cp.asarray(h_params)
 
         # Allocate output buffer on GPU (RGB, uint8)
         d_output = cp.zeros(height * width * 3, dtype=cp.uint8)

@@ -28,10 +28,13 @@
 
 /* ── Parameter struct passed to kernel ─────────────────────── */
 
+/* All fields are double to guarantee identical layout between
+ * Python ctypes and CUDA compiler (no alignment padding issues).
+ * Integer values are stored as double and cast to int in the kernel. */
 struct RenderParams {
     /* Resolution */
-    int    width;
-    int    height;
+    double width;
+    double height;
 
     /* Black hole parameters */
     double spin;        /* a: dimensionless spin parameter */
@@ -42,18 +45,18 @@ struct RenderParams {
     double isco;        /* ISCO radius (precomputed) */
 
     /* Integration parameters */
-    int    steps;       /* max integration steps */
+    double steps;       /* max integration steps */
     double obs_dist;    /* observer distance R0 */
     double esc_radius;  /* escape radius RESC = R0 + 12 */
     double disk_outer;  /* outer disk radius RDISK */
     double step_size;   /* base step size H_BASE */
 
     /* Rendering options */
-    int    bg_mode;     /* 0=stars, 1=checker, 2=colormap */
-    int    star_layers; /* number of star layers */
-    int    show_disk;   /* 1=show accretion disk */
-    int    show_grid;   /* 1=show grid overlay */
-    float  disk_temp;   /* disk temperature multiplier */
+    double bg_mode;     /* 0=stars, 1=checker, 2=colormap */
+    double star_layers; /* number of star layers */
+    double show_disk;   /* 1=show accretion disk */
+    double show_grid;   /* 1=show grid overlay */
+    double disk_temp;   /* disk temperature multiplier */
 };
 
 
@@ -142,7 +145,7 @@ __device__ void initRay(
     double *b_out, double *rp_out,
     float *alpha_out, float *beta_out
 ) {
-    double asp = (double)p.width / (double)p.height;
+    double asp = p.width / p.height;
     /* Map pixel to normalized [-1, 1] coordinates */
     double ux = (2.0 * (ix + 0.5) / p.width  - 1.0);
     double uy = (2.0 * (iy + 0.5) / p.height - 1.0);
@@ -196,28 +199,30 @@ __device__ void initRay(
 
 /* ── Hash function (for procedural backgrounds) ───────────── */
 
-__device__ float hashf(float x, float y) {
-    float px = x * 443.8f + y * 441.4f;
-    float py = y * 443.8f + x * 441.4f;
-    px = px - floorf(px);
-    py = py - floorf(py);
-    float d = px * (px + 19.19f) + py * (py + 19.19f);
-    px = px + d;
-    py = py + d;
-    px = px - floorf(px);
-    py = py - floorf(py);
-    return (px * py) - floorf(px * py);
-}
-
-/* Simpler hash matching the GLSL version exactly */
-__device__ float hash2(float px, float py) {
-    px = (px * 443.8f) - floorf(px * 443.8f);
-    py = (py * 441.4f) - floorf(py * 441.4f);
+/* Exact port of the GLSL hash function:
+ *   float hash(vec2 p){
+ *       p=fract(p*vec2(443.8,441.4));
+ *       p+=dot(p,p+19.19);
+ *       return fract(p.x*p.y);
+ *   }
+ */
+__device__ float hash2(float inx, float iny) {
     /* p = fract(p * vec2(443.8, 441.4)) */
-    float dot_val = px * (px + 19.19f) + py * (py + 19.19f);
-    px += dot_val;
-    py += dot_val;
-    return (px * py) - floorf(px * py);
+    float px = inx * 443.8f;
+    px = px - floorf(px);
+    float py = iny * 441.4f;
+    py = py - floorf(py);
+
+    /* dot(p, p + 19.19) = p.x*(p.x+19.19) + p.y*(p.y+19.19) */
+    float d = px * (px + 19.19f) + py * (py + 19.19f);
+
+    /* p += dot(p, p+19.19)  — adds scalar to both components */
+    px += d;
+    py += d;
+
+    /* return fract(p.x * p.y) */
+    float prod = px * py;
+    return prod - floorf(prod);
 }
 
 
@@ -275,10 +280,13 @@ __device__ void faceColor(float face, float *r, float *g, float *b) {
 
 /* ── Smoothstep utility ───────────────────────────────────── */
 
+/* Matches GLSL smoothstep semantics: works correctly even when
+ * edge0 > edge1 (reversed edges for fade-out ramps).
+ * Computes t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
+ * then returns t² × (3 - 2t). */
 __device__ float smoothstepf(float edge0, float edge1, float x) {
-    if (x <= edge0) return 0.0f;
-    if (x >= edge1) return 1.0f;
     float t = (x - edge0) / (edge1 - edge0);
+    t = fminf(fmaxf(t, 0.0f), 1.0f);
     return t * t * (3.0f - 2.0f * t);
 }
 

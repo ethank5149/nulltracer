@@ -9,3 +9,8 @@ Thumbs.db
 .vscode/
 .idea/
 .venv/
+
+plans/
+screenshots/
+
+__pycache__/

@@ -31,10 +31,12 @@
 
 
 extern "C" __global__
-void trace_yoshida6(const RenderParams p, unsigned char *output) {
+void trace_yoshida6(const RenderParams *pp, unsigned char *output) {
+    const RenderParams &p = *pp;
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
-    if (ix >= p.width || iy >= p.height) return;
+    int W = (int)p.width, H = (int)p.height;
+    if (ix >= W || iy >= H) return;
 
     double r, th, phi, pr, pth, b, rp;
     float alpha, beta;
@@ -45,11 +47,19 @@ void trace_yoshida6(const RenderParams p, unsigned char *output) {
     float cr = 0.0f, cg = 0.0f, cb = 0.0f;
     bool done = false;
 
-    for (int i = 0; i < p.steps; i++) {
+    int STEPS = (int)p.steps;
+    int show_disk = (int)p.show_disk;
+    int bg_mode = (int)p.bg_mode;
+    int star_layers = (int)p.star_layers;
+    int show_grid = (int)p.show_grid;
+
+    for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        double he = p.step_size * fmin(fmax((r - rp) * 0.4, 0.04), 1.0);
-        he = fmin(fmax(he, 0.012), 0.6);
+        /* Scale base step with observer distance (affine parameter budget ∝ R₀) */
+        double h_scaled = p.step_size * (p.obs_dist / 30.0);
+        double he = h_scaled * fmin(fmax((r - rp) * 0.4, 0.04), 1.0);
+        he = fmin(fmax(he, 0.012), 1.0);
         double oldTh = th, oldR = r, oldPhi = phi;
         double dr_, dth_, dphi_, dpr_, dpth_;
 
@@ -66,7 +76,7 @@ void trace_yoshida6(const RenderParams p, unsigned char *output) {
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
         if (r <= rp * 1.01) { done = true; break; }
-        if (p.show_disk) {
+        if (show_disk) {
             double cross = (oldTh - PI * 0.5) * (th - PI * 0.5);
             if (cross < 0.0) {
                 double f = fmin(fmax(fabs(oldTh - PI * 0.5) /
@@ -89,7 +99,7 @@ void trace_yoshida6(const RenderParams p, unsigned char *output) {
             float dx, dy, dz;
             sphereDir(fth, fph, &dx, &dy, &dz);
             float bgr, bgg, bgb;
-            background(dx, dy, dz, p.bg_mode, p.star_layers, p.show_grid,
+            background(dx, dy, dz, bg_mode, star_layers, show_grid,
                        &bgr, &bgg, &bgb);
             float atten = 1.0f - fminf(sqrtf(cr*cr + cg*cg + cb*cb) * 0.3f, 0.9f);
             cr += bgr * atten; cg += bgg * atten; cb += bgb * atten;
@@ -98,11 +108,11 @@ void trace_yoshida6(const RenderParams p, unsigned char *output) {
         if (r < 0.5 || r != r || th != th) { done = true; break; }
     }
 
-    float ux = 2.0f * (ix + 0.5f) / p.width  - 1.0f;
-    float uy = 2.0f * (iy + 0.5f) / p.height - 1.0f;
+    float ux = 2.0f * (ix + 0.5f) / (float)W  - 1.0f;
+    float uy = 2.0f * (iy + 0.5f) / (float)H - 1.0f;
     postProcess(&cr, &cg, &cb, alpha, beta, (float)p.spin, ux, uy);
 
-    int idx = (iy * p.width + ix) * 3;
+    int idx = (iy * W + ix) * 3;
     output[idx + 0] = (unsigned char)(fminf(fmaxf(cr * 255.0f, 0.0f), 255.0f));
     output[idx + 1] = (unsigned char)(fminf(fmaxf(cg * 255.0f, 0.0f), 255.0f));
     output[idx + 2] = (unsigned char)(fminf(fmaxf(cb * 255.0f, 0.0f), 255.0f));

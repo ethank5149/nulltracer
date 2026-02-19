@@ -37,8 +37,8 @@ void main() {
 
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
-        float he = H_BASE * clamp((r-rp)*0.4, 0.04, 1.0);
-        he = clamp(he, 0.012, 0.6);
+        float he = H_BASE * (R0 / 30.0) * clamp((r-rp)*0.4, 0.04, 1.0);
+        he = clamp(he, 0.012, 1.0);
         float oldTh = th, oldR = r, oldPhi = phi;
 
         float dr1,dth1,dphi1,dpr1,dpth1;
