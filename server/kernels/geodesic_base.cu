@@ -187,7 +187,7 @@ __device__ void initRay(
     double gthi = 1.0 / sig;
     double w_init = 2.0 * r0 - Q2;
 
-    *pth = beta;
+    *pth = -beta;
     double rest = -A_ * iSD + 2.0 * a * b * w_init * iSD
                   + gthi * beta * beta + (sig - w_init) * iSD * is2 * b * b;
     double pr2 = -rest / grr;

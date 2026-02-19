@@ -34,7 +34,7 @@ void main() {
     float rpa2 = r*r+a2, A_ = rpa2*rpa2-sdel*a2*s2;
     float iSD = 1.0/(sig*sdel), is2 = 1.0/s2;
     float grr = sdel/sig, gthi = 1.0/sig;
-    float pth = beta;
+    float pth = -beta;
     float w_init = 2.0*r - u_Q*u_Q;
     float rest = -A_*iSD + 2.0*a*b*w_init*iSD + gthi*pth*pth + (sig-w_init)*iSD*is2*b*b;
     float pr2 = -rest/grr;
