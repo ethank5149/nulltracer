@@ -289,8 +289,12 @@ class CudaRenderer:
         h_output = d_output.get()
 
         # Reshape to (H, W, 3) — kernel writes in row-major order
-        # with y=0 at top (matching image convention, no flip needed)
+        # with iy=0 at bottom (same as OpenGL's glReadPixels convention).
         pixel_array = h_output.reshape(height, width, 3)
+
+        # Flip vertically to get top-to-bottom row order,
+        # matching the OpenGL renderer's np.flipud() at readback.
+        pixel_array = np.flipud(pixel_array)
 
         return pixel_array.tobytes()
 
