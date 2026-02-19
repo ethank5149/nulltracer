@@ -310,6 +310,19 @@ __device__ void sphereDir(double th, double ph,
 
 /* ── Post-processing: tone mapping + gamma ────────────────── */
 
+/* ACES filmic tone mapping curve (Narkowicz 2015 approximation).
+ * Maps HDR luminance [0, ∞) to SDR [0, ~1.0) with a natural
+ * film-like S-curve: deep toe (rich shadows), linear mid-range,
+ * and smooth shoulder (highlight rolloff without flat clipping). */
+__device__ float aces_curve(float x) {
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return fminf(fmaxf((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f), 1.0f);
+}
+
 __device__ void postProcess(float *cr, float *cg, float *cb,
                             float alpha, float beta,
                             float spin, float ux, float uy) {
@@ -328,12 +341,34 @@ __device__ void postProcess(float *cr, float *cg, float *cb,
     *cg *= vig;
     *cb *= vig;
 
-    /* Reinhard tone mapping */
-    *cr = *cr / (1.0f + *cr);
-    *cg = *cg / (1.0f + *cg);
-    *cb = *cb / (1.0f + *cb);
+    /* Luminance-preserving ACES filmic tone mapping.
+     *
+     * We compute the scene luminance, apply the ACES curve to it,
+     * then scale all channels by the same ratio.  This preserves
+     * the hue (R:G:B ratio) while giving a cinematic S-curve
+     * response — deep shadows, smooth highlight rolloff, and
+     * natural color rendering across the full dynamic range.
+     *
+     * This is critical for relativistic beaming: the approaching
+     * (blueshifted) side gets a smooth highlight rolloff instead
+     * of clipping to flat white, while the receding (redshifted)
+     * side retains rich warm tones in the shadows. */
+    float L = 0.2126f * (*cr) + 0.7152f * (*cg) + 0.0722f * (*cb);
+    if (L > 1e-6f) {
+        float L_mapped = aces_curve(L);
+        float scale = L_mapped / L;
+        *cr *= scale;
+        *cg *= scale;
+        *cb *= scale;
+    }
 
-    /* Gamma correction (1/2.2) */
+    /* Clamp (luminance-based scaling can slightly exceed 1.0
+     * for highly saturated colors) */
+    *cr = fminf(*cr, 1.0f);
+    *cg = fminf(*cg, 1.0f);
+    *cb = fminf(*cb, 1.0f);
+
+    /* Gamma correction (sRGB, 1/2.2) */
     float inv_gamma = 1.0f / 2.2f;
     *cr = powf(fmaxf(*cr, 0.0f), inv_gamma);
     *cg = powf(fmaxf(*cg, 0.0f), inv_gamma);
