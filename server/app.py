@@ -256,7 +256,7 @@ void debug_trace(const RenderParams *pp, double *output) {
     int ix = (int)output[200], iy = (int)output[201];
     double asp = p.width / p.height;
     double ux = (2.0*(ix+0.5)/p.width - 1.0);
-    double uy = -(2.0*(iy+0.5)/p.height - 1.0);
+    double uy = (2.0*(iy+0.5)/p.height - 1.0);
     double alpha = ux*p.fov*asp, beta = uy*p.fov;
     double a = p.spin, a2 = a*a, Q2 = p.charge*p.charge;
     double thObs = p.incl, sO = sin(thObs), cO = cos(thObs);
@@ -474,8 +474,10 @@ async def stream(websocket: WebSocket):
                     continue
 
                 # Encode image
+                # Note: renderer.render_frame() already applies np.flipud()
+                # to convert from GPU bottom-to-top to standard top-to-bottom
+                # row order, so no additional flip is needed here.
                 img = Image.frombytes("RGB", (width, height), raw_rgb)
-                img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
                 buf = io.BytesIO()
                 if fmt == "webp":
