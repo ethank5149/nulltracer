@@ -28,7 +28,7 @@
   <WebUI>http://[IP]:[PORT:8420]/health</WebUI>
   <TemplateURL/>
   <Icon>http://nulltracer.indecisivephysicist.space:8090/nulltracer-icon.png</Icon>
-  <ExtraParams>--runtime=nvidia</ExtraParams>
+  <ExtraParams>--runtime=nvidia --gpus all</ExtraParams>
   <PostArgs/>
   <CPUset/>
   <DateInstalled/>
@@ -62,11 +62,11 @@
   <Config
     Name="NVIDIA Driver Capabilities"
     Target="NVIDIA_DRIVER_CAPABILITIES"
-    Default="graphics,utility,compute"
+    Default="all"
     Mode=""
     Description="NVIDIA driver capabilities needed for EGL/OpenGL rendering"
     Type="Variable"
     Display="advanced"
     Required="true"
-    Mask="false">graphics,utility,compute</Config>
+    Mask="false">all</Config>
 </Container>

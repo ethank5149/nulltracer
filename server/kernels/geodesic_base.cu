@@ -146,9 +146,12 @@ __device__ void initRay(
     float *alpha_out, float *beta_out
 ) {
     double asp = p.width / p.height;
-    /* Map pixel to normalized [-1, 1] coordinates */
+    /* Map pixel to normalized [-1, 1] coordinates.
+     * ux: left=-1, right=+1 (same as OpenGL).
+     * uy: top=+1, bottom=-1 (matches OpenGL's v_uv.y after flipud readback).
+     * Without the negation, iy=0 would map to uy=-1, flipping the image. */
     double ux = (2.0 * (ix + 0.5) / p.width  - 1.0);
-    double uy = (2.0 * (iy + 0.5) / p.height - 1.0);
+    double uy = -(2.0 * (iy + 0.5) / p.height - 1.0);
 
     double alpha = ux * p.fov * asp;
     double beta  = uy * p.fov;
