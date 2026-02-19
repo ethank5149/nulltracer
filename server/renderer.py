@@ -60,6 +60,7 @@ class RenderParams(ctypes.Structure):
         ("show_disk",   ctypes.c_double),
         ("show_grid",   ctypes.c_double),
         ("disk_temp",   ctypes.c_double),
+        ("doppler_boost", ctypes.c_double),
     ]
 
 
@@ -259,6 +260,7 @@ class CudaRenderer:
             show_disk=1 if params.get("show_disk", True) else 0,
             show_grid=1 if params.get("show_grid", True) else 0,
             disk_temp=float(params.get("disk_temp", 1.0)),
+            doppler_boost=float(params.get("doppler_boost", 2.0)),
         )
 
         # Copy params struct to GPU as a byte array

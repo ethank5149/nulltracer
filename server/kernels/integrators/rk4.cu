@@ -75,12 +75,16 @@ void trace_rk4(const RenderParams *pp, unsigned char *output) {
             if (cross < 0.0) {
                 double f = fmin(fmax(fabs(oldTh - PI * 0.5) /
                            fmax(fabs(th - oldTh), 1e-14), 0.0), 1.0);
-                float dr_f = (float)(oldR + f * (r - oldR));
+                double r_hit = oldR + f * (r - oldR);
+                float dr_f = (float)r_hit;
                 float dphi_f = (float)(oldPhi + f * (phi - oldPhi));
+
+                float g = compute_g_factor(r_hit, a, Q2, b);
+
                 float dcr, dcg, dcb;
                 diskColor(dr_f, dphi_f, (float)a,
                          (float)p.isco, (float)p.disk_outer, (float)p.disk_temp,
-                         (float)b, (float)p.charge,
+                         g, (int)p.doppler_boost,
                          &dcr, &dcg, &dcb);
                 float atten = 1.0f - fminf(sqrtf(cr*cr + cg*cg + cb*cb) * 0.4f, 0.9f);
                 cr += dcr * atten; cg += dcg * atten; cb += dcb * atten;

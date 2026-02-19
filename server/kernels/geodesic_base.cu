@@ -57,6 +57,7 @@ struct RenderParams {
     double show_disk;   /* 1=show accretion disk */
     double show_grid;   /* 1=show grid overlay */
     double disk_temp;   /* disk temperature multiplier */
+    double doppler_boost; /* 0=off, 1=g^3 (thin), 2=g^4 (thick) */
 };
 
 

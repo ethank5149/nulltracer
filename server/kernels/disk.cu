@@ -56,11 +56,59 @@ __device__ void blackbody(float T, float *out_r, float *out_g, float *out_b) {
 }
 
 
-/* ── Accretion disk color with full GR redshift ───────────── */
+/* ── Gravitational redshift / g-factor (float64) ──────────── */
+
+/* Compute the gravitational redshift factor g = ν_obs / ν_emit
+ * for a photon emitted from a circular Keplerian orbit in the
+ * equatorial plane of a Kerr-Newman black hole.
+ *
+ * All intermediate computation in float64 for numerical stability
+ * near the ISCO and horizon.  Returns float for use in color pipeline.
+ *
+ * Parameters:
+ *   r   — radial coordinate of emission point (double)
+ *   a   — dimensionless spin parameter (double)
+ *   Q2  — charge squared, Q^2 (double)
+ *   b   — photon impact parameter = -α sin(θ_obs) (double)
+ */
+__device__ float compute_g_factor(double r, double a, double Q2, double b) {
+    /* All computation in float64 */
+    double r2 = r * r;
+    double a2 = a * a;
+    double w = 2.0 * r - Q2;  /* w = 2Mr - Q^2, with M=1 */
+
+    /* Covariant metric at equator (theta = pi/2, so Sigma = r^2) */
+    double gtt = -(1.0 - w / r2);
+    double gtph = -a * w / r2;
+    double gphph = (r2 * r2 + a2 * r2 + a2 * w) / r2;
+
+    /* Keplerian angular velocity from circular orbit condition
+     * d/dr(g_tt) + 2*Omega*d/dr(g_tphi) + Omega^2*d/dr(g_phiphi) = 0 */
+    double dgtt_dr = 2.0 * (Q2 - r) / (r2 * r);
+    double dgtph_dr = 2.0 * a * (r - Q2) / (r2 * r);
+    double dgphph_dr = 2.0 * r + a2 * (-2.0 / r2 + 2.0 * Q2 / (r2 * r));
+
+    double disc = dgtph_dr * dgtph_dr - dgtt_dr * dgphph_dr;
+    double Omega = (-dgtph_dr + sqrt(fmax(disc, 0.0))) / fmax(dgphph_dr, 1e-30);
+
+    /* Four-velocity normalization: u^t = 1/sqrt(-(g_tt + 2*Omega*g_tphi + Omega^2*g_phiphi)) */
+    double denom = -(gtt + 2.0 * Omega * gtph + Omega * Omega * gphph);
+    double ut = 1.0 / sqrt(fmax(denom, 1e-30));
+
+    /* g = 1 / (u^t * (1 - b * Omega)) */
+    double one_minus_bOmega = 1.0 - b * Omega;
+    double g = 1.0 / (ut * fmax(fabs(one_minus_bOmega), 1e-30));
+    g = fmin(fmax(g, 0.01), 10.0);  // Clamp to physical range [0.01, 10.0]
+
+    return (float)g;
+}
+
+
+/* ── Accretion disk color with configurable Doppler boost ──── */
 
 __device__ void diskColor(float r, float ph, float a,
                           float isco, float disk_outer, float disk_temp,
-                          float b_impact, float charge,
+                          float g_factor, int doppler_boost,
                           float *cr, float *cg, float *cb) {
     float ri = isco;
 
@@ -82,46 +130,24 @@ __device__ void diskColor(float r, float ph, float a,
     I *= smoothstepf(ri * 0.85f, ri * 1.3f, r);
     I *= smoothstepf(disk_outer, disk_outer * 0.55f, r);
 
-    /* --- Full GR redshift factor for Kerr-Newman --- */
-    /* Metric components at equator (theta = pi/2, so Sigma = r^2) */
-    float r2 = r * r;
-    float a2 = a * a;
-    float Q2 = charge * charge;
-    float Delta = r2 - 2.0f * r + a2 + Q2;
-    float w = 2.0f * r - Q2;  /* = 2Mr - Q^2 with M=1 */
-
-    /* Covariant metric at equator (Sigma = r^2):
-     * g_tt = -(1 - w/r^2)
-     * g_tphi = -a * w / r^2
-     * g_phiphi = (r^4 + a^2*r^2 + a^2*w) / r^2 */
-    float gtt = -(1.0f - w / r2);
-    float gtph = -a * w / r2;
-    float gphph = (r2 * r2 + a2 * r2 + a2 * w) / r2;
-
-    /* Angular velocity of prograde circular orbit */
-    float dgtt_dr = 2.0f * (Q2 - r) / (r2 * r);
-    float dgtph_dr = 2.0f * a * (r - Q2) / (r2 * r);
-    float dgphph_dr = 2.0f * r + a2 * (-2.0f / r2 + 2.0f * Q2 / (r2 * r));
-
-    /* Solve quadratic: dgphph*Omega^2 + 2*dgtph*Omega + dgtt = 0 */
-    float disc = dgtph_dr * dgtph_dr - dgtt_dr * dgphph_dr;
-    float Omega = (-dgtph_dr + sqrtf(fmaxf(disc, 0.0f))) / fmaxf(dgphph_dr, 1e-10f);
-
-    /* Four-velocity normalization:
-     * u^t = 1/sqrt(-(g_tt + 2*Omega*g_tphi + Omega^2*g_phiphi)) */
-    float denom = -(gtt + 2.0f * Omega * gtph + Omega * Omega * gphph);
-    float ut = 1.0f / sqrtf(fmaxf(denom, 1e-10f));
-
-    /* Redshift factor: g = 1 / (u^t * (1 - b * Omega))
-     * where b is the photon impact parameter = -alpha * sin(theta_obs) */
-    float g = 1.0f / (ut * fmaxf(fabsf(1.0f - b_impact * Omega), 1e-6f));
-    /* g should always be positive for physical photons */
-    g = fabsf(g);
-
-    /* Apply relativistic beaming: T_obs = g * T_emit, I_obs = g^4 * I_emit */
-    float T_obs = g * T_emit;
-    float g4 = g * g * g * g;
-    I *= g4;
+    /* --- Apply redshift based on doppler_boost mode --- */
+    float g = g_factor;
+    float T_obs, I_adjusted;
+    if (doppler_boost == 0) {
+        /* No beaming — use emitted values directly */
+        T_obs = T_emit;
+        I_adjusted = I;
+    } else if (doppler_boost == 1) {
+        /* Optically thin: g^3 */
+        T_obs = g * T_emit;
+        float g3 = g * g * g;
+        I_adjusted = I * g3;
+    } else {
+        /* Optically thick (default): g^4 */
+        T_obs = g * T_emit;
+        float g4 = g * g * g * g;
+        I_adjusted = I * g4;
+    }
 
     /* --- Blackbody color from observed temperature --- */
     float col_r, col_g, col_b;
@@ -131,9 +157,9 @@ __device__ void diskColor(float r, float ph, float a,
     float tu  = 0.65f + 0.35f * hash2(r * 5.0f, ph * 3.0f);
     float tu2 = 0.8f  + 0.2f  * hash2(r * 18.0f, ph * 9.0f);
 
-    *cr = col_r * I * tu * tu2 * 3.2f;
-    *cg = col_g * I * tu * tu2 * 3.2f;
-    *cb = col_b * I * tu * tu2 * 3.2f;
+    *cr = col_r * I_adjusted * tu * tu2 * 3.2f;
+    *cg = col_g * I_adjusted * tu * tu2 * 3.2f;
+    *cb = col_b * I_adjusted * tu * tu2 * 3.2f;
 }
 
 

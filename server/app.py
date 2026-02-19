@@ -46,6 +46,7 @@ class RenderRequest(BaseModel):
     disk_temp: float = Field(1.0, ge=0.2, le=2.5)
     star_layers: int = Field(3, ge=1, le=4)
     phi0: float = Field(0.0)
+    doppler_boost: int = Field(default=2, ge=0, le=2, description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick")
     format: str = Field("jpeg", pattern=r"^(jpeg|webp)$")
     quality: int = Field(85, ge=10, le=100)
 
@@ -201,6 +202,7 @@ struct RenderParams {
     double width, height, spin, charge, incl, fov, phi0, isco;
     double steps, obs_dist, esc_radius, disk_outer, step_size;
     double bg_mode, star_layers, show_disk, show_grid, disk_temp;
+    double doppler_boost;
 };
 #define PI  3.14159265358979323846
 #define S2_EPS 0.0004
@@ -330,6 +332,7 @@ void debug_trace(const RenderParams *pp, double *output) {
         disk_outer=14.0, step_size=float(step_size),
         bg_mode=int(bg_mode), star_layers=int(star_layers),
         show_disk=1, show_grid=1, disk_temp=float(disk_temp),
+        doppler_boost=2.0,
     )
 
     params_bytes = bytes(rp_struct)
