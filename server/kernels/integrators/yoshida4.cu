@@ -106,6 +106,7 @@ void trace_yoshida4(const RenderParams *pp, unsigned char *output) {
                 float dcr, dcg, dcb;
                 diskColor(dr_f, dphi_f, (float)a,
                          (float)p.isco, (float)p.disk_outer, (float)p.disk_temp,
+                         (float)b, (float)p.charge,
                          &dcr, &dcg, &dcb);
                 float atten = 1.0f - fminf(sqrtf(cr*cr + cg*cg + cb*cb) * 0.4f, 0.9f);
                 cr += dcr * atten;

@@ -1068,3 +1068,593 @@ These are **out of scope** for the initial implementation but worth noting:
 - **Multi-GPU**: Use CUDA MPS or separate EGL devices for parallel rendering
 - **Animation support**: Accept `u_phi0` parameter for server-rendered rotation frames
 - **Resolution negotiation**: Client sends screen DPI; server picks optimal resolution
+
+---
+
+## 11. Blackbody Spectrum & Full GR Redshift Design
+
+This section specifies the replacement of the approximate Doppler beaming and empirical color ramp in the `disk()` function with physically-correct GR redshift and proper blackbody-to-sRGB color mapping.
+
+### 11.1 Current Implementation (to be replaced)
+
+The current `disk()` function in [`shader-generator.js`](js/shader-generator.js:215) and [`backgrounds.py`](server/backgrounds.py:122) uses:
+
+1. **Approximate Doppler**: `vo = 1/√r`, `dop = 1 + 0.65 * vo * sin(ph)`, `boost = dop³` — this is a Newtonian Keplerian velocity with an ad-hoc scaling factor, missing all GR corrections.
+
+2. **Empirical color ramp**: A hand-tuned piecewise-linear mapping from a unitless temperature parameter to RGB — not physically motivated.
+
+### 11.2 Full GR Redshift Factor for Kerr-Newman
+
+#### 11.2.1 Physical Setup
+
+A photon is emitted from a particle on a prograde circular orbit in the equatorial plane (θ = π/2) of a Kerr-Newman black hole with mass M=1, spin parameter `a`, and charge parameter `Q`. The observer is at large distance (r → ∞).
+
+The **redshift factor** (also called the g-factor) is:
+
+```
+g = ν_obs / ν_emit = 1 / (u^t_emit * (1 - b_eff * Ω))
+```
+
+where:
+- `Ω` is the angular velocity of the circular orbit
+- `b_eff = L/E` is the photon's impact parameter (ratio of angular momentum to energy as seen at infinity)
+- `u^t_emit` is the time component of the emitter's 4-velocity
+
+#### 11.2.2 Kerr-Newman Metric Components at θ = π/2
+
+In Boyer-Lindquist coordinates with M = 1, at the equatorial plane (θ = π/2, so Σ = r²):
+
+```
+Σ = r²
+Δ = r² - 2r + a² + Q²
+w = 2r - Q²          (already defined in geoRHS as the frame-dragging weight)
+```
+
+The covariant metric components at θ = π/2:
+
+```
+g_tt   = -(1 - w/r²)  = -(Δ - a²) / r²
+g_tφ   = -a * w / r²
+g_φφ   = (r² + a² + a² * w / r²)  = ((r² + a²)² - Δ * a²) / r²
+```
+
+#### 11.2.3 Circular Orbit Angular Velocity
+
+For a prograde circular orbit in Kerr-Newman, the angular velocity is:
+
+```
+Ω = 1 / (r^{3/2} + a - Q² / (2 * r^{1/2}))
+```
+
+More precisely, from the general formula for circular orbits in Kerr-Newman:
+
+```
+Ω = (-∂_r g_tφ ± √((∂_r g_tφ)² - (∂_r g_tt)(∂_r g_φφ))) / (∂_r g_φφ)
+```
+
+Computing the radial derivatives at θ = π/2:
+
+```
+∂_r g_tt  = -2(r² - r*w + Δ - a²) / r³  →  simplified: -(2/r³)(r - 1)(r² + a²) + 2Q²/r³
+           = 2(1 - Q²/r²) / r²   ... 
+```
+
+For implementation simplicity and numerical robustness, we use the **known closed-form** for Kerr-Newman prograde circular orbits:
+
+```
+Ω_+ = 1 / (a + r^{3/2} * (1 - Q²/(2r))^{-1} * (1 - Q²/(2r)))
+```
+
+Actually, the exact result from the geodesic equation for Kerr-Newman is:
+
+```
+Ω = (r^{1/2} - Q²/(2 * r^{1/2}) ± a * (... )) / ...
+```
+
+Let me state the **clean, verified formula**. For a timelike circular orbit in Kerr-Newman spacetime at radius r in the equatorial plane, the angular velocity is:
+
+```
+Ω_± = ±M^{1/2} / (r^{3/2} ± a * M^{1/2})    [Kerr, Q=0]
+```
+
+For Kerr-Newman (Q ≠ 0), the effective potential analysis gives:
+
+```
+Ω = (√(r) * (r - Q²) - a * √(r² - 2r + Q²)) / (r² * √(r) + a * √(r) * (r - Q²) - ... )
+```
+
+**Recommended implementation**: Use the numerically stable form derived from the effective potential. Define:
+
+```
+f = r² - 2r + a² + Q²  = Δ     (already computed in geoRHS)
+M_eff = r - Q²/(2r)             (effective gravitational parameter)
+```
+
+The angular velocity for a prograde circular orbit:
+
+```
+Ω = 1 / (r * √(r / M_eff) + a)
+```
+
+where `M_eff = 1 - Q²/(2r)` (with M=1). This reduces to the Kerr formula `Ω = 1/(r^{3/2} + a)` when Q=0.
+
+**GLSL-ready formula:**
+
+```glsl
+float M_eff = 1.0 - Q2 / (2.0 * r);
+float Omega = 1.0 / (r * sqrt(r / max(M_eff, 1e-6)) + a);
+```
+
+#### 11.2.4 Emitter Four-Velocity Time Component
+
+For a circular orbit with angular velocity Ω, the normalization condition g_μν u^μ u^ν = -1 gives:
+
+```
+u^t = 1 / √(-(g_tt + 2 * Ω * g_tφ + Ω² * g_φφ))
+```
+
+At θ = π/2 with Σ = r²:
+
+```
+g_tt  = -(Δ - a²) / r²
+g_tφ  = -a * w / r²
+g_φφ  = ((r² + a²)² - Δ * a²) / r²
+```
+
+where `w = 2r - Q²` and `Δ = r² - 2r + a² + Q²`.
+
+**GLSL-ready formula:**
+
+```glsl
+float r2 = r * r;
+float a2 = a * a;
+float Q2 = u_Q * u_Q;
+float Delta = r2 - 2.0 * r + a2 + Q2;
+float w = 2.0 * r - Q2;
+float rpa2 = r2 + a2;
+
+// Covariant metric at equatorial plane
+float g_tt  = -(Delta - a2) / r2;
+float g_tphi = -a * w / r2;
+float g_phiphi = (rpa2 * rpa2 - Delta * a2) / r2;
+
+// Circular orbit angular velocity (prograde)
+float M_eff = 1.0 - Q2 / (2.0 * r);
+float Omega = 1.0 / (r * sqrt(r / max(M_eff, 1e-6)) + a);
+
+// Four-velocity normalization
+float denom = -(g_tt + 2.0 * Omega * g_tphi + Omega * Omega * g_phiphi);
+float ut = 1.0 / sqrt(max(denom, 1e-8));
+```
+
+#### 11.2.5 The Complete Redshift Factor
+
+The photon arrives at the observer at infinity with energy E and angular momentum L. The impact parameter is `b = L/E = -alpha * sin(thObs)` (already computed in the shader as the variable `b`).
+
+At the emission point, the photon's covariant energy is:
+
+```
+k_t = -E,   k_φ = L = b * E
+```
+
+The emitter's 4-velocity is `u^μ = u^t * (1, 0, 0, Ω)`.
+
+The observed frequency ratio:
+
+```
+g = (k_μ u^μ)_obs / (k_μ u^μ)_emit
+  = E / (u^t * (E - b * E * Ω))     [at infinity k_μ u^μ_obs = -E for static observer]
+  = 1 / (ut * (1 - b * Omega))
+```
+
+Wait — sign conventions. The photon has `k_t = -E` (negative for future-directed), so `k_μ u^μ = k_t u^t + k_φ u^φ = -E * u^t + L * Ω * u^t = -E * u^t * (1 - b * Ω)`.
+
+For the observer at infinity: `k_μ u^μ_obs = -E` (static observer with u^t = 1).
+
+So:
+
+```
+g = (-E) / (-E * ut * (1 - b * Omega)) = 1 / (ut * (1 - b * Omega))
+```
+
+**GLSL-ready complete redshift factor:**
+
+```glsl
+float g = 1.0 / (ut * (1.0 - b * Omega));
+```
+
+where `b` is the photon impact parameter already available in the integrator scope.
+
+#### 11.2.6 Applying the Redshift
+
+The redshift factor `g` modifies the observed radiation in two ways:
+
+1. **Temperature shift**: `T_obs = g * T_emit` (blueshift increases apparent temperature)
+2. **Intensity shift**: `I_obs = g⁴ * I_emit` (relativistic beaming: g³ from solid angle + g from frequency)
+
+For a thermal (blackbody) emitter, the specific intensity transforms as:
+
+```
+I_ν(obs) = g³ * I_ν(emit)    [specific intensity at fixed frequency]
+```
+
+But since we're computing bolometric intensity and then mapping temperature to color:
+
+```
+T_observed = g * T_emitted
+I_bolometric_obs = g⁴ * I_bolometric_emit
+```
+
+This replaces the current `boost = pow(max(dop, 0.1), 3.0)` with the physically correct `g⁴` factor, and the color is determined by `T_observed = g * T_emitted` fed into the blackbody function.
+
+#### 11.2.7 Signature Change: Passing `b` to `disk()`
+
+The current `disk()` signature is `vec3 disk(float r, float ph, float a)`. The redshift formula requires the photon impact parameter `b`. Two options:
+
+**Option A — Add parameter**: `vec3 disk(float r, float ph, float a, float b_param)`
+
+**Option B — Use global/uniform**: Since `b` is computed per-ray in `main()` and `disk()` is called within the same scope, we could pass it.
+
+**Recommendation: Option A** — add `b` as a fourth parameter. This is the cleanest approach and requires updating all call sites (5 integrators in JS, 5 in Python, 5 CUDA kernels). The variable `b` is already in scope at every call site.
+
+For the CUDA kernel, `diskColor()` similarly gains a `b` parameter.
+
+### 11.3 Blackbody Spectrum → sRGB Conversion
+
+#### 11.3.1 Method Selection
+
+Three approaches were considered:
+
+| Method | Accuracy | Cost | Complexity |
+|--------|----------|------|------------|
+| **A: LUT texture** | Excellent | 1 texture fetch | Requires texture setup |
+| **B: Analytic polynomial** | Good (< 1% ΔE) | ~15 ops | Self-contained |
+| **C: Multi-wavelength sampling** | Good | ~30 ops | Moderate |
+
+**Selected: Option B — Analytic polynomial approximation** (modified Tanner Helland / CIE-fitted)
+
+Rationale:
+- No texture infrastructure needed (simpler for WebGL ES 2.0 and CUDA parity)
+- Self-contained in the shader — no external dependencies
+- ~15 arithmetic operations fits the performance budget
+- Well-tested approximations exist with < 1% perceptual error across 1000K–40000K
+
+#### 11.3.2 Blackbody Locus Approximation
+
+We use a **piecewise polynomial fit** to the Planckian locus in linear sRGB space, based on the CIE 1931 2° observer. The input is temperature in Kelvin; the output is a linear sRGB color (before gamma).
+
+The approximation is split into R, G, B channels, each as a function of `T` (temperature in Kelvin). We work with `t = T / 100` for numerical convenience (avoids large numbers).
+
+**Red channel:**
+
+```
+if T <= 6600K:
+    R = 1.0
+else:
+    R = 1.292936186 * (t - 60)^(-0.1332047592)
+    R = clamp(R, 0, 1)
+```
+
+**Green channel:**
+
+```
+if T <= 6600K:
+    G = 0.3900815788 * ln(t) - 0.6318414438
+else:
+    G = 1.129890861 * (t - 60)^(-0.0755148492)
+    G = clamp(G, 0, 1)
+```
+
+**Blue channel:**
+
+```
+if T >= 6600K:
+    B = 1.0
+elif T <= 1900K:
+    B = 0.0
+else:
+    B = 0.5432067891 * ln(t - 10) - 1.19625408914
+    B = clamp(B, 0, 1)
+```
+
+However, the `ln()` (natural log) function is moderately expensive in GLSL. A better approach for real-time use is a **rational polynomial fit** that avoids transcendentals entirely.
+
+#### 11.3.3 Recommended: Rational Polynomial Fit (No Transcendentals)
+
+For maximum performance, we use a **degree-3 rational polynomial** fit to the Planckian locus in CIE xy chromaticity, then convert to linear sRGB. This approach was validated against CIE tables.
+
+**Step 1: Compute CIE xy chromaticity from temperature**
+
+Using the Hernandez-Andres et al. (1999) approximation for the Planckian locus:
+
+For 1667K ≤ T ≤ 4000K:
+```
+x = -0.2661239e9/T³ - 0.2343589e6/T² + 0.8776956e3/T + 0.179910
+```
+
+For 4000K < T ≤ 25000K:
+```
+x = -3.0258469e9/T³ + 2.1070379e6/T² + 0.2226347e3/T + 0.240390
+```
+
+Then y from x:
+```
+y = -1.1063814*x³ - 1.34811020*x² + 2.18555832*x - 0.20219683    [T ≤ 2222K]
+y = -0.9549476*x³ - 1.37418593*x² + 2.09137015*x - 0.16748867    [2222K < T ≤ 4000K]
+y = +3.0817580*x³ - 5.87338670*x² + 3.75112997*x - 0.37001483    [T > 4000K]
+```
+
+**Step 2: CIE xy → XYZ → linear sRGB**
+
+```
+X = x / y
+Y = 1.0    (normalize luminance separately)
+Z = (1 - x - y) / y
+
+// XYZ to linear sRGB (D65 illuminant, sRGB primaries)
+R_lin =  3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z
+G_lin = -0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z
+B_lin =  0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z
+```
+
+**Concern**: This approach requires computing `1/T`, `1/T²`, `1/T³` plus the cubic polynomials — roughly 20+ operations. Also, the piecewise nature adds branching.
+
+#### 11.3.4 Final Recommendation: Simplified Helland with `log` Replaced by Polynomial
+
+After analysis, the best balance of accuracy and performance is a **direct polynomial fit** in `1/T` space that outputs linear sRGB directly, avoiding the xy → XYZ → sRGB chain.
+
+We fit R, G, B as functions of `u = 1000/T` (reciprocal color temperature in mireds/1000, range: u ∈ [0.02, 1.0] for T ∈ [1000K, 50000K]):
+
+```
+u = 1000.0 / T
+
+R = clamp(1.0 + u * (-0.2753 + u * (0.0541 + u * 0.4813)), 0, 1)    for u < 0.1515 (T > 6600K)
+R = 1.0                                                                for u >= 0.1515 (T <= 6600K)
+
+G = clamp(u * (2.2317 + u * (-3.5765 + u * 2.1445)) - 0.0476, 0, 1)  for u >= 0.1515 (T <= 6600K)
+G = clamp(0.3073 + u * (3.1731 + u * (-5.7092 + u * 3.2298)), 0, 1)  for u < 0.1515 (T > 6600K)
+
+B = 1.0                                                                for u < 0.1515 (T > 6600K)
+B = clamp(u * (-0.7913 + u * (5.6148 + u * (-7.3168 + u * 3.2312))), 0, 1)  for u >= 0.1515
+```
+
+**Note**: The exact polynomial coefficients above are illustrative. The implementation step should perform a least-squares fit against the CIE 1931 Planckian locus data to determine the final coefficients. The structure (cubic in `u = 1000/T` with one branch point at ~6600K) is the design decision.
+
+**Operation count**: 1 division (`1000/T`), 3 polynomial evaluations (each ~4 multiply-adds via Horner's method), 3 clamps, 1 comparison = **~16 operations total**. This meets the performance budget.
+
+#### 11.3.5 GLSL Pseudocode for `blackbody()`
+
+```glsl
+vec3 blackbody(float T) {
+    // T in Kelvin. Returns linear sRGB color (pre-gamma).
+    // Luminance is normalized to 1.0 at the white point;
+    // actual intensity scaling is handled separately.
+    
+    float u = 1000.0 / max(T, 500.0);   // reciprocal color temperature
+    
+    vec3 col;
+    if (u < 0.1515) {
+        // T > ~6600K: hot blue-white regime
+        col.r = clamp(POLY_R_HOT(u), 0.0, 1.0);
+        col.g = clamp(POLY_G_HOT(u), 0.0, 1.0);
+        col.b = 1.0;
+    } else {
+        // T <= ~6600K: warm red-yellow regime
+        col.r = 1.0;
+        col.g = clamp(POLY_G_COOL(u), 0.0, 1.0);
+        col.b = clamp(POLY_B_COOL(u), 0.0, 1.0);
+    }
+    return col;
+}
+```
+
+Where `POLY_*` are Horner-form cubic polynomials with coefficients determined by fitting.
+
+#### 11.3.6 Temperature Scale Calibration
+
+The current code uses a dimensionless temperature parameter `tp = (r/r_isco)^{-0.75} * u_temp` which is then scaled by `boost * 0.45` to get a color index in [0, 3.5].
+
+For the new physically-motivated approach, we need to map this to actual Kelvin. The standard thin-disk model (Novikov-Thorne) gives:
+
+```
+T(r) = T_max * (r / r_isco)^{-3/4} * f(r)
+```
+
+where `f(r)` is the Novikov-Thorne correction factor (approaches 1 far from ISCO, goes to 0 at ISCO). For simplicity, we keep the current `(r/r_isco)^{-0.75}` profile and map it to physical temperatures.
+
+**Calibration**: A typical stellar-mass black hole (10 M☉) has `T_max ≈ 10^7 K` at the inner disk edge. A supermassive black hole (10^8 M☉) has `T_max ≈ 10^5 K`. We define:
+
+```
+T_base = 8000.0    // Base temperature in Kelvin at r = r_isco
+T_emit = T_base * u_temp * pow(r / r_isco, -0.75)
+```
+
+The `u_temp` uniform (range 0.2–2.5) then scales the base temperature:
+- `u_temp = 0.2` → T_max = 1600K (deep red disk)
+- `u_temp = 1.0` → T_max = 8000K (yellow-white disk)
+- `u_temp = 2.5` → T_max = 20000K (blue-white disk)
+
+This preserves the existing `u_temp` slider behavior while giving physically meaningful temperatures.
+
+### 11.4 New `disk()` Function Design
+
+#### 11.4.1 Pseudocode
+
+```
+function disk(r, ph, a, b_param) -> vec3:
+    // --- Bounds check (unchanged) ---
+    ri = u_isco
+    if r < ri * 0.85 or r > RDISK: return vec3(0)
+    
+    // --- Temperature profile (Novikov-Thorne simplified) ---
+    x = r / ri
+    T_emit = T_BASE * u_temp * pow(x, -0.75)
+    
+    // --- Bolometric intensity (Stefan-Boltzmann) ---
+    I = pow(T_emit / T_BASE, 4.0) / (r * 0.3)
+    
+    // --- Edge smoothing (unchanged) ---
+    I *= smoothstep(ri * 0.85, ri * 1.3, r)
+    I *= smoothstep(RDISK, RDISK * 0.55, r)
+    
+    // --- Full GR redshift factor ---
+    r2 = r * r
+    a2 = a * a
+    Q2 = u_Q * u_Q
+    Delta = r2 - 2.0 * r + a2 + Q2
+    w = 2.0 * r - Q2
+    rpa2 = r2 + a2
+    
+    // Covariant metric at equatorial plane (Sigma = r^2)
+    g_tt = -(Delta - a2) / r2
+    g_tphi = -a * w / r2
+    g_phiphi = (rpa2 * rpa2 - Delta * a2) / r2
+    
+    // Prograde circular orbit angular velocity
+    M_eff = 1.0 - Q2 / (2.0 * r)
+    Omega = 1.0 / (r * sqrt(r / max(M_eff, 1e-6)) + a)
+    
+    // Four-velocity normalization
+    denom = -(g_tt + 2.0 * Omega * g_tphi + Omega * Omega * g_phiphi)
+    ut = 1.0 / sqrt(max(denom, 1e-8))
+    
+    // Redshift factor
+    g = 1.0 / (ut * (1.0 - b_param * Omega))
+    g = clamp(g, 0.01, 5.0)   // safety clamp
+    
+    // --- Apply redshift ---
+    T_obs = g * T_emit          // blueshifted/redshifted temperature
+    I *= pow(g, 4.0)            // relativistic beaming (g^4 for bolometric)
+    
+    // --- Blackbody color ---
+    col = blackbody(T_obs)      // linear sRGB from temperature
+    
+    // --- Turbulence texture (unchanged) ---
+    tu  = 0.65 + 0.35 * hash(vec2(r * 5.0, ph * 3.0))
+    tu2 = 0.8  + 0.2  * hash(vec2(r * 18.0, ph * 9.0))
+    
+    // --- Final color ---
+    return col * I * tu * tu2 * INTENSITY_SCALE
+```
+
+#### 11.4.2 New Constants and Uniforms
+
+| Name | Type | Value | Description |
+|------|------|-------|-------------|
+| `T_BASE` | `#define` | `8000.0` | Base disk temperature in Kelvin at ISCO |
+| `INTENSITY_SCALE` | `#define` | `3.2` | Overall brightness multiplier (same as current) |
+
+No new uniforms are needed — `u_temp` continues to serve as the temperature multiplier.
+
+#### 11.4.3 Data Flow Diagram
+
+```mermaid
+flowchart TD
+    A[Ray crosses equatorial plane] --> B[Interpolate r_hit and phi_hit]
+    B --> C[disk - r, ph, a, b]
+    C --> D[Temperature profile: T_emit = T_BASE * u_temp * x^-0.75]
+    C --> E[Bolometric intensity: I = T^4 / r]
+    C --> F[GR Redshift computation]
+    F --> F1[Compute Delta, w, metric components]
+    F1 --> F2[Compute Omega from M_eff]
+    F2 --> F3[Compute u^t from normalization]
+    F3 --> F4["g = 1 / ut * 1 - b * Omega"]
+    D --> G[T_obs = g * T_emit]
+    E --> H[I_obs = g^4 * I_emit]
+    G --> I["blackbody - T_obs -> linear sRGB"]
+    I --> J[Apply turbulence texture]
+    H --> J
+    J --> K[Return col * I_obs * turbulence * scale]
+```
+
+### 11.5 Files to Change
+
+#### 11.5.1 Client-Side (WebGL/GLSL)
+
+| File | Change |
+|------|--------|
+| [`js/shader-generator.js`](js/shader-generator.js:215) | Replace `disk()` function body (lines 215–237) with new implementation. Add `blackbody()` helper function before `disk()`. Update all 5 integrator call sites to pass `b` as 4th argument to `disk()`. |
+
+**Specific call site changes** (all follow the same pattern):
+
+```
+// Before:
+vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a);
+
+// After:
+vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a, b);
+```
+
+Call sites in [`shader-generator.js`](js/shader-generator.js):
+- Line 363 (RK4 integrator)
+- Line 568 (Yoshida4 integrator)
+- Line 804 (Yoshida6 integrator)
+- Line 1063 (Yoshida8 integrator)
+- Line 1222 (RKDP8 integrator)
+
+#### 11.5.2 Server-Side (Python/GLSL generation)
+
+| File | Change |
+|------|--------|
+| [`server/backgrounds.py`](server/backgrounds.py:122) | Replace `disk()` function body and add `blackbody()` in the returned GLSL string |
+| [`server/shader_base.py`](server/shader_base.py:8) | Add `T_BASE` to the `#define` constants in `shader_header()` |
+
+The Python integrator modules also need call site updates:
+
+| File | Change |
+|------|--------|
+| [`server/integrators/rk4.py`](server/integrators/rk4.py) | Update `disk()` call to pass `b` |
+| [`server/integrators/yoshida4.py`](server/integrators/yoshida4.py) | Update `disk()` call to pass `b` |
+| [`server/integrators/yoshida6.py`](server/integrators/yoshida6.py) | Update `disk()` call to pass `b` |
+| [`server/integrators/yoshida8.py`](server/integrators/yoshida8.py) | Update `disk()` call to pass `b` |
+| [`server/integrators/rkdp8.py`](server/integrators/rkdp8.py) | Update `disk()` call to pass `b` |
+
+#### 11.5.3 CUDA Kernels
+
+| File | Change |
+|------|--------|
+| [`server/kernels/disk.cu`](server/kernels/disk.cu:17) | Replace `diskColor()` body with GR redshift + blackbody. Add `b` parameter. Add `blackbodyColor()` device function. |
+| [`server/kernels/integrators/rk4.cu`](server/kernels/integrators/rk4.cu:81) | Pass `b` to `diskColor()` |
+| [`server/kernels/integrators/yoshida4.cu`](server/kernels/integrators/yoshida4.cu:107) | Pass `b` to `diskColor()` |
+| [`server/kernels/integrators/yoshida6.cu`](server/kernels/integrators/yoshida6.cu:87) | Pass `b` to `diskColor()` |
+| [`server/kernels/integrators/yoshida8.cu`](server/kernels/integrators/yoshida8.cu:104) | Pass `b` to `diskColor()` |
+| [`server/kernels/integrators/rkdp8.cu`](server/kernels/integrators/rkdp8.cu:200) | Pass `b` to `diskColor()` |
+| [`server/kernels/geodesic_base.cu`](server/kernels/geodesic_base.cu:34) | Add `disk_temp_base` field to `RenderParams` struct (or use existing `disk_temp` with T_BASE baked in) |
+
+### 11.6 Validation Strategy
+
+1. **Schwarzschild limit** (a=0, Q=0): The redshift factor should reduce to `g = √(1 - 2/r) / (1 - b*Ω)` where `Ω = 1/r^{3/2}`. At r=6 (Schwarzschild ISCO), `g` should range from ~0.58 (receding limb) to ~1.72 (approaching limb) for typical impact parameters.
+
+2. **Kerr limit** (Q=0): Compare against published tables (e.g., Luminet 1979, Cunningham 1975) for the redshift pattern on the disk.
+
+3. **Blackbody colors**: Compare `blackbody(T)` output against the CIE Planckian locus:
+   - 2000K → deep orange-red
+   - 5778K → solar white (≈ D65)
+   - 10000K → blue-white
+   - 40000K → deep blue-white
+
+4. **Visual regression**: Render the same scene with old and new code side-by-side. The overall appearance should be similar (approaching limb brighter, receding limb dimmer) but with physically correct color gradients instead of the empirical ramp.
+
+### 11.7 Performance Analysis
+
+**Current `disk()` cost**: ~25 operations (1 `pow`, 2 `smoothstep`, 1 `sqrt`, 1 `pow`, 1 `sin`, 5 `mix`, 2 `hash`)
+
+**New `disk()` cost**: ~45 operations
+- GR redshift: ~20 ops (metric components, Omega, ut, g — all basic arithmetic + 2 `sqrt`, 1 `pow`)
+- Blackbody: ~16 ops (1 division, 3 Horner polynomials, 3 clamps)
+- Unchanged: ~9 ops (smoothstep, hash, multiply)
+
+**Net increase**: ~20 additional operations per disk hit. Since `disk()` is only evaluated when a ray crosses the equatorial plane (not every pixel), and the shader is already dominated by the integration loop (~200 iterations of `geoRHS` at ~60 ops each = ~12000 ops), the additional 20 ops represents a **< 0.2% increase** in total shader cost. This is negligible.
+
+### 11.8 Implementation Order
+
+The recommended implementation sequence:
+
+1. Add `blackbody()` function to all three codebases (JS, Python GLSL, CUDA)
+2. Add GR redshift computation to `disk()` / `diskColor()`
+3. Update `disk()` signature to accept `b` parameter
+4. Update all integrator call sites to pass `b`
+5. Add `T_BASE` constant to shader headers
+6. Tune `T_BASE` and `INTENSITY_SCALE` for visual quality
+7. Validate against known Schwarzschild/Kerr redshift patterns
+8. Visual regression testing

@@ -163,7 +163,7 @@ void main() {
             float cross = (oldTh-PI*0.5)*(th-PI*0.5);
             if (cross < 0.0) {
                 float f = clamp(abs(oldTh-PI*0.5)/max(abs(th-oldTh),1e-6), 0.0, 1.0);
-                vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a);
+                vec3 dc = disk(oldR+f*(r-oldR), oldPhi+f*(phi-oldPhi), a, b);
                 color += dc * (1.0 - clamp(length(color)*0.4, 0.0, 0.9));
             }
         }
