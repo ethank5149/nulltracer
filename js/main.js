@@ -23,7 +23,7 @@ const state = {
     rotAngle: 0,
     fov: 8,
     bgMode: 1,
-    qMethod: 'yoshida4',
+    qMethod: 'rkdp8',
     qSteps: 200,
     qResScale: 1.0,
     qStepSize: 0.3,

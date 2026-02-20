@@ -13,53 +13,6 @@
 #define INTEGRATOR_STEPS_CU
 
 
-/* ── Yoshida 4th-order (Forest-Ruth) coefficients ──────────── */
-
-#ifndef Y4_W1
-#define Y4_W1  1.3512071919596576
-#define Y4_W0 -1.7024143839193153
-#define Y4_D1  0.6756035959798288
-#define Y4_D0 -0.1756035959798288
-#endif
-
-/* Yoshida 4th-order single step.
- * 3 symmetric drift-kick substeps. */
-__device__ void yoshida4_step(
-    double *r, double *th, double *phi,
-    double *pr, double *pth,
-    double a, double b, double Q2, double he
-) {
-    double dr_, dth_, dphi_, dpr_, dpth_;
-
-    /* Substep 1: drift d1, kick w1 */
-    geoRHS(*r, *th, *pr, *pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-    *r   += he * Y4_D1 * dr_;
-    *th  += he * Y4_D1 * dth_;
-    *phi += he * Y4_D1 * dphi_;
-    geoRHS(*r, *th, *pr, *pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-    *pr  += he * Y4_W1 * dpr_;
-    *pth += he * Y4_W1 * dpth_;
-
-    /* Substep 2: drift d0, kick w0 */
-    geoRHS(*r, *th, *pr, *pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-    *r   += he * Y4_D0 * dr_;
-    *th  += he * Y4_D0 * dth_;
-    *phi += he * Y4_D0 * dphi_;
-    geoRHS(*r, *th, *pr, *pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-    *pr  += he * Y4_W0 * dpr_;
-    *pth += he * Y4_W0 * dpth_;
-
-    /* Substep 3: drift d1, kick w1 (symmetric) */
-    geoRHS(*r, *th, *pr, *pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-    *r   += he * Y4_D1 * dr_;
-    *th  += he * Y4_D1 * dth_;
-    *phi += he * Y4_D1 * dphi_;
-    geoRHS(*r, *th, *pr, *pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-    *pr  += he * Y4_W1 * dpr_;
-    *pth += he * Y4_W1 * dpth_;
-}
-
-
 /* ============================================================
  *  TAO EXTENDED PHASE SPACE INTEGRATORS
  *
@@ -72,18 +25,30 @@ __device__ void yoshida4_step(
  *  where the kinetic energy depends on both q and p.
  *
  *  Tao's method embeds the system in a doubled phase space
- *  (q, p, q̃, p̃) with the extended Hamiltonian:
- *    H_ext = H(q, p̃) + H(q̃, p) + ½ω²(|q-q̃|² + |p-p̃|²)
+ *  (q, p, x, y) with the extended Hamiltonian:
+ *    H_ext = H_A(q,y) + H_B(x,p) + ω·H_C
+ *  where H_A = H(q,y), H_B = H(x,p), and
+ *  H_C = ½(|q-x|² + |p-y|²) is the harmonic coupling.
  *
- *  The three flows are:
- *    φ_A: advance (q, p̃) using H(q, p̃)  [real pos, shadow mom]
- *    φ_B: advance (q̃, p) using H(q̃, p)  [shadow pos, real mom]
- *    φ_C: harmonic rotation coupling q↔q̃ and p↔p̃
+ *  The three exact flows (Tao 2016, Eq. 1) are:
  *
- *  Each φ_A/φ_B is a single Euler-like step of the geodesic
- *  equations.  The Yoshida/Kahan-Li composition of the Strang
- *  splitting φ_C ∘ φ_A ∘ φ_B ∘ φ_A ∘ φ_C achieves the full
- *  nominal order (4th/6th/8th) on the non-separable system.
+ *    φ_A^τ: Evaluate H(q,y).
+ *            p  → p  − τ·∂_q H(q,y)    [update real momenta]
+ *            x  → x  + τ·∂_y H(q,y)    [update shadow positions]
+ *            (q and y unchanged)
+ *
+ *    φ_B^τ: Evaluate H(x,p).
+ *            q  → q  + τ·∂_p H(x,p)    [update real positions]
+ *            y  → y  − τ·∂_x H(x,p)    [update shadow momenta]
+ *            (x and p unchanged)
+ *
+ *    φ_C^τ: Harmonic rotation coupling q↔x and p↔y.
+ *
+ *  The 2nd-order Strang base step (Tao 2016, Eq. 2) is:
+ *    φ_2^δ = φ_A^{δ/2} ∘ φ_B^{δ/2} ∘ φ_C^δ ∘ φ_B^{δ/2} ∘ φ_A^{δ/2}
+ *
+ *  Higher-order methods compose the base step via triple-jump
+ *  (Yoshida) or optimal palindromic (Kahan-Li) coefficients.
  *
  *  Coupling parameter: ω = TAO_OMEGA_C / h, following Tao's
  *  recommendation that ω·h = O(1).
@@ -98,80 +63,172 @@ __device__ void yoshida4_step(
 
 /* ── Tao harmonic rotation (φ_C flow) ─────────────────────── */
 
-/* Exact solution of the harmonic coupling:
- *   q_new  =  q·cos(ωτ) + q̃·sin(ωτ)
- *   q̃_new = -q·sin(ωτ) + q̃·cos(ωτ)
- * Same for (p, p̃).
+/* Exact solution of the harmonic coupling ωH_C for time δ.
  *
- * For a Yoshida substep with coefficient W_i, the rotation
- * angle is ωτ = (TAO_OMEGA_C / h) · (W_i · h) = TAO_OMEGA_C · W_i.
- * Note: the step size h cancels out! The rotation angle depends
- * only on the Yoshida coefficient and the coupling constant.
+ * H_C = ½(|q-x|² + |p-y|²).  The time-δ flow of ωH_C
+ * rotates each conjugate pair (q_i-x_i, p_i-y_i) by angle 2ωδ
+ * (Tao 2016, Eq. 1):
+ *
+ *   R(δ) = [cos(2ωδ)·I   sin(2ωδ)·I]
+ *          [-sin(2ωδ)·I   cos(2ωδ)·I]
+ *
+ * acting on the difference vector (q-x, p-y).  The center of
+ * mass (q+x)/2 and (p+y)/2 are preserved.
+ *
+ * For each conjugate DOF (q_i, p_i, x_i, y_i):
+ *   u = q_i - x_i,  v = p_i - y_i
+ *   u' = cos(2ωδ)·u + sin(2ωδ)·v
+ *   v' = -sin(2ωδ)·u + cos(2ωδ)·v
+ *   q_i' = (q_i+x_i)/2 + u'/2
+ *   x_i' = (q_i+x_i)/2 - u'/2
+ *   p_i' = (p_i+y_i)/2 + v'/2
+ *   y_i' = (p_i+y_i)/2 - v'/2
+ *
+ * For cyclic coordinates (φ) with shared conserved momentum b,
+ * the momentum difference is always 0, so the rotation reduces
+ * to an independent rotation of (φ-φs) by cos(2ωδ).
  */
-__device__ void tao_rotate(
-    double *q, double *qs,   /* real and shadow variable */
-    double c, double s       /* cos(ωτ) and sin(ωτ) */
+__device__ void tao_rotate_coupled(
+    double *q, double *p,    /* real position and momentum */
+    double *qs, double *ps,  /* shadow position and momentum */
+    double c, double s       /* cos(2ωδ) and sin(2ωδ) */
 ) {
-    double q0 = *q, qs0 = *qs;
-    *q  =  c * q0 + s * qs0;
-    *qs = -s * q0 + c * qs0;
+    double sum_q = *q + *qs, diff_q = *q - *qs;
+    double sum_p = *p + *ps, diff_p = *p - *ps;
+    double new_diff_q = c * diff_q + s * diff_p;
+    double new_diff_p = -s * diff_q + c * diff_p;
+    *q  = 0.5 * (sum_q + new_diff_q);
+    *qs = 0.5 * (sum_q - new_diff_q);
+    *p  = 0.5 * (sum_p + new_diff_p);
+    *ps = 0.5 * (sum_p - new_diff_p);
+}
+
+/* Rotation for cyclic coordinate φ (no conjugate momentum in
+ * the extended phase space — b is shared and constant).
+ * The momentum difference is 0, so the rotation simplifies to:
+ *   φ'  = (φ+φs)/2 + cos(2ωδ)·(φ-φs)/2
+ *   φs' = (φ+φs)/2 - cos(2ωδ)·(φ-φs)/2
+ */
+__device__ void tao_rotate_cyclic(
+    double *q, double *qs,   /* real and shadow cyclic coordinate */
+    double c                 /* cos(2ωδ) */
+) {
+    double sum = *q + *qs, diff = *q - *qs;
+    *q  = 0.5 * (sum + c * diff);
+    *qs = 0.5 * (sum - c * diff);
 }
 
 
-/* ── Tao substep macro ────────────────────────────────────── */
+/* ── Tao φ_A flow ─────────────────────────────────────────── */
 
-/* A single Tao-Yoshida substep with drift coefficient D and
- * kick coefficient W:
+/* φ_A^τ: Evaluate geoRHS at (q, y) = (r, th, prs, pths).
+ *   geoRHS returns: dr,dth,dphi = ∂_y H(q,y)  [velocity from shadow momenta]
+ *                   dpr,dpth    = −∂_q H(q,y)  [force from real positions]
  *
- *   1. φ_A(D·h): Evaluate geoRHS at (r, th, prs, pths) — real
- *      positions with shadow momenta.  Advance real positions
- *      and shadow momenta.
- *
- *   2. φ_B(D·h): Evaluate geoRHS at (rs, ths, pr, pth) — shadow
- *      positions with real momenta.  Advance shadow positions
- *      and real momenta.
- *
- *   3. φ_C(W·h): Harmonic rotation coupling real↔shadow.
- *      Angle = TAO_OMEGA_C · W (h cancels).
+ * Per Tao (2016) Eq. 1:
+ *   p  → p  − τ·∂_q H(q,y)  =  p  + τ·dpr   (update real momenta)
+ *   x  → x  + τ·∂_y H(q,y)  =  x  + τ·dr    (update shadow positions)
+ *   q and y are unchanged.
  */
-#define _TAO_SUBSTEP(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
-                     a, b, Q2, he, D_COEFF, W_COEFF) \
+#define _TAO_PHI_A(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
+                   a, b, Q2, tau) \
     { \
         double dr_, dth_, dphi_, dpr_, dpth_; \
-        double tau_d = he * (D_COEFF); \
-        \
-        /* φ_A: advance real positions (r,th,phi) and shadow momenta (prs,pths) */ \
         geoRHS(r, th, prs, pths, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-        r    += tau_d * dr_; \
-        th   += tau_d * dth_; \
-        phi  += tau_d * dphi_; \
-        prs  += tau_d * dpr_; \
-        pths += tau_d * dpth_; \
-        \
-        /* φ_B: advance shadow positions (rs,ths,phis) and real momenta (pr,pth) */ \
+        /* Update real momenta (p) using −∂_q H(q,y) */ \
+        pr   += (tau) * dpr_; \
+        pth  += (tau) * dpth_; \
+        /* Update shadow positions (x) using ∂_y H(q,y) */ \
+        rs   += (tau) * dr_; \
+        ths  += (tau) * dth_; \
+        phis += (tau) * dphi_; \
+    }
+
+
+/* ── Tao φ_B flow ─────────────────────────────────────────── */
+
+/* φ_B^τ: Evaluate geoRHS at (x, p) = (rs, ths, pr, pth).
+ *   geoRHS returns: dr,dth,dphi = ∂_p H(x,p)  [velocity from real momenta]
+ *                   dpr,dpth    = −∂_x H(x,p)  [force from shadow positions]
+ *
+ * Per Tao (2016) Eq. 1:
+ *   q  → q  + τ·∂_p H(x,p)  =  q  + τ·dr    (update real positions)
+ *   y  → y  − τ·∂_x H(x,p)  =  y  + τ·dpr   (update shadow momenta)
+ *   x and p are unchanged.
+ */
+#define _TAO_PHI_B(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
+                   a, b, Q2, tau) \
+    { \
+        double dr_, dth_, dphi_, dpr_, dpth_; \
         geoRHS(rs, ths, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-        rs   += tau_d * dr_; \
-        ths  += tau_d * dth_; \
-        phis += tau_d * dphi_; \
-        pr   += tau_d * dpr_; \
-        pth  += tau_d * dpth_; \
-        \
-        /* φ_C: harmonic rotation with angle = TAO_OMEGA_C * W_COEFF */ \
-        double angle_ = TAO_OMEGA_C * (W_COEFF); \
-        double c_ = cos(angle_), s_ = sin(angle_); \
-        tao_rotate(&r,   &rs,   c_, s_); \
-        tao_rotate(&th,  &ths,  c_, s_); \
-        tao_rotate(&phi, &phis, c_, s_); \
-        tao_rotate(&pr,  &prs,  c_, s_); \
-        tao_rotate(&pth, &pths, c_, s_); \
+        /* Update real positions (q) using ∂_p H(x,p) */ \
+        r    += (tau) * dr_; \
+        th   += (tau) * dth_; \
+        phi  += (tau) * dphi_; \
+        /* Update shadow momenta (y) using −∂_x H(x,p) */ \
+        prs  += (tau) * dpr_; \
+        pths += (tau) * dpth_; \
+    }
+
+
+/* ── Tao φ_C flow (harmonic rotation) ────────────────────── */
+
+/* φ_C^δ: Exact time-δ flow of ωH_C.
+ *
+ * The rotation angle is 2ωδ (Tao 2016, Eq. 1).
+ * Since ω = TAO_OMEGA_C / h, the angle is 2·TAO_OMEGA_C·(δ/h).
+ *
+ * For each conjugate DOF (r↔pr, θ↔pθ), the coupled rotation
+ * mixes position differences with momentum differences.
+ * For cyclic φ (shared conserved b), only the position rotates.
+ */
+#define _TAO_PHI_C(r, th, phi, pr, pth, rs, ths, phis, prs, pths, angle2) \
+    { \
+        double c_ = cos(angle2), s_ = sin(angle2); \
+        tao_rotate_coupled(&r,  &pr,  &rs,  &prs,  c_, s_); \
+        tao_rotate_coupled(&th, &pth, &ths, &pths, c_, s_); \
+        tao_rotate_cyclic(&phi, &phis, c_); \
+    }
+
+
+/* ── Tao 2nd-order Strang base step (Eq. 2) ──────────────── */
+
+/* φ_2^δ = φ_A^{δ/2} ∘ φ_B^{δ/2} ∘ φ_C^δ ∘ φ_B^{δ/2} ∘ φ_A^{δ/2}
+ *
+ * Cost: 4 geoRHS evaluations + 1 harmonic rotation per base step.
+ * The rotation angle for φ_C^δ is 2ωδ (Tao 2016, Eq. 1).
+ */
+#define _TAO_STRANG(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
+                    a, b, Q2, delta, angle2) \
+    { \
+        double half_delta_ = 0.5 * (delta); \
+        _TAO_PHI_A(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
+                   a, b, Q2, half_delta_) \
+        _TAO_PHI_B(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
+                   a, b, Q2, half_delta_) \
+        _TAO_PHI_C(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
+                   angle2) \
+        _TAO_PHI_B(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
+                   a, b, Q2, half_delta_) \
+        _TAO_PHI_A(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
+                   a, b, Q2, half_delta_) \
     }
 
 
 /* ── Tao + Yoshida 4th-order step ─────────────────────────── */
 
-/* 3 symmetric substeps using Forest-Ruth/Yoshida 4th-order
- * coefficients with Tao extended phase space splitting.
- * Cost: 6 geoRHS evaluations + 3 harmonic rotations per step. */
+/* Triple-jump composition (Tao 2016, Eq. 3):
+ *   φ_4^δ = φ_2^{γδ} ∘ φ_2^{(1-2γ)δ} ∘ φ_2^{γδ}
+ * where γ = 1/(2 − 2^{1/3}) ≈ 1.3512.
+ *
+ * Cost: 3 × (4 geoRHS + 1 rotation) = 12 geoRHS + 3 rotations.
+ * Adjacent φ_A terms at composition boundaries can be merged
+ * for efficiency, but we keep them separate for clarity.
+ */
+
+#define TAO_Y4_GAMMA  1.3512071919596576340
+#define TAO_Y4_GAMMA2 (-1.7024143839193152681)  /* 1 - 2γ */
+
 __device__ void tao_yoshida4_step(
     double *r, double *th, double *phi,
     double *pr, double *pth,
@@ -179,33 +236,38 @@ __device__ void tao_yoshida4_step(
     double *prs, double *pths,
     double a, double b, double Q2, double he
 ) {
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y4_D1, Y4_W1)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y4_D0, Y4_W0)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y4_D1, Y4_W1)
+    /* ω = TAO_OMEGA_C / h.  For each Strang step with duration δ_i,
+     * the rotation angle is 2ωδ_i = 2·TAO_OMEGA_C · (δ_i / h).
+     * Since δ_i = γ·h or (1-2γ)·h, the angle is 2·TAO_OMEGA_C · γ
+     * or 2·TAO_OMEGA_C · (1-2γ). */
+    double d1 = TAO_Y4_GAMMA * he;
+    double d0 = TAO_Y4_GAMMA2 * he;
+    double angle1 = 2.0 * TAO_OMEGA_C * TAO_Y4_GAMMA;
+    double angle0 = 2.0 * TAO_OMEGA_C * TAO_Y4_GAMMA2;
+
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1, angle1)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d0, angle0)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1, angle1)
 }
 
 
 /* ── Yoshida 6th-order coefficients (Solution A) ──────────── */
 
-#ifndef Y6_W1
-#define Y6_W1  0.78451361047755726382
-#define Y6_W2  0.23557321335935813368
-#define Y6_W3 -1.17767998417887100695
-#define Y6_W0  1.31518632068391121889
-#define Y6_D1  0.39225680523877863191
-#define Y6_D2  0.51004341191845769508
-#define Y6_D3 -0.47105338540975643969
-#define Y6_D0  0.06875316825252012625
-#endif
+/* 6th-order via triple-jump of 4th-order:
+ *   φ_6^δ = φ_4^{γ₆δ} ∘ φ_4^{(1-2γ₆)δ} ∘ φ_4^{γ₆δ}
+ * where γ₆ = 1/(2 − 2^{1/5}).
+ *
+ * Each φ_4 is itself a triple-jump of φ_2, giving
+ * 3 × 3 = 9 Strang base steps total.
+ * Cost: 9 × (4 geoRHS + 1 rotation) = 36 geoRHS + 9 rotations.
+ */
 
-/* ── Tao + Yoshida 6th-order step ─────────────────────────── */
+#define TAO_Y6_GAMMA  1.1746391730891982610   /* 1/(2 − 2^{1/5}) */
+#define TAO_Y6_GAMMA2 (-1.3492783461783965220)  /* 1 − 2γ₆ */
 
-/* 7 symmetric substeps using Yoshida Solution A 6th-order
- * coefficients with Tao extended phase space splitting.
- * Cost: 14 geoRHS evaluations + 7 harmonic rotations per step. */
 __device__ void tao_yoshida6_step(
     double *r, double *th, double *phi,
     double *pr, double *pth,
@@ -213,20 +275,47 @@ __device__ void tao_yoshida6_step(
     double *prs, double *pths,
     double a, double b, double Q2, double he
 ) {
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y6_D1, Y6_W1)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y6_D2, Y6_W2)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y6_D3, Y6_W3)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y6_D0, Y6_W0)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y6_D3, Y6_W3)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y6_D2, Y6_W2)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, Y6_D1, Y6_W1)
+    /* Outer triple-jump: scale h for each φ_4 call */
+    double h1 = TAO_Y6_GAMMA * he;
+    double h0 = TAO_Y6_GAMMA2 * he;
+
+    /* Inner triple-jump coefficients for φ_4 */
+    double d1_1 = TAO_Y4_GAMMA * h1;
+    double d0_1 = TAO_Y4_GAMMA2 * h1;
+    double d1_0 = TAO_Y4_GAMMA * h0;
+    double d0_0 = TAO_Y4_GAMMA2 * h0;
+
+    /* Rotation angles: 2ωδ = 2·TAO_OMEGA_C · (δ/h).
+     * For inner step δ = γ₄·h_outer where h_outer = γ₆·h or (1-2γ₆)·h,
+     * angle = 2·TAO_OMEGA_C · γ₄ · γ₆  etc. */
+    double a1_1 = 2.0 * TAO_OMEGA_C * TAO_Y4_GAMMA * TAO_Y6_GAMMA;
+    double a0_1 = 2.0 * TAO_OMEGA_C * TAO_Y4_GAMMA2 * TAO_Y6_GAMMA;
+    double a1_0 = 2.0 * TAO_OMEGA_C * TAO_Y4_GAMMA * TAO_Y6_GAMMA2;
+    double a0_0 = 2.0 * TAO_OMEGA_C * TAO_Y4_GAMMA2 * TAO_Y6_GAMMA2;
+
+    /* φ_4^{γ₆·h}: 3 Strang steps */
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1_1, a1_1)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d0_1, a0_1)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1_1, a1_1)
+
+    /* φ_4^{(1-2γ₆)·h}: 3 Strang steps */
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1_0, a1_0)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d0_0, a0_0)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1_0, a1_0)
+
+    /* φ_4^{γ₆·h}: 3 Strang steps */
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1_1, a1_1)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d0_1, a0_1)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1_1, a1_1)
 }
 
 
@@ -235,36 +324,28 @@ __device__ void tao_yoshida6_step(
 /* From: W. Kahan & R.-C. Li, Math. Comp. 66:1089–1099, 1997.
  * max |W_i| = 0.797 (vs 2.447 for Yoshida Solution D).
  *
- * 15-stage palindromic composition:
- *   W7 W6 W5 W4 W3 W2 W1 W0 W1 W2 W3 W4 W5 W6 W7
+ * 15-stage palindromic composition of the Strang base step:
+ *   φ_8^δ = φ_2^{w₇δ} ∘ φ_2^{w₆δ} ∘ ... ∘ φ_2^{w₀δ} ∘ ... ∘ φ_2^{w₇δ}
  *
- * Array convention: index 0 = outermost (w7), index 7 = center (w0). */
+ * Cost: 15 × (4 geoRHS + 1 rotation) = 60 geoRHS + 15 rotations.
+ */
 
 #ifndef TAO_KL8_W0
-#define TAO_KL8_W0  0.74167036435061295345   /* w7 (outermost) */
-#define TAO_KL8_W1 -0.40910082580003159400   /* w6 */
-#define TAO_KL8_W2  0.19075471029623837995   /* w5 */
-#define TAO_KL8_W3 -0.57386247111608226666   /* w4 */
-#define TAO_KL8_W4  0.29906418130365592384   /* w3 */
-#define TAO_KL8_W5  0.33462491824529818378   /* w2 */
-#define TAO_KL8_W6  0.31529309239676659663   /* w1 */
-#define TAO_KL8_W7 -0.79688793935291635402   /* w0 (center) */
-
-#define TAO_KL8_D0  0.37083518217530647672   /* W0/2 */
-#define TAO_KL8_D1  0.16628476927529067972   /* (W0+W1)/2 */
-#define TAO_KL8_D2 -0.10917305775189660702   /* (W1+W2)/2 */
-#define TAO_KL8_D3 -0.19155388040992194336   /* (W2+W3)/2 */
-#define TAO_KL8_D4 -0.13739914490621317141   /* (W3+W4)/2 */
-#define TAO_KL8_D5  0.31684454977447705381   /* (W4+W5)/2 */
-#define TAO_KL8_D6  0.32495900532103239020   /* (W5+W6)/2 */
-#define TAO_KL8_D7 -0.24079742347807487870   /* (W6+W7)/2 */
+#define TAO_KL8_W0  0.74167036435061295345   /* w₇ (outermost) */
+#define TAO_KL8_W1 -0.40910082580003159400   /* w₆ */
+#define TAO_KL8_W2  0.19075471029623837995   /* w₅ */
+#define TAO_KL8_W3 -0.57386247111608226666   /* w₄ */
+#define TAO_KL8_W4  0.29906418130365592384   /* w₃ */
+#define TAO_KL8_W5  0.33462491824529818378   /* w₂ */
+#define TAO_KL8_W6  0.31529309239676659663   /* w₁ */
+#define TAO_KL8_W7 -0.79688793935291635402   /* w₀ (center) */
 #endif
 
 /* ── Tao + Kahan-Li 8th-order step ────────────────────────── */
 
-/* 15 symmetric substeps using Kahan-Li s15odr8 optimal 8th-order
- * coefficients with Tao extended phase space splitting.
- * Cost: 30 geoRHS evaluations + 15 harmonic rotations per step. */
+/* 15 Strang base steps composed with Kahan-Li s15odr8 optimal
+ * 8th-order palindromic coefficients.
+ * Cost: 15 × (4 geoRHS + 1 rotation) = 60 geoRHS + 15 rotations. */
 __device__ void tao_kahan_li8_step(
     double *r, double *th, double *phi,
     double *pr, double *pth,
@@ -272,41 +353,52 @@ __device__ void tao_kahan_li8_step(
     double *prs, double *pths,
     double a, double b, double Q2, double he
 ) {
-    /* Forward half: substeps 1-7 */
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D0, TAO_KL8_W0)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D1, TAO_KL8_W1)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D2, TAO_KL8_W2)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D3, TAO_KL8_W3)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D4, TAO_KL8_W4)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D5, TAO_KL8_W5)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D6, TAO_KL8_W6)
+    /* Precompute step durations and rotation angles for each stage.
+     * δ_i = w_i · h,  angle_i = 2ωδ_i = 2·TAO_OMEGA_C · w_i. */
+    double d0 = TAO_KL8_W0 * he, a0 = 2.0 * TAO_OMEGA_C * TAO_KL8_W0;
+    double d1 = TAO_KL8_W1 * he, a1 = 2.0 * TAO_OMEGA_C * TAO_KL8_W1;
+    double d2 = TAO_KL8_W2 * he, a2 = 2.0 * TAO_OMEGA_C * TAO_KL8_W2;
+    double d3 = TAO_KL8_W3 * he, a3 = 2.0 * TAO_OMEGA_C * TAO_KL8_W3;
+    double d4 = TAO_KL8_W4 * he, a4 = 2.0 * TAO_OMEGA_C * TAO_KL8_W4;
+    double d5 = TAO_KL8_W5 * he, a5 = 2.0 * TAO_OMEGA_C * TAO_KL8_W5;
+    double d6 = TAO_KL8_W6 * he, a6 = 2.0 * TAO_OMEGA_C * TAO_KL8_W6;
+    double d7 = TAO_KL8_W7 * he, a7 = 2.0 * TAO_OMEGA_C * TAO_KL8_W7;
 
-    /* Center substep 8 */
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D7, TAO_KL8_W7)
+    /* Forward half: stages w₇ through w₁ */
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d0, a0)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1, a1)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d2, a2)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d3, a3)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d4, a4)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d5, a5)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d6, a6)
 
-    /* Reverse half: substeps 9-15 (palindromic) */
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D6, TAO_KL8_W6)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D5, TAO_KL8_W5)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D4, TAO_KL8_W4)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D3, TAO_KL8_W3)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D2, TAO_KL8_W2)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D1, TAO_KL8_W1)
-    _TAO_SUBSTEP(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
-                 a, b, Q2, he, TAO_KL8_D0, TAO_KL8_W0)
+    /* Center stage: w₀ */
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d7, a7)
+
+    /* Reverse half: stages w₁ through w₇ (palindromic) */
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d6, a6)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d5, a5)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d4, a4)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d3, a3)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d2, a2)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d1, a1)
+    _TAO_STRANG(*r, *th, *phi, *pr, *pth, *rs, *ths, *phis, *prs, *pths,
+                a, b, Q2, d0, a0)
 }
 
 

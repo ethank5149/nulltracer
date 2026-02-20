@@ -108,9 +108,8 @@
   <div class="control-row">
     <div class="control-label"><span>Integrator</span><span class="control-value" id="integ-label">Separated</span></div>
     <select class="ctrl-select" id="sel-integrator">
-      <option value="yoshida4" selected>Yoshida 4th-order symplectic — fast</option>
       <option value="rk4">Runge-Kutta 4th-order</option>
-      <option value="rkdp8">Dormand-Prince RK8</option>
+      <option value="rkdp8" selected>Dormand-Prince RK8</option>
       <option value="tao_yoshida4">Tao-Yoshida 4th symplectic</option>
       <option value="tao_yoshida6">Tao-Yoshida 6th symplectic</option>
       <option value="tao_kahan_li8">Tao-Kahan-Li 8th symplectic</option>
@@ -152,7 +151,7 @@
 </div>
 
 <div class="readout">
-  <span class="hl">integrator</span> <span id="integ-info">yoshida4</span><br>
+  <span class="hl">integrator</span> <span id="integ-info">rkdp8</span><br>
   <span class="hl">res</span> <span id="res">---</span><br>
   <span class="hl">fps</span> <span id="fps">--</span>
   <br><span class="server-dot disconnected" id="server-dot"></span><span id="server-status">server off</span>

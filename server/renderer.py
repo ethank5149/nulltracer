@@ -20,13 +20,19 @@ from .isco import isco
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_float(v: float) -> float:
+    """Convert a float to a JSON-safe value, replacing NaN/Inf with None-safe sentinels."""
+    if math.isnan(v) or math.isinf(v):
+        return None
+    return v
+
 # Path to kernel source files
 _KERNEL_DIR = Path(__file__).parent / "kernels"
 _INTEGRATOR_DIR = _KERNEL_DIR / "integrators"
 
 # Map method names to kernel source files and entry point names
 _KERNEL_REGISTRY = {
-    "yoshida4": ("yoshida4.cu", "trace_yoshida4"),
     "rk4":      ("rk4.cu",      "trace_rk4"),
     "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
     "kahanli8s":    ("kahanli8s.cu",    "trace_kahanli8s"),
@@ -40,7 +46,6 @@ _KERNEL_REGISTRY = {
 # The ray_trace.cu kernel provides per-integrator entry points
 # for ALL available methods — no fallback needed.
 _RAY_TRACE_REGISTRY = {
-    "yoshida4":     "ray_trace_yoshida4",
     "rk4":          "ray_trace_rk4",
     "rkdp8":        "ray_trace_rkdp8",
     "kahanli8s":    "ray_trace_kahanli8s",
@@ -111,9 +116,9 @@ class CudaRenderer:
             cuda_ver = cp.cuda.runtime.runtimeGetVersion()
             logger.info("CUDA runtime version: %d", cuda_ver)
 
-            # Pre-compile the default kernel (yoshida4)
-            self._get_kernel("yoshida4")
-            logger.info("Default kernel (yoshida4) pre-compiled")
+            # Pre-compile the default kernel (rkdp8)
+            self._get_kernel("rkdp8")
+            logger.info("Default kernel (rkdp8) pre-compiled")
 
         except Exception as e:
             logger.error("CUDA initialization failed: %s", e, exc_info=True)
@@ -230,7 +235,7 @@ class CudaRenderer:
 
         width = params.get("width", 1280)
         height = params.get("height", 720)
-        method = params.get("method", "yoshida4")
+        method = params.get("method", "rkdp8")
 
         # Get compiled kernel
         kernel = self._get_kernel(method)
@@ -343,7 +348,7 @@ class CudaRenderer:
 
         width = params.get("width", 1280)
         height = params.get("height", 720)
-        method = params.get("method", "yoshida4")
+        method = params.get("method", "rkdp8")
 
         # Get compiled kernel
         kernel = self._get_kernel(method)
@@ -454,14 +459,14 @@ class CudaRenderer:
         """Get or compile a single-ray trace CUDA kernel for the given method.
 
         The ray_trace.cu kernel provides per-integrator entry points.
-        Methods not in _RAY_TRACE_REGISTRY fall back to yoshida4.
+        Methods not in _RAY_TRACE_REGISTRY fall back to rkdp8.
         """
         cache_key = f"ray_trace_{method}"
         if cache_key in self._kernel_cache:
             return self._kernel_cache[cache_key]
 
-        # Determine entry point (fall back to yoshida4 for unsupported methods)
-        effective_method = method if method in _RAY_TRACE_REGISTRY else "yoshida4"
+        # Determine entry point (fall back to rkdp8 for unsupported methods)
+        effective_method = method if method in _RAY_TRACE_REGISTRY else "rkdp8"
         entry_point = _RAY_TRACE_REGISTRY[effective_method]
 
         if effective_method != method:
@@ -532,11 +537,11 @@ class CudaRenderer:
 
         t_wall_start = _time.monotonic()
 
-        method = params.get("method", "yoshida4")
+        method = params.get("method", "rkdp8")
         max_traj = min(params.get("max_trajectory_points", 200), 500)
 
         # Diagnostic: log method coverage gap
-        effective_method = method if method in _RAY_TRACE_REGISTRY else "yoshida4"
+        effective_method = method if method in _RAY_TRACE_REGISTRY else "rkdp8"
         if effective_method != method:
             logger.warning(
                 "DISCREPANCY ALERT: /ray requested method='%s' but will use '%s'. "
@@ -635,7 +640,7 @@ class CudaRenderer:
         }
 
         # Effective method (may differ from requested if no native kernel)
-        effective_method = method if method in _RAY_TRACE_REGISTRY else "yoshida4"
+        effective_method = method if method in _RAY_TRACE_REGISTRY else "rkdp8"
 
         # Build ray specification
         ray_info = {"mode": mode}
@@ -697,11 +702,11 @@ class CudaRenderer:
                 "pth": float(result[4]),
             },
             "final_state": {
-                "r": float(result[8]),
-                "theta": float(result[9]),
-                "phi": float(result[10]),
-                "pr": float(result[11]),
-                "pth": float(result[12]),
+                "r": _safe_float(float(result[8])),
+                "theta": _safe_float(float(result[9])),
+                "phi": _safe_float(float(result[10])),
+                "pr": _safe_float(float(result[11])),
+                "pth": _safe_float(float(result[12])),
             },
             "termination": {
                 "reason": term_names.get(term_reason_code, f"unknown({term_reason_code})"),

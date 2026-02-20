@@ -13,22 +13,9 @@
 #define ADAPTIVE_STEP_CU
 
 
-/* ── Symplectic integrator (yoshida4) ──────────────────────── */
-
-/* Geometric heuristic: step size scales with distance from horizon. */
-
-__device__ double adaptive_step_symplectic(double r, double rp,
-                                           double step_size, double obs_dist) {
-    /* Base step for Yoshida 4 */
-    double h_scaled = step_size * (obs_dist / 30.0);
-    double he = h_scaled * fmin(fmax((r - rp) * 0.4, 0.04), 1.0);
-    return fmin(fmax(he, 0.012), 1.0);
-}
-
-
 /* ── Tao extended phase space integrators ──────────────────── */
 
-/* Tao integrators use the same geometric heuristic as yoshida4.
+/* Geometric heuristic: step size scales with distance from horizon.
  * The extended phase space method handles the non-separability;
  * the step size just needs to scale with distance from horizon. */
 __device__ double adaptive_step_tao(double r, double rp,

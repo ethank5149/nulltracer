@@ -62,7 +62,6 @@ nulltracer/server/
     ├── ray_trace.cu        # Single-ray tracing kernel for /ray endpoint
     └── integrators/
         ├── rk4.cu          # RK4 4th-order Runge-Kutta integrator kernel
-        ├── yoshida4.cu       # Yoshida 4th-order symplectic integrator kernel
         ├── rkdp8.cu          # Dormand-Prince adaptive 8th-order RK kernel
         ├── tao_yoshida4.cu   # Tao + Yoshida 4th-order symplectic (extended phase space)
         ├── tao_yoshida6.cu   # Tao + Yoshida 6th-order symplectic (extended phase space)
@@ -132,7 +131,7 @@ class CudaRenderer:
         self._gpu_info = f"{name} ({mem_gb:.1f} GB, compute {cc})"
         
         # Pre-compile the default kernel
-        self._get_kernel("yoshida4")
+        self._get_kernel("rkdp8")
 
     def render_frame(self, params: dict) -> bytes:
         """Render a frame via CUDA.
@@ -150,7 +149,7 @@ class CudaRenderer:
 
 #### Kernel Compilation
 
-Each integration method (`yoshida4`, `rk4`, `rkdp8`, `kahanli8s`, `kahanli8s_ks`, `tao_yoshida4`, `tao_yoshida6`, `tao_kahan_li8`) has a corresponding CUDA kernel in `server/kernels/integrators/*.cu`. The `CudaRenderer` maintains a kernel cache keyed by method name, avoiding recompilation:
+Each integration method (`rk4`, `rkdp8`, `kahanli8s`, `kahanli8s_ks`, `tao_yoshida4`, `tao_yoshida6`, `tao_kahan_li8`) has a corresponding CUDA kernel in `server/kernels/integrators/*.cu`. The `CudaRenderer` maintains a kernel cache keyed by method name, avoiding recompilation:
 
 ```python
 _kernel_cache: dict[str, cp.RawKernel] = {}
@@ -299,7 +298,6 @@ The CUDA rendering pipeline is split into modular kernel files:
 | [`backgrounds.cu`](server/kernels/backgrounds.cu) | Procedural background: stars, checker pattern, colormap |
 | [`disk.cu`](server/kernels/disk.cu) | Accretion disk emission, blackbody color, redshift |
 | [`integrators/rk4.cu`](server/kernels/integrators/rk4.cu) | RK4 4th-order Runge-Kutta integrator kernel |
-| [`integrators/yoshida4.cu`](server/kernels/integrators/yoshida4.cu) | Yoshida 4th-order symplectic integrator kernel |
 | [`integrators/rkdp8.cu`](server/kernels/integrators/rkdp8.cu) | Dormand-Prince adaptive 8th-order integrator kernel |
 | [`integrators/tao_yoshida4.cu`](server/kernels/integrators/tao_yoshida4.cu) | Tao + Yoshida 4th-order symplectic (extended phase space) |
 | [`integrators/tao_yoshida6.cu`](server/kernels/integrators/tao_yoshida6.cu) | Tao + Yoshida 6th-order symplectic (extended phase space) |
@@ -412,7 +410,7 @@ Per full integration step:
 
 With default settings (200 steps, 320×180 pixels):
 - **RTX 3090 performance**: ~0.6–1.7 seconds per frame
-- **Compared to yoshida4**: ~3–8× slower, but with dramatically superior accuracy at extreme inclinations (θ > 85°) and near the event horizon
+- **Compared to rk4**: ~3–8× slower, but with dramatically superior accuracy at extreme inclinations (θ > 85°) and near the event horizon
 
 #### Diagnostic Capability
 
@@ -434,7 +432,7 @@ The integrator computes the **Carter constant** Q₀ at initialization based on 
 - **Disk inner edge dynamics**: Precise ray-disk intersection detection near the ISCO
 
 Not recommended for:
-- **Real-time interaction** at high resolution; use **yoshida4** for responsive preview
+- **Real-time interaction** at high resolution; use **rk4** for responsive preview
 - **Low-inclination views** where geodesics are nearly radial; lower-order integrators converge adequately
 
 ---
@@ -453,7 +451,7 @@ Not recommended for:
   "fov": 8.0,
   "width": 1920,
   "height": 1080,
-  "method": "yoshida4",
+  "method": "rkdp8",
   "steps": 200,
   "step_size": 0.3,
   "obs_dist": 40,
@@ -478,7 +476,7 @@ class RenderRequest(BaseModel):
     fov: float = Field(8.0, ge=2, le=25)
     width: int = Field(1280, ge=160, le=3840)
     height: int = Field(720, ge=90, le=2160)
-    method: str = Field("yoshida4", pattern=r"^(yoshida4|rk4|rkdp8|kahanli8s|kahanli8s_ks|tao_yoshida4|tao_yoshida6|tao_kahan_li8)$")
+    method: str = Field("rkdp8", pattern=r"^(rk4|rkdp8|kahanli8s|kahanli8s_ks|tao_yoshida4|tao_yoshida6|tao_kahan_li8)$")
     steps: int = Field(200, ge=60, le=500)
     step_size: float = Field(0.3, ge=0.1, le=0.8)
     obs_dist: int = Field(40, ge=20, le=100)
@@ -576,7 +574,7 @@ General-purpose single-ray tracing endpoint. Traces one photon geodesic through 
   "spin": 0.6,
   "charge": 0.0,
   "inclination": 80.0,
-  "method": "yoshida4",
+  "method": "rkdp8",
   "fov": 8.0,
   "width": 320,
   "height": 180,
@@ -621,7 +619,7 @@ class RayRequest(BaseModel):
     spin: float = Field(0.6, ge=0, le=0.998)
     charge: float = Field(0.0, ge=0, le=0.998)
     inclination: float = Field(80.0, ge=3, le=89)
-    method: str = Field("yoshida4", pattern=r"^(yoshida4|rk4|...)$")
+    method: str = Field("rkdp8", pattern=r"^(rk4|rkdp8|...)$")
     fov: float = Field(8.0, ge=2, le=25)
     width: int = Field(320, ge=16, le=3840)
     height: int = Field(180, ge=16, le=2160)
@@ -651,8 +649,8 @@ class RayRequest(BaseModel):
     "charge": 0.0,
     "r_plus": 1.8,
     "r_isco": 3.829,
-    "method": "yoshida4",
-    "effective_method": "yoshida4"
+    "method": "rkdp8",
+    "effective_method": "rkdp8"
   },
   "initial_state": {
     "r": 40.0, "theta": 1.396, "phi": 0.0,
@@ -700,7 +698,7 @@ class RayRequest(BaseModel):
 - `"nan"` — numerical instability detected
 - `"underflow"` — radius dropped below safety threshold
 
-**Integrator support**: The ray trace kernel natively supports all available methods (`yoshida4`, `rk4`, `rkdp8`, `kahanli8s`, `kahanli8s_ks`). The `effective_method` field in the response indicates which integrator was actually used.
+**Integrator support**: The ray trace kernel natively supports all available methods (`rk4`, `rkdp8`, `kahanli8s`, `kahanli8s_ks`, `tao_yoshida4`, `tao_yoshida6`, `tao_kahan_li8`). The `effective_method` field in the response indicates which integrator was actually used.
 
 **Disk crossing physics**: Each equatorial plane crossing includes:
 - `g_factor` — gravitational redshift factor ν_obs/ν_emit
@@ -806,7 +804,7 @@ const state = {
     rotAngle: 0,
     fov: 8,
     bgMode: 1,
-    qMethod: 'yoshida4',
+    qMethod: 'rkdp8',
     qSteps: 200,
     qResScale: 1.0,
     qStepSize: 0.3,
@@ -843,8 +841,8 @@ Presets adjust integration method, steps, and observer distance for performance/
 
 ```javascript
 const presets = {
-    low:    {method:'yoshida4', steps:80,  stepSize:0.5,  obsDist:30, starLayers:1},
-    medium: {method:'yoshida4', steps:200, stepSize:0.3,  obsDist:40, starLayers:3},
+    low:    {method:'rk4',      steps:80,  stepSize:0.5,  obsDist:30, starLayers:1},
+    medium: {method:'rkdp8',    steps:200, stepSize:0.3,  obsDist:40, starLayers:3},
     high:   {method:'rkdp8',    steps:180, stepSize:0.40, obsDist:50, starLayers:4},
     ultra:  {method:'rkdp8',    steps:200, stepSize:0.45, obsDist:60, starLayers:4},
     extreme:{method:'kahanli8s', steps:180, stepSize:0.35, obsDist:70, starLayers:4},
@@ -852,8 +850,8 @@ const presets = {
 ```
 
 Presets are applied via buttons in the settings panel, updating sliders and state:
-- **low** — Fast preview (yoshida4, 80 steps) for rapid exploration
-- **medium** — Default balance (yoshida4, 200 steps)
+- **low** — Fast preview (rk4, 80 steps) for rapid exploration
+- **medium** — Default balance (rkdp8, 200 steps)
 - **high** — Enhanced accuracy (rkdp8, 180 steps)
 - **ultra** — Maximum accuracy (rkdp8, 200 steps) with excellent convergence
 - **extreme** — Maximum accuracy (kahanli8s, 180 steps) for publication-quality output at extreme inclinations
@@ -1153,7 +1151,6 @@ This ensures:
 | [`server/kernels/disk.cu`](server/kernels/disk.cu) | Disk emission, blackbody color, GR redshift |
 | [`server/kernels/ray_trace.cu`](server/kernels/ray_trace.cu) | Single-ray tracing kernel with trajectory recording and disk physics |
 | [`server/kernels/integrators/rk4.cu`](server/kernels/integrators/rk4.cu) | RK4 integrator kernel |
-| [`server/kernels/integrators/yoshida4.cu`](server/kernels/integrators/yoshida4.cu) | Yoshida 4th-order integrator kernel |
 | [`server/kernels/integrators/rkdp8.cu`](server/kernels/integrators/rkdp8.cu) | Dormand-Prince adaptive integrator kernel |
 | [`server/kernels/integrators/tao_yoshida4.cu`](server/kernels/integrators/tao_yoshida4.cu) | Tao + Yoshida 4th-order symplectic kernel |
 | [`server/kernels/integrators/tao_yoshida6.cu`](server/kernels/integrators/tao_yoshida6.cu) | Tao + Yoshida 6th-order symplectic kernel |

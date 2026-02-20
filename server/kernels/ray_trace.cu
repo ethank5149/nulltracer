@@ -249,62 +249,6 @@ __device__ void ray_finalize(
 
 
 /* ════════════════════════════════════════════════════════════
- *  YOSHIDA4 RAY TRACE
- * ════════════════════════════════════════════════════════════ */
-
-extern "C" __global__
-void ray_trace_yoshida4(const RenderParams *pp, double *output) {
-    if (threadIdx.x != 0 || blockIdx.x != 0) return;
-    const RenderParams &p = *pp;
-
-    double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
-    int max_traj;
-    ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
-    int traj_base = 20;
-    int crossing_base = traj_base + max_traj * 4;
-    int num_crossings = 0;
-    int STEPS = (int)p.steps;
-    int term_reason = 0, steps_used = 0;
-
-    for (int i = 0; i < STEPS; i++) {
-        steps_used = i + 1;
-        double he = adaptive_step_symplectic(r, rp, p.step_size, p.obs_dist);
-
-        if (i < max_traj) {
-            int off = traj_base + i * 4;
-            output[off + 0] = r; output[off + 1] = th;
-            output[off + 2] = phi; output[off + 3] = he;
-        }
-
-        double oldR = r, oldTh = th, oldPhi = phi;
-        yoshida4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
-
-        /* Hamiltonian constraint projection */
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
-
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
-
-        if (r <= rp * 1.01) { term_reason = 1; break; }
-
-        record_crossing(output, crossing_base, &num_crossings,
-                        i, oldR, oldTh, oldPhi, r, th, phi,
-                        a, Q2, b, p.isco, p.disk_temp);
-
-        if (r > p.esc_radius) { term_reason = 2; break; }
-        if (r < 0.5) { term_reason = 4; break; }
-        if (r != r || th != th) { term_reason = 3; break; }
-    }
-
-    ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, term_reason, steps_used);
-}
-
-
-/* ════════════════════════════════════════════════════════════
  *  RK4 RAY TRACE
  * ════════════════════════════════════════════════════════════ */
 
