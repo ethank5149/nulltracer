@@ -9,6 +9,7 @@ import ctypes
 import logging
 import math
 import os
+import time as _time
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +33,19 @@ _KERNEL_REGISTRY = {
     "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
     "kahanli8s":    ("kahanli8s.cu",    "trace_kahanli8s"),
     "kahanli8s_ks": ("kahanli8s_ks.cu", "trace_kahanli8s_ks"),
+}
+
+# Map method names to single-ray trace kernel entry points.
+# The ray_trace.cu kernel provides per-integrator entry points
+# for ALL available methods — no fallback needed.
+_RAY_TRACE_REGISTRY = {
+    "yoshida4":     "ray_trace_yoshida4",
+    "rk4":          "ray_trace_rk4",
+    "yoshida6":     "ray_trace_yoshida6",
+    "yoshida8":     "ray_trace_yoshida8",
+    "rkdp8":        "ray_trace_rkdp8",
+    "kahanli8s":    "ray_trace_kahanli8s",
+    "kahanli8s_ks": "ray_trace_kahanli8s_ks",
 }
 
 
@@ -431,6 +445,280 @@ class CudaRenderer:
                 logger.error("Failed to compile kernel '%s': %s", method, e)
                 results[method] = False
         return results
+
+    # ── Single-ray tracing ───────────────────────────────────
+
+    def _get_ray_trace_kernel(self, method: str) -> cp.RawKernel:
+        """Get or compile a single-ray trace CUDA kernel for the given method.
+
+        The ray_trace.cu kernel provides per-integrator entry points.
+        Methods not in _RAY_TRACE_REGISTRY fall back to yoshida4.
+        """
+        cache_key = f"ray_trace_{method}"
+        if cache_key in self._kernel_cache:
+            return self._kernel_cache[cache_key]
+
+        # Determine entry point (fall back to yoshida4 for unsupported methods)
+        effective_method = method if method in _RAY_TRACE_REGISTRY else "yoshida4"
+        entry_point = _RAY_TRACE_REGISTRY[effective_method]
+
+        if effective_method != method:
+            logger.warning(
+                "RAY TRACE FALLBACK: method '%s' has no native ray trace kernel — "
+                "falling back to '%s'. Results will NOT match /bench output for this method! "
+                "Native ray trace methods: %s",
+                method, effective_method, list(_RAY_TRACE_REGISTRY.keys()),
+            )
+
+        logger.info(
+            "Compiling ray trace kernel for method: %s (entry: %s, effective: %s)",
+            method, entry_point, effective_method,
+        )
+
+        # Load ray_trace.cu source and resolve includes
+        source_path = _KERNEL_DIR / "ray_trace.cu"
+        if not source_path.exists():
+            raise FileNotFoundError(f"Ray trace kernel not found: {source_path}")
+
+        source = source_path.read_text()
+        source = self._resolve_includes(source, source_path.parent)
+
+        kernel = cp.RawKernel(
+            source,
+            entry_point,
+            options=("--std=c++14", "-use_fast_math"),
+        )
+
+        self._kernel_cache[cache_key] = kernel
+        logger.info("Ray trace kernel '%s' compiled (entry: %s)", method, entry_point)
+        return kernel
+
+    @property
+    def ray_trace_methods(self) -> list[str]:
+        """Return list of methods with native ray trace kernel support."""
+        return list(_RAY_TRACE_REGISTRY.keys())
+
+    def trace_single_ray(self, params: dict) -> dict:
+        """Trace a single photon ray and return detailed trajectory data.
+
+        This is the core computation for the /ray endpoint. It traces
+        one geodesic through Kerr-Newman spacetime and returns the full
+        trajectory, equatorial plane crossings, and disk physics.
+
+        Args:
+            params: dict with keys:
+                mode: str — "pixel" or "impact_parameter"
+                ix, iy: int — pixel coordinates (if mode="pixel")
+                alpha, beta: float — impact parameters in radians (if mode="impact_parameter")
+                spin, charge, inclination (degrees), fov, width, height,
+                method, steps, step_size, obs_dist, phi0, disk_temp,
+                doppler_boost, max_trajectory_points
+
+        Returns:
+            dict with keys:
+                ray: dict — input ray specification
+                spacetime: dict — black hole parameters
+                initial_state: dict — r, theta, phi, pr, pth
+                final_state: dict — r, theta, phi, pr, pth
+                termination: dict — reason, steps_used, steps_max
+                trajectory: dict — r[], theta[], phi[], step_sizes[]
+                disk_crossings: list[dict] — crossing details with physics
+                timing: dict — kernel_ms, total_ms
+        """
+        if not self._initialized:
+            raise RuntimeError("Renderer not initialized. Call initialize() first.")
+
+        t_wall_start = _time.monotonic()
+
+        method = params.get("method", "yoshida4")
+        max_traj = min(params.get("max_trajectory_points", 200), 500)
+
+        # Diagnostic: log method coverage gap
+        effective_method = method if method in _RAY_TRACE_REGISTRY else "yoshida4"
+        if effective_method != method:
+            logger.warning(
+                "DISCREPANCY ALERT: /ray requested method='%s' but will use '%s'. "
+                "The /bench endpoint uses the real '%s' kernel. "
+                "Missing ray trace kernels: %s",
+                method, effective_method, method,
+                [m for m in _KERNEL_REGISTRY if m not in _RAY_TRACE_REGISTRY],
+            )
+
+        # Get compiled ray trace kernel
+        kernel = self._get_ray_trace_kernel(method)
+
+        # Compute ISCO
+        spin = params.get("spin", 0.6)
+        charge = params.get("charge", 0.0)
+        isco_radius = isco(spin, charge)
+
+        # Build RenderParams struct
+        obs_dist = float(params.get("obs_dist", 40))
+        width = params.get("width", 320)
+        height = params.get("height", 180)
+
+        rp = RenderParams(
+            width=width,
+            height=height,
+            spin=float(spin),
+            charge=float(charge),
+            incl=math.radians(float(params.get("inclination", 80.0))),
+            fov=float(params.get("fov", 8.0)),
+            phi0=float(params.get("phi0", 0.0)),
+            isco=float(isco_radius),
+            steps=int(params.get("steps", 200)),
+            obs_dist=obs_dist,
+            esc_radius=obs_dist + 12.0,
+            disk_outer=14.0,
+            step_size=float(params.get("step_size", 0.30)),
+            bg_mode=0,  # Not used for ray tracing
+            star_layers=1,  # Not used for ray tracing
+            show_disk=1,  # Always detect disk crossings
+            show_grid=0,  # Not used for ray tracing
+            disk_temp=float(params.get("disk_temp", 1.0)),
+            doppler_boost=float(params.get("doppler_boost", 2.0)),
+        )
+
+        # Copy params struct to GPU
+        params_bytes = bytes(rp)
+        h_params = np.frombuffer(params_bytes, dtype=np.uint8)
+        d_params = cp.asarray(h_params)
+
+        # Allocate output buffer:
+        #   Header: 20 doubles
+        #   Trajectory: max_traj * 4 doubles (r, th, phi, he per step)
+        #   Crossings: 1 + 16 * 8 = 129 doubles
+        max_crossings = 16
+        output_size = 20 + max_traj * 4 + 1 + max_crossings * 8
+        d_output = cp.zeros(output_size, dtype=cp.float64)
+
+        # Write input parameters to output buffer
+        mode = params.get("mode", "pixel")
+        if mode == "impact_parameter":
+            d_output[0] = 1.0  # impact_parameter mode
+            d_output[1] = float(params.get("alpha", 0.0))
+            d_output[2] = float(params.get("beta", 0.0))
+        else:
+            d_output[0] = 0.0  # pixel mode
+            d_output[1] = float(params.get("ix", width // 2))
+            d_output[2] = float(params.get("iy", height // 2))
+        d_output[3] = float(max_traj)
+
+        # Launch kernel with CUDA event timing
+        start_event = cp.cuda.Event()
+        end_event = cp.cuda.Event()
+
+        start_event.record()
+        kernel((1,), (1,), (d_params, d_output))
+        end_event.record()
+        end_event.synchronize()
+
+        kernel_ms = cp.cuda.get_elapsed_time(start_event, end_event)
+
+        # Read back results
+        result = d_output.get()
+
+        t_wall_end = _time.monotonic()
+        total_ms = (t_wall_end - t_wall_start) * 1000.0
+
+        # Parse results
+        steps_used = int(result[14])
+        term_reason_code = int(result[13])
+        term_names = {
+            0: "steps_exhausted",
+            1: "horizon",
+            2: "escape",
+            3: "nan",
+            4: "underflow",
+        }
+
+        # Effective method (may differ from requested if no native kernel)
+        effective_method = method if method in _RAY_TRACE_REGISTRY else "yoshida4"
+
+        # Build ray specification
+        ray_info = {"mode": mode}
+        if mode == "impact_parameter":
+            ray_info["alpha"] = params.get("alpha", 0.0)
+            ray_info["beta"] = params.get("beta", 0.0)
+        else:
+            ray_info["ix"] = params.get("ix", width // 2)
+            ray_info["iy"] = params.get("iy", height // 2)
+        ray_info["b"] = float(result[5])
+
+        # Parse trajectory
+        traj_points = min(steps_used, max_traj)
+        traj_base = 20
+        traj_r = []
+        traj_th = []
+        traj_phi = []
+        traj_he = []
+        for i in range(traj_points):
+            off = traj_base + i * 4
+            traj_r.append(float(result[off + 0]))
+            traj_th.append(float(result[off + 1]))
+            traj_phi.append(float(result[off + 2]))
+            traj_he.append(float(result[off + 3]))
+
+        # Parse disk crossings
+        crossing_base = traj_base + max_traj * 4
+        num_crossings = int(result[crossing_base])
+        crossings = []
+        for j in range(num_crossings):
+            coff = crossing_base + 1 + j * 8
+            crossing = {
+                "crossing_index": int(result[coff + 0]),
+                "r": float(result[coff + 1]),
+                "phi": float(result[coff + 2]),
+                "direction": "north_to_south" if result[coff + 3] > 0 else "south_to_north",
+                "g_factor": float(result[coff + 4]),
+                "novikov_thorne_flux": float(result[coff + 5]),
+                "T_emit": float(result[coff + 6]),
+                "T_observed": float(result[coff + 7]),
+            }
+            crossings.append(crossing)
+
+        return {
+            "ray": ray_info,
+            "spacetime": {
+                "spin": float(spin),
+                "charge": float(charge),
+                "r_plus": float(result[15]),
+                "r_isco": float(result[16]),
+                "method": method,
+                "effective_method": effective_method,
+            },
+            "initial_state": {
+                "r": float(result[0]),
+                "theta": float(result[1]),
+                "phi": float(result[2]),
+                "pr": float(result[3]),
+                "pth": float(result[4]),
+            },
+            "final_state": {
+                "r": float(result[8]),
+                "theta": float(result[9]),
+                "phi": float(result[10]),
+                "pr": float(result[11]),
+                "pth": float(result[12]),
+            },
+            "termination": {
+                "reason": term_names.get(term_reason_code, f"unknown({term_reason_code})"),
+                "steps_used": steps_used,
+                "steps_max": int(params.get("steps", 200)),
+            },
+            "trajectory": {
+                "points": traj_points,
+                "r": traj_r,
+                "theta": traj_th,
+                "phi": traj_phi,
+                "step_sizes": traj_he,
+            },
+            "disk_crossings": crossings,
+            "timing": {
+                "kernel_ms": round(float(kernel_ms), 3),
+                "total_ms": round(total_ms, 3),
+            },
+        }
 
     def shutdown(self) -> None:
         """Clean up CUDA resources."""

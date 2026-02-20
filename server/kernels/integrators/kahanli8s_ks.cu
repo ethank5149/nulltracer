@@ -69,6 +69,7 @@
 #include "../geodesic_base.cu"
 #include "../backgrounds.cu"
 #include "../disk.cu"
+#include "adaptive_step.cu"
 
 
 /* ── Kahan-Li s15odr8 optimal 8th-order coefficients ───────────
@@ -223,16 +224,7 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
      *   [6] K. Sundman, Acta Math. 36:105–179 (1913).
      *   [7] Z. Ge & J.E. Marsden, Phys. Lett. A 133:134 (1988).
      */
-    double r_ph;
-    if (Q2 < 1e-10) {
-        /* Exact prograde equatorial photon orbit (Bardeen 1972) */
-        r_ph = 2.0 * (1.0 + cos(2.0 / 3.0 * acos(-a)));
-    } else {
-        /* Conservative bound: r+ ≤ r_ph for all Kerr-Newman */
-        r_ph = rp;
-    }
-    double tau_needed = 2.0 * (1.0 / r_ph - 1.0 / p.esc_radius);
-    double dtau = (1.0 + p.step_size) * tau_needed / (double)STEPS;
+    double dtau = sundman_dtau(a, Q2, rp, p.step_size, p.esc_radius, STEPS);
 
     /* ── Integration loop ─────────────────────────────────── */
 
@@ -242,15 +234,8 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
         /* Save state for disk crossing interpolation */
         double oldR = r, oldTh = th, oldPhi = phi;
 
-        /* ── Sundman-scaled step size ─────────────────────── */
-        /* Physical step Δλ = Δτ·Σ.  The lower clamp prevents
-         * vanishing steps at the poles; the upper clamp prevents
-         * overshooting in the far field.  The upper bound scales
-         * with obs_dist to remain consistent across scene sizes. */
-        double cth = cos(th);
-        double sig = r * r + a * a * cth * cth;
-        double he = dtau * sig;
-        he = fmin(fmax(he, 0.005), 0.2 * p.obs_dist);
+        /* Sundman-scaled step size (shared function) */
+        double he = sundman_physical_step(dtau, r, th, a, p.obs_dist);
 
         /* ════════════════════════════════════════════════════
          *  KAHAN-LI s15odr8 8th-ORDER: 15 symmetric substeps

@@ -3,31 +3,16 @@
  *
  *  7 symmetric substeps with Solution A triple-jump coefficients.
  *  All geodesic integration in float64; color output in float32.
+ *
+ *  Uses shared step function from steps.cu and shared adaptive
+ *  step sizing from adaptive_step.cu for modularity.
  * ============================================================ */
 
 #include "../geodesic_base.cu"
 #include "../backgrounds.cu"
 #include "../disk.cu"
-
-/* Yoshida 6th-order symmetric composition coefficients (Solution A) */
-#define Y6_W1  0.78451361047755726382
-#define Y6_W2  0.23557321335935813368
-#define Y6_W3 -1.17767998417887100695
-#define Y6_W0  1.31518632068391121889
-#define Y6_D1  0.39225680523877863191
-#define Y6_D2  0.51004341191845769508
-#define Y6_D3 -0.47105338540975643969
-#define Y6_D0  0.06875316825252012625
-
-/* Macro for a single Yoshida drift-kick substep */
-#define YOSHIDA_SUBSTEP(D_COEFF, W_COEFF) \
-    geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-    r   += he * (D_COEFF) * dr_;   \
-    th  += he * (D_COEFF) * dth_;  \
-    phi += he * (D_COEFF) * dphi_; \
-    geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-    pr  += he * (W_COEFF) * dpr_;  \
-    pth += he * (W_COEFF) * dpth_;
+#include "steps.cu"
+#include "adaptive_step.cu"
 
 
 extern "C" __global__
@@ -56,21 +41,12 @@ void trace_yoshida6(const RenderParams *pp, unsigned char *output) {
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        /* Scale base step with observer distance (affine parameter budget ∝ R₀) */
-        double h_scaled = p.step_size * (p.obs_dist / 30.0);
-        double he = h_scaled * fmin(fmax((r - rp) * 0.4, 0.04), 1.0);
-        he = fmin(fmax(he, 0.012), 1.0);
+        /* Adaptive step size (shared function) */
+        double he = adaptive_step_symplectic(r, rp, p.step_size, p.obs_dist);
         double oldTh = th, oldR = r, oldPhi = phi;
-        double dr_, dth_, dphi_, dpr_, dpth_;
 
-        /* 7 symmetric substeps: d1,w1 / d2,w2 / d3,w3 / d0,w0 / d3,w3 / d2,w2 / d1,w1 */
-        YOSHIDA_SUBSTEP(Y6_D1, Y6_W1)
-        YOSHIDA_SUBSTEP(Y6_D2, Y6_W2)
-        YOSHIDA_SUBSTEP(Y6_D3, Y6_W3)
-        YOSHIDA_SUBSTEP(Y6_D0, Y6_W0)
-        YOSHIDA_SUBSTEP(Y6_D3, Y6_W3)
-        YOSHIDA_SUBSTEP(Y6_D2, Y6_W2)
-        YOSHIDA_SUBSTEP(Y6_D1, Y6_W1)
+        /* Yoshida 6th-order step (shared function from steps.cu) */
+        yoshida6_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
@@ -122,5 +98,3 @@ void trace_yoshida6(const RenderParams *pp, unsigned char *output) {
     output[idx + 1] = (unsigned char)(fminf(fmaxf(cg * 255.0f, 0.0f), 255.0f));
     output[idx + 2] = (unsigned char)(fminf(fmaxf(cb * 255.0f, 0.0f), 255.0f));
 }
-
-#undef YOSHIDA_SUBSTEP

@@ -6,19 +6,16 @@
  *
  *  This file is loaded as a complete CUDA kernel source by
  *  renderer.py via CuPy RawKernel.
+ *
+ *  Uses shared step function from steps.cu and shared adaptive
+ *  step sizing from adaptive_step.cu for modularity.
  * ============================================================ */
 
 #include "../geodesic_base.cu"
 #include "../backgrounds.cu"
 #include "../disk.cu"
-
-/* Yoshida 4th-order (Forest-Ruth) coefficients
- * w1 = 1/(2 - 2^(1/3)), w0 = -2^(1/3)/(2 - 2^(1/3))
- * d1 = w1/2, d0 = (w0 + w1)/2 */
-#define Y4_W1  1.3512071919596576
-#define Y4_W0 -1.7024143839193153
-#define Y4_D1  0.6756035959798288
-#define Y4_D0 -0.1756035959798288
+#include "steps.cu"
+#include "adaptive_step.cu"
 
 
 extern "C" __global__
@@ -48,43 +45,13 @@ void trace_yoshida4(const RenderParams *pp, unsigned char *output) {
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        /* Adaptive step size: scale base step with observer distance
-         * (affine parameter budget must grow with R₀ for the round trip) */
-        double h_scaled = p.step_size * (p.obs_dist / 30.0);
-        double he = h_scaled * fmin(fmax((r - rp) * 0.4, 0.04), 1.0);
-        he = fmin(fmax(he, 0.012), 1.0);
+        /* Adaptive step size (shared function) */
+        double he = adaptive_step_symplectic(r, rp, p.step_size, p.obs_dist);
 
         double oldTh = th, oldR = r, oldPhi = phi;
 
-        /* Yoshida 4th-order symmetric composition: 3 substeps */
-        double dr_, dth_, dphi_, dpr_, dpth_;
-
-        /* --- Substep 1: drift d1, kick w1 --- */
-        geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-        r   += he * Y4_D1 * dr_;
-        th  += he * Y4_D1 * dth_;
-        phi += he * Y4_D1 * dphi_;
-        geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-        pr  += he * Y4_W1 * dpr_;
-        pth += he * Y4_W1 * dpth_;
-
-        /* --- Substep 2: drift d0, kick w0 --- */
-        geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-        r   += he * Y4_D0 * dr_;
-        th  += he * Y4_D0 * dth_;
-        phi += he * Y4_D0 * dphi_;
-        geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-        pr  += he * Y4_W0 * dpr_;
-        pth += he * Y4_W0 * dpth_;
-
-        /* --- Substep 3: drift d1, kick w1 (symmetric) --- */
-        geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-        r   += he * Y4_D1 * dr_;
-        th  += he * Y4_D1 * dth_;
-        phi += he * Y4_D1 * dphi_;
-        geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_);
-        pr  += he * Y4_W1 * dpr_;
-        pth += he * Y4_W1 * dpth_;
+        /* Yoshida 4th-order step (shared function from steps.cu) */
+        yoshida4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
         /* Pole reflection */
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }

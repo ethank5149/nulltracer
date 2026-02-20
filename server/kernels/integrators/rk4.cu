@@ -3,11 +3,16 @@
  *
  *  4 stages per step with 1/6, 1/3, 1/3, 1/6 weights.
  *  All geodesic integration in float64; color output in float32.
+ *
+ *  Uses shared step function from steps.cu and shared adaptive
+ *  step sizing from adaptive_step.cu for modularity.
  * ============================================================ */
 
 #include "../geodesic_base.cu"
 #include "../backgrounds.cu"
 #include "../disk.cu"
+#include "steps.cu"
+#include "adaptive_step.cu"
 
 
 extern "C" __global__
@@ -36,38 +41,12 @@ void trace_rk4(const RenderParams *pp, unsigned char *output) {
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        /* Scale base step with observer distance (affine parameter budget ∝ R₀).
-         * Non-symplectic RK methods need ~1.7× more affine parameter than
-         * symplectic integrators to avoid energy-drift-induced ray capture,
-         * especially for near-edge-on inclinations in strong gravity. */
-        double h_scaled = p.step_size * (p.obs_dist / 30.0) * 1.7;
-        double he = h_scaled * fmin(fmax((r - rp) * 0.5, 0.04), 1.0);
-        he = fmin(fmax(he, 0.02), 1.4);
+        /* Adaptive step size (shared function) */
+        double he = adaptive_step_rk4(r, rp, p.step_size, p.obs_dist);
         double oldTh = th, oldR = r, oldPhi = phi;
 
-        /* RK4: 4 stages */
-        double dr1, dth1, dphi1, dpr1, dpth1;
-        double dr2, dth2, dphi2, dpr2, dpth2;
-        double dr3, dth3, dphi3, dpr3, dpth3;
-        double dr4, dth4, dphi4, dpr4, dpth4;
-
-        geoRHS(r, th, pr, pth, a, b, Q2,
-               &dr1, &dth1, &dphi1, &dpr1, &dpth1);
-        geoRHS(r + 0.5*he*dr1, th + 0.5*he*dth1,
-               pr + 0.5*he*dpr1, pth + 0.5*he*dpth1, a, b, Q2,
-               &dr2, &dth2, &dphi2, &dpr2, &dpth2);
-        geoRHS(r + 0.5*he*dr2, th + 0.5*he*dth2,
-               pr + 0.5*he*dpr2, pth + 0.5*he*dpth2, a, b, Q2,
-               &dr3, &dth3, &dphi3, &dpr3, &dpth3);
-        geoRHS(r + he*dr3, th + he*dth3,
-               pr + he*dpr3, pth + he*dpth3, a, b, Q2,
-               &dr4, &dth4, &dphi4, &dpr4, &dpth4);
-
-        r   += he * (dr1   + 2.0*dr2   + 2.0*dr3   + dr4  ) / 6.0;
-        th  += he * (dth1  + 2.0*dth2  + 2.0*dth3  + dth4 ) / 6.0;
-        phi += he * (dphi1 + 2.0*dphi2 + 2.0*dphi3 + dphi4) / 6.0;
-        pr  += he * (dpr1  + 2.0*dpr2  + 2.0*dpr3  + dpr4 ) / 6.0;
-        pth += he * (dpth1 + 2.0*dpth2 + 2.0*dpth3 + dpth4) / 6.0;
+        /* RK4 step (shared function from steps.cu) */
+        rk4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }

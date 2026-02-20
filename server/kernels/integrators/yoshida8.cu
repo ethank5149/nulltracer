@@ -3,40 +3,16 @@
  *
  *  15 symmetric substeps with Solution D coefficients (Table 2).
  *  All geodesic integration in float64; color output in float32.
+ *
+ *  Uses shared step function from steps.cu and shared adaptive
+ *  step sizing from adaptive_step.cu for modularity.
  * ============================================================ */
 
 #include "../geodesic_base.cu"
 #include "../backgrounds.cu"
 #include "../disk.cu"
-
-/* Yoshida 8th-order coefficients (Solution D from Table 2) */
-#define Y8_W1  1.04242620869991
-#define Y8_W2  1.82020630970714
-#define Y8_W3  0.157739928123617
-#define Y8_W4  2.44002732616735
-#define Y8_W5 -0.00716989419708120
-#define Y8_W6 -2.44699182370524
-#define Y8_W7 -1.61582374150097
-#define Y8_W0 -1.7808286265894516
-
-#define Y8_D1  0.52121310434996
-#define Y8_D2  1.43131625920353
-#define Y8_D3  0.98897311891538
-#define Y8_D4  1.29888362714548
-#define Y8_D5  1.21642871598513
-#define Y8_D6 -1.22708085895116
-#define Y8_D7 -2.03140778260311
-#define Y8_D0 -1.69832618454521
-
-/* Macro for a single Yoshida drift-kick substep */
-#define YOSHIDA_SUBSTEP(D_COEFF, W_COEFF) \
-    geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-    r   += he * (D_COEFF) * dr_;   \
-    th  += he * (D_COEFF) * dth_;  \
-    phi += he * (D_COEFF) * dphi_; \
-    geoRHS(r, th, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-    pr  += he * (W_COEFF) * dpr_;  \
-    pth += he * (W_COEFF) * dpth_;
+#include "steps.cu"
+#include "adaptive_step.cu"
 
 
 extern "C" __global__
@@ -65,29 +41,12 @@ void trace_yoshida8(const RenderParams *pp, unsigned char *output) {
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        /* Scale base step with observer distance (affine parameter budget ∝ R₀) */
-        double h_scaled = p.step_size * (p.obs_dist / 30.0);
-        double he = h_scaled * fmin(fmax((r - rp) * 0.4, 0.04), 1.0);
-        he = fmin(fmax(he, 0.012), 1.0);
+        /* Adaptive step size (shared function) */
+        double he = adaptive_step_symplectic(r, rp, p.step_size, p.obs_dist);
         double oldTh = th, oldR = r, oldPhi = phi;
-        double dr_, dth_, dphi_, dpr_, dpth_;
 
-        /* 15 symmetric substeps */
-        YOSHIDA_SUBSTEP(Y8_D1, Y8_W1)  /* 1 */
-        YOSHIDA_SUBSTEP(Y8_D2, Y8_W2)  /* 2 */
-        YOSHIDA_SUBSTEP(Y8_D3, Y8_W3)  /* 3 */
-        YOSHIDA_SUBSTEP(Y8_D4, Y8_W4)  /* 4 */
-        YOSHIDA_SUBSTEP(Y8_D5, Y8_W5)  /* 5 */
-        YOSHIDA_SUBSTEP(Y8_D6, Y8_W6)  /* 6 */
-        YOSHIDA_SUBSTEP(Y8_D7, Y8_W7)  /* 7 */
-        YOSHIDA_SUBSTEP(Y8_D0, Y8_W0)  /* 8 (center) */
-        YOSHIDA_SUBSTEP(Y8_D7, Y8_W7)  /* 9 (symmetric) */
-        YOSHIDA_SUBSTEP(Y8_D6, Y8_W6)  /* 10 */
-        YOSHIDA_SUBSTEP(Y8_D5, Y8_W5)  /* 11 */
-        YOSHIDA_SUBSTEP(Y8_D4, Y8_W4)  /* 12 */
-        YOSHIDA_SUBSTEP(Y8_D3, Y8_W3)  /* 13 */
-        YOSHIDA_SUBSTEP(Y8_D2, Y8_W2)  /* 14 */
-        YOSHIDA_SUBSTEP(Y8_D1, Y8_W1)  /* 15 */
+        /* Yoshida 8th-order step (shared function from steps.cu) */
+        yoshida8_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
@@ -139,5 +98,3 @@ void trace_yoshida8(const RenderParams *pp, unsigned char *output) {
     output[idx + 1] = (unsigned char)(fminf(fmaxf(cg * 255.0f, 0.0f), 255.0f));
     output[idx + 2] = (unsigned char)(fminf(fmaxf(cb * 255.0f, 0.0f), 255.0f));
 }
-
-#undef YOSHIDA_SUBSTEP

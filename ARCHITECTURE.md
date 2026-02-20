@@ -48,7 +48,7 @@ sequenceDiagram
 
 ```
 nulltracer/server/
-├── app.py                 # FastAPI application entry point (/render, /health endpoints)
+├── app.py                 # FastAPI application entry point (/render, /ray, /health endpoints)
 ├── renderer.py            # CudaRenderer: kernel compilation, execution, GPU management
 ├── cache.py               # LRU image cache by parameter hash
 ├── isco.py                # ISCO calculation (port of iscoJS/iscoKN)
@@ -59,6 +59,7 @@ nulltracer/server/
     ├── geodesic_base.cu    # Shared metric functions, geodesic RHS, constants (float64)
     ├── backgrounds.cu      # Background rendering (stars, checker, colormap)
     ├── disk.cu             # Accretion disk emission and color computation
+    ├── ray_trace.cu        # Single-ray tracing kernel for /ray endpoint
     └── integrators/
         ├── rk4.cu          # RK4 4th-order Runge-Kutta integrator kernel
         ├── yoshida4.cu     # Yoshida 4th-order symplectic integrator kernel
@@ -559,7 +560,153 @@ X-Backend: cuda
 }
 ```
 
-### 4.3 CORS Configuration
+### 4.3 `POST /ray`
+
+General-purpose single-ray tracing endpoint. Traces one photon geodesic through Kerr-Newman spacetime and returns the full trajectory, equatorial plane crossings with disk physics, and termination conditions.
+
+**Request body** (`application/json`):
+
+```json
+{
+  "mode": "pixel",
+  "ix": 160,
+  "iy": 90,
+  "spin": 0.6,
+  "charge": 0.0,
+  "inclination": 80.0,
+  "method": "yoshida4",
+  "fov": 8.0,
+  "width": 320,
+  "height": 180,
+  "steps": 200,
+  "step_size": 0.3,
+  "obs_dist": 40,
+  "phi0": 0.0,
+  "doppler_boost": 2,
+  "disk_temp": 1.0,
+  "include_trajectory": true,
+  "include_disk_physics": true,
+  "max_trajectory_points": 200
+}
+```
+
+**Input modes**:
+- `"pixel"` — specify screen coordinates `(ix, iy)` to trace (defaults to image center)
+- `"impact_parameter"` — specify `(alpha, beta)` angles directly in radians
+
+**Impact parameter mode example**:
+
+```json
+{
+  "mode": "impact_parameter",
+  "alpha": -0.05,
+  "beta": 0.02,
+  "spin": 0.998,
+  "inclination": 85.0,
+  "method": "rk4"
+}
+```
+
+**Pydantic model** ([`app.py`](server/app.py:444)):
+
+```python
+class RayRequest(BaseModel):
+    mode: str = Field("pixel", pattern=r"^(pixel|impact_parameter)$")
+    ix: Optional[int] = Field(None, ge=0)
+    iy: Optional[int] = Field(None, ge=0)
+    alpha: Optional[float] = None
+    beta: Optional[float] = None
+    spin: float = Field(0.6, ge=0, le=0.998)
+    charge: float = Field(0.0, ge=0, le=0.998)
+    inclination: float = Field(80.0, ge=3, le=89)
+    method: str = Field("yoshida4", pattern=r"^(yoshida4|rk4|...)$")
+    fov: float = Field(8.0, ge=2, le=25)
+    width: int = Field(320, ge=16, le=3840)
+    height: int = Field(180, ge=16, le=2160)
+    steps: int = Field(200, ge=60, le=500)
+    step_size: float = Field(0.3, ge=0.1, le=0.8)
+    obs_dist: int = Field(40, ge=20, le=100)
+    phi0: float = Field(0.0)
+    doppler_boost: int = Field(2, ge=0, le=2)
+    disk_temp: float = Field(1.0, ge=0.2, le=2.5)
+    include_trajectory: bool = Field(True)
+    include_disk_physics: bool = Field(True)
+    max_trajectory_points: int = Field(200, ge=10, le=500)
+```
+
+**Response** (success — `200 OK`, `application/json`):
+
+```json
+{
+  "ray": {
+    "mode": "pixel",
+    "ix": 160,
+    "iy": 90,
+    "b": -1.234
+  },
+  "spacetime": {
+    "spin": 0.6,
+    "charge": 0.0,
+    "r_plus": 1.8,
+    "r_isco": 3.829,
+    "method": "yoshida4",
+    "effective_method": "yoshida4"
+  },
+  "initial_state": {
+    "r": 40.0, "theta": 1.396, "phi": 0.0,
+    "pr": -0.998, "pth": -0.456
+  },
+  "final_state": {
+    "r": 52.0, "theta": 0.87, "phi": 3.14,
+    "pr": 0.12, "pth": -0.03
+  },
+  "termination": {
+    "reason": "escape",
+    "steps_used": 147,
+    "steps_max": 200
+  },
+  "trajectory": {
+    "points": 147,
+    "r": [40.0, 39.7, "..."],
+    "theta": [1.396, 1.395, "..."],
+    "phi": [0.0, 0.001, "..."],
+    "step_sizes": [0.3, 0.29, "..."]
+  },
+  "disk_crossings": [
+    {
+      "crossing_index": 42,
+      "r": 6.12,
+      "phi": 1.23,
+      "direction": "north_to_south",
+      "g_factor": 1.15,
+      "novikov_thorne_flux": 0.73,
+      "T_emit": 6400.0,
+      "T_observed": 7360.0
+    }
+  ],
+  "timing": {
+    "kernel_ms": 0.12,
+    "total_ms": 1.45
+  }
+}
+```
+
+**Termination reasons**:
+- `"escape"` — ray reached escape radius (background)
+- `"horizon"` — ray captured by event horizon
+- `"steps_exhausted"` — maximum integration steps reached
+- `"nan"` — numerical instability detected
+- `"underflow"` — radius dropped below safety threshold
+
+**Integrator support**: The ray trace kernel natively supports `yoshida4` and `rk4`. Other methods (`yoshida6`, `yoshida8`, `rkdp8`, `kahanli8s`, `kahanli8s_ks`) fall back to `yoshida4` for the ray trace — the `effective_method` field in the response indicates which integrator was actually used.
+
+**Disk crossing physics**: Each equatorial plane crossing includes:
+- `g_factor` — gravitational redshift factor ν_obs/ν_emit
+- `novikov_thorne_flux` — normalized Page-Thorne radial flux F/F_max
+- `T_emit` — emitted blackbody temperature (K)
+- `T_observed` — observed temperature after redshift (K)
+
+### 4.4 CORS Configuration
 
 The server enables CORS for all origins by default (configurable):
 
@@ -995,13 +1142,14 @@ This ensures:
 
 | File | Purpose |
 |------|---------|
-| [`server/app.py`](server/app.py) | FastAPI entry point, `/render` and `/health` endpoints |
-| [`server/renderer.py`](server/renderer.py) | CudaRenderer: kernel compilation, GPU memory, execution |
+| [`server/app.py`](server/app.py) | FastAPI entry point, `/render`, `/ray`, `/bench`, and `/health` endpoints |
+| [`server/renderer.py`](server/renderer.py) | CudaRenderer: kernel compilation, GPU memory, execution, single-ray tracing |
 | [`server/isco.py`](server/isco.py) | ISCO radius calculation (Kerr-Newman) |
 | [`server/cache.py`](server/cache.py) | LRU image cache with memory limits |
 | [`server/kernels/geodesic_base.cu`](server/kernels/geodesic_base.cu) | Metric functions, geodesic RHS, shared utilities |
 | [`server/kernels/backgrounds.cu`](server/kernels/backgrounds.cu) | Background rendering (stars, checker, colormap) |
 | [`server/kernels/disk.cu`](server/kernels/disk.cu) | Disk emission, blackbody color, GR redshift |
+| [`server/kernels/ray_trace.cu`](server/kernels/ray_trace.cu) | Single-ray tracing kernel with trajectory recording and disk physics |
 | [`server/kernels/integrators/rk4.cu`](server/kernels/integrators/rk4.cu) | RK4 integrator kernel |
 | [`server/kernels/integrators/yoshida4.cu`](server/kernels/integrators/yoshida4.cu) | Yoshida 4th-order integrator kernel |
 | [`server/kernels/integrators/yoshida6.cu`](server/kernels/integrators/yoshida6.cu) | Yoshida 6th-order integrator kernel |

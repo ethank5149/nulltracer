@@ -11,11 +11,16 @@
  *  Reference: P.J. Prince & J.R. Dormand (1981),
  *  "High order embedded Runge-Kutta formulae",
  *  J. Comp. Appl. Math. 7(1), pp. 67-75.
+ *
+ *  Uses shared adaptive step sizing from adaptive_step.cu for
+ *  initial step estimate (subsequent steps use embedded error
+ *  estimator).
  * ============================================================ */
 
 #include "../geodesic_base.cu"
 #include "../backgrounds.cu"
 #include "../disk.cu"
+#include "adaptive_step.cu"
 
 
 extern "C" __global__
@@ -49,10 +54,8 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output) {
     double h_max = 2.0;     /* maximum step size */
     int max_reject = 4;     /* max consecutive rejections before forcing accept */
 
-    /* Initial step size estimate from geometric heuristic */
-    double h_scaled = p.step_size * (p.obs_dist / 30.0);
-    double he = h_scaled * fmin(fmax((r - rp) * 0.4, 0.04), 1.0);
-    he = fmin(fmax(he, h_min), h_max);
+    /* Initial step size estimate (shared function) */
+    double he = adaptive_step_rkdp8_initial(r, rp, p.step_size, p.obs_dist, h_min, h_max);
 
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
