@@ -10,7 +10,7 @@
   <Support/>
   <Project>https://github.com/nulltracer</Project>
   <Overview>
-    GPU-accelerated Kerr-Newman black hole ray tracer — server-side renderer.
+    GPU-accelerated ray tracing through curved spacetimes — server-side renderer.
     Provides a FastAPI endpoint that renders black hole visualizations using
     CUDA compute kernels, enabling mobile devices to offload heavy GPU work.
     

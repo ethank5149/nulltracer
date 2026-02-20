@@ -1,24 +1,33 @@
 """
 FastAPI application for the Nulltracer server-side renderer.
+GPU-accelerated ray tracing through curved spacetimes.
 
 Provides a POST /render endpoint that accepts render parameters,
 renders a black hole frame via CUDA compute kernels, and returns a
 JPEG or WebP image.
+
+Also provides a POST /bench endpoint that renders a frame using ALL
+available integrators and returns runtime statistics + images for
+side-by-side comparison.
 """
 
 import asyncio
+import base64
 import io
 import json
 import logging
 import struct
 import time
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
 
 # Configure root logger so all module loggers (renderer, etc.) are visible
 logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s: %(message)s")
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from PIL import Image
 from pydantic import BaseModel, Field, model_validator
 
@@ -36,7 +45,7 @@ class RenderRequest(BaseModel):
     fov: float = Field(8.0, ge=2, le=25)
     width: int = Field(1280, ge=160, le=3840)
     height: int = Field(720, ge=90, le=2160)
-    method: str = Field("yoshida4", pattern=r"^(yoshida4|rk4|yoshida6|yoshida8|rkdp8)$")
+    method: str = Field("yoshida4", pattern=r"^(yoshida4|rk4|yoshida6|yoshida8|rkdp8|kahanli8s|kahanli8s_ks)$")
     steps: int = Field(200, ge=60, le=500)
     step_size: float = Field(0.3, ge=0.1, le=0.8)
     obs_dist: int = Field(40, ge=20, le=100)
@@ -57,6 +66,42 @@ class RenderRequest(BaseModel):
         return self
 
 
+class BenchRequest(BaseModel):
+    """Request model for the /bench endpoint.
+
+    Accepts the same physics parameters as RenderRequest but renders
+    at fixed 1920×1080 using all (or a subset of) integrators for
+    side-by-side comparison with detailed timing statistics.
+    """
+    spin: float = Field(0.6, ge=0, le=0.998)
+    charge: float = Field(0.0, ge=0, le=0.998)
+    inclination: float = Field(80.0, ge=3, le=89)
+    fov: float = Field(8.0, ge=2, le=25)
+    steps: int = Field(200, ge=60, le=500)
+    step_size: float = Field(0.3, ge=0.1, le=0.8)
+    obs_dist: int = Field(40, ge=20, le=100)
+    bg_mode: int = Field(1, ge=0, le=2)
+    show_disk: bool = Field(True)
+    show_grid: bool = Field(True)
+    disk_temp: float = Field(1.0, ge=0.2, le=2.5)
+    star_layers: int = Field(3, ge=1, le=4)
+    phi0: float = Field(0.0)
+    doppler_boost: int = Field(default=2, ge=0, le=2, description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick")
+    methods: Optional[list[str]] = Field(
+        None,
+        description="Subset of integrator methods to benchmark. Defaults to all available methods."
+    )
+    format: str = Field("webp", pattern=r"^(jpeg|webp|png)$")
+    quality: int = Field(90, ge=10, le=100)
+    include_images: bool = Field(True, description="Include base64-encoded images in response. Set false for stats-only.")
+
+    @model_validator(mode="after")
+    def check_spin_charge_constraint(self):
+        if self.spin ** 2 + self.charge ** 2 > 1.0:
+            raise ValueError("spin² + charge² must be ≤ 1 (naked singularity constraint)")
+        return self
+
+
 # ── Global state ─────────────────────────────────────────────
 
 renderer = CudaRenderer()
@@ -65,7 +110,7 @@ gpu_lock = asyncio.Lock()
 
 # ── FastAPI app ──────────────────────────────────────────────
 
-app = FastAPI(title="Nulltracer Render Server")
+app = FastAPI(title="Nulltracer — GPU-Accelerated Curved Spacetime Renderer")
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,6 +127,13 @@ async def startup_event():
     try:
         renderer.initialize()
         logger.info("CUDA renderer ready: %s", renderer.gpu_info)
+        # Pre-compile all integrator kernels for bench endpoint
+        compile_results = renderer.precompile_all()
+        compiled = sum(1 for v in compile_results.values() if v)
+        logger.info(
+            "Pre-compiled %d/%d integrator kernels",
+            compiled, len(compile_results),
+        )
     except Exception as e:
         raise RuntimeError(f"CUDA renderer failed to initialize: {e}")
 
@@ -165,6 +217,219 @@ async def render(req: RenderRequest):
             "X-Cache": "MISS",
             "X-Render-Time-Ms": f"{render_ms:.1f}",
             "X-Backend": "cuda",
+        },
+    )
+
+
+# ── Bench endpoint (SSE streaming) ───────────────────────────
+
+BENCH_WIDTH = 1920
+BENCH_HEIGHT = 1080
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """Format a Server-Sent Event string."""
+    payload = json.dumps(data, separators=(",", ":"))
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+@app.post("/bench")
+async def bench(req: BenchRequest):
+    """Benchmark all integrators with SSE streaming.
+
+    Renders the scene at 1920×1080 using every available integrator
+    (or a user-specified subset), streaming results as Server-Sent Events
+    so the client can display each integrator's result as it completes.
+
+    SSE event types:
+        started  — benchmark metadata (bench_id, methods, gpu, resolution)
+        progress — emitted before each integrator starts rendering
+        result   — emitted after each integrator completes (includes image)
+        complete — final summary with timing statistics
+
+    This endpoint bypasses the image cache entirely to ensure
+    accurate timing measurements.
+    """
+    if not renderer._initialized:
+        raise HTTPException(status_code=503, detail="CUDA renderer not available")
+
+    bench_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    # Determine which methods to benchmark
+    all_methods = renderer.available_methods
+    if req.methods is not None:
+        invalid = [m for m in req.methods if m not in all_methods]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown integrator method(s): {invalid}. Available: {all_methods}",
+            )
+        methods = req.methods
+    else:
+        methods = all_methods
+
+    # Build base render params (shared across all integrators)
+    base_params = {
+        "spin": req.spin,
+        "charge": req.charge,
+        "inclination": req.inclination,
+        "fov": req.fov,
+        "width": BENCH_WIDTH,
+        "height": BENCH_HEIGHT,
+        "steps": req.steps,
+        "step_size": req.step_size,
+        "obs_dist": req.obs_dist,
+        "bg_mode": req.bg_mode,
+        "show_disk": req.show_disk,
+        "show_grid": req.show_grid,
+        "disk_temp": req.disk_temp,
+        "star_layers": req.star_layers,
+        "phi0": req.phi0,
+        "doppler_boost": req.doppler_boost,
+    }
+
+    # Echo input parameters for the started event
+    input_params = req.model_dump()
+    input_params.pop("methods", None)
+    input_params.pop("format", None)
+    input_params.pop("quality", None)
+    input_params.pop("include_images", None)
+
+    async def event_generator():
+        # Emit started event
+        yield _sse_event("started", {
+            "bench_id": bench_id,
+            "timestamp": timestamp,
+            "gpu": renderer.gpu_info,
+            "resolution": {"width": BENCH_WIDTH, "height": BENCH_HEIGHT},
+            "parameters": input_params,
+            "methods": methods,
+            "total": len(methods),
+        })
+
+        results = []
+        t_bench_start = time.monotonic()
+
+        # Hold GPU lock for entire benchmark to ensure consistent timing
+        async with gpu_lock:
+            for idx, method in enumerate(methods):
+                # Emit progress event before rendering
+                yield _sse_event("progress", {
+                    "method": method,
+                    "index": idx + 1,
+                    "total": len(methods),
+                    "status": "rendering",
+                    "elapsed_ms": round((time.monotonic() - t_bench_start) * 1000.0, 2),
+                })
+
+                render_params = {**base_params, "method": method}
+                result_entry = {"method": method}
+
+                try:
+                    # Run timed render (blocking GPU work)
+                    timed = await asyncio.get_running_loop().run_in_executor(
+                        None, renderer.render_frame_timed, render_params
+                    )
+
+                    raw_rgb = timed["raw_rgb"]
+                    kernel_ms = timed["kernel_ms"]
+                    total_render_ms = timed["total_ms"]
+                    gpu_mem_alloc = timed["gpu_mem_alloc_bytes"]
+
+                    # Encode image
+                    t_enc_start = time.monotonic()
+                    img = Image.frombytes("RGB", (BENCH_WIDTH, BENCH_HEIGHT), raw_rgb)
+                    buf = io.BytesIO()
+
+                    if req.format == "png":
+                        img.save(buf, format="PNG")
+                        mime = "image/png"
+                    elif req.format == "webp":
+                        img.save(buf, format="WEBP", quality=req.quality)
+                        mime = "image/webp"
+                    else:
+                        img.save(buf, format="JPEG", quality=req.quality)
+                        mime = "image/jpeg"
+
+                    image_bytes = buf.getvalue()
+                    encode_ms = (time.monotonic() - t_enc_start) * 1000.0
+
+                    result_entry.update({
+                        "status": "ok",
+                        "kernel_ms": round(kernel_ms, 2),
+                        "render_ms": round(total_render_ms, 2),
+                        "encode_ms": round(encode_ms, 2),
+                        "total_ms": round(total_render_ms + encode_ms, 2),
+                        "gpu_mem_alloc_bytes": gpu_mem_alloc,
+                        "image_size_bytes": len(image_bytes),
+                    })
+
+                    if req.include_images:
+                        b64 = base64.b64encode(image_bytes).decode("ascii")
+                        result_entry["image_base64"] = f"data:{mime};base64,{b64}"
+                    else:
+                        result_entry["image_base64"] = None
+
+                except Exception as e:
+                    logger.error("Bench render failed for method '%s': %s", method, e, exc_info=True)
+                    result_entry.update({
+                        "status": "error",
+                        "error": str(e),
+                        "kernel_ms": None,
+                        "render_ms": None,
+                        "encode_ms": None,
+                        "total_ms": None,
+                        "gpu_mem_alloc_bytes": None,
+                        "image_size_bytes": None,
+                        "image_base64": None,
+                    })
+
+                results.append(result_entry)
+
+                # Emit result event immediately after this integrator completes
+                yield _sse_event("result", result_entry)
+
+        total_bench_ms = (time.monotonic() - t_bench_start) * 1000.0
+
+        # Compute summary statistics
+        ok_results = [r for r in results if r["status"] == "ok"]
+        summary = {}
+        if ok_results:
+            fastest = min(ok_results, key=lambda r: r["kernel_ms"])
+            slowest = max(ok_results, key=lambda r: r["kernel_ms"])
+            summary = {
+                "fastest_method": fastest["method"],
+                "fastest_kernel_ms": fastest["kernel_ms"],
+                "slowest_method": slowest["method"],
+                "slowest_kernel_ms": slowest["kernel_ms"],
+                "speedup_ratio": round(slowest["kernel_ms"] / fastest["kernel_ms"], 2) if fastest["kernel_ms"] > 0 else None,
+                "methods_ok": len(ok_results),
+                "methods_failed": len(results) - len(ok_results),
+            }
+
+        logger.info(
+            "Bench completed: %d methods in %.1fms (fastest: %s %.1fms)",
+            len(results),
+            total_bench_ms,
+            summary.get("fastest_method", "N/A"),
+            summary.get("fastest_kernel_ms", 0),
+        )
+
+        # Emit complete event with summary
+        yield _sse_event("complete", {
+            "bench_id": bench_id,
+            "total_bench_time_ms": round(total_bench_ms, 2),
+            "summary": summary,
+        })
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx/proxy buffering
         },
     )
 

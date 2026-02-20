@@ -1,10 +1,10 @@
 # Nulltracer
 
-**A GPU-accelerated Kerr-Newman black hole ray tracer** — a CUDA-powered server application that visualizes the appearance of rotating and electrically charged black holes by tracing light paths (null geodesics) through curved spacetime. A thin browser client displays rendered frames with interactive parameter controls.
+**GPU-accelerated ray tracing through curved spacetimes** — a CUDA-powered server application that visualizes the appearance of black holes by tracing light paths (null geodesics) through curved spacetime. A thin browser client displays rendered frames with interactive parameter controls.
 
 ## Overview
 
-Nulltracer simulates the visual appearance of black holes as they would appear to an external observer. By tracing null geodesics (light paths) through Kerr-Newman spacetime using GPU-accelerated CUDA compute kernels, the application renders realistic depictions of black hole phenomena including:
+Nulltracer simulates the visual appearance of black holes as they would appear to an external observer. By tracing null geodesics (light paths) through curved spacetime using GPU-accelerated CUDA compute kernels, the application renders realistic depictions of black hole phenomena including:
 
 - The **black hole shadow** — the dark silhouette cast by the event horizon
 - **Photon rings** — unstable light orbits around the black hole

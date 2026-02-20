@@ -36,10 +36,13 @@ void trace_rk4(const RenderParams *pp, unsigned char *output) {
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        /* Scale base step with observer distance (affine parameter budget ∝ R₀) */
-        double h_scaled = p.step_size * (p.obs_dist / 30.0);
-        double he = h_scaled * fmin(fmax((r - rp) * 0.4, 0.04), 1.0);
-        he = fmin(fmax(he, 0.012), 1.0);
+        /* Scale base step with observer distance (affine parameter budget ∝ R₀).
+         * Non-symplectic RK methods need ~1.7× more affine parameter than
+         * symplectic integrators to avoid energy-drift-induced ray capture,
+         * especially for near-edge-on inclinations in strong gravity. */
+        double h_scaled = p.step_size * (p.obs_dist / 30.0) * 1.7;
+        double he = h_scaled * fmin(fmax((r - rp) * 0.5, 0.04), 1.0);
+        he = fmin(fmax(he, 0.02), 1.4);
         double oldTh = th, oldR = r, oldPhi = phi;
 
         /* RK4: 4 stages */

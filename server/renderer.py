@@ -30,6 +30,8 @@ _KERNEL_REGISTRY = {
     "yoshida6": ("yoshida6.cu", "trace_yoshida6"),
     "yoshida8": ("yoshida8.cu", "trace_yoshida8"),
     "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
+    "kahanli8s":    ("kahanli8s.cu",    "trace_kahanli8s"),
+    "kahanli8s_ks": ("kahanli8s_ks.cu", "trace_kahanli8s_ks"),
 }
 
 
@@ -299,6 +301,136 @@ class CudaRenderer:
         pixel_array = np.flipud(pixel_array)
 
         return pixel_array.tobytes()
+
+    def render_frame_timed(self, params: dict) -> dict:
+        """Render a single frame with precise CUDA event timing.
+
+        Like render_frame() but returns a dict with raw RGB bytes and
+        detailed timing statistics using CUDA events for GPU-side
+        kernel timing (microsecond accuracy).
+
+        Args:
+            params: dict with all render parameters (same as render_frame).
+
+        Returns:
+            dict with keys:
+                raw_rgb: bytes — raw RGB pixel data (top-to-bottom)
+                kernel_ms: float — GPU kernel execution time in ms
+                total_ms: float — total wall-clock time (kernel + readback)
+                gpu_mem_alloc_bytes: int — GPU memory allocated for buffers
+        """
+        if not self._initialized:
+            raise RuntimeError("Renderer not initialized. Call initialize() first.")
+
+        import time as _time
+        t_wall_start = _time.monotonic()
+
+        width = params.get("width", 1280)
+        height = params.get("height", 720)
+        method = params.get("method", "yoshida4")
+
+        # Get compiled kernel
+        kernel = self._get_kernel(method)
+
+        # Compute ISCO
+        spin = params.get("spin", 0.6)
+        charge = params.get("charge", 0.0)
+        isco_radius = isco(spin, charge)
+
+        # Build RenderParams struct
+        obs_dist = float(params.get("obs_dist", 40))
+        rp = RenderParams(
+            width=width,
+            height=height,
+            spin=float(spin),
+            charge=float(charge),
+            incl=math.radians(float(params.get("inclination", 80.0))),
+            fov=float(params.get("fov", 8.0)),
+            phi0=float(params.get("phi0", 0.0)),
+            isco=float(isco_radius),
+            steps=int(params.get("steps", 200)),
+            obs_dist=obs_dist,
+            esc_radius=obs_dist + 12.0,
+            disk_outer=14.0,
+            step_size=float(params.get("step_size", 0.30)),
+            bg_mode=int(params.get("bg_mode", 1)),
+            star_layers=int(params.get("star_layers", 3)),
+            show_disk=1 if params.get("show_disk", True) else 0,
+            show_grid=1 if params.get("show_grid", True) else 0,
+            disk_temp=float(params.get("disk_temp", 1.0)),
+            doppler_boost=float(params.get("doppler_boost", 2.0)),
+        )
+
+        # Copy params struct to GPU as a byte array
+        params_bytes = bytes(rp)
+        h_params = np.frombuffer(params_bytes, dtype=np.uint8)
+        d_params = cp.asarray(h_params)
+
+        # Allocate output buffer on GPU (RGB, uint8)
+        output_size = height * width * 3
+        d_output = cp.zeros(output_size, dtype=cp.uint8)
+
+        # Track GPU memory allocated for this render
+        gpu_mem_alloc = len(params_bytes) + output_size
+
+        # Launch kernel with CUDA event timing
+        block_size = (16, 16)
+        grid_size = (
+            (width + block_size[0] - 1) // block_size[0],
+            (height + block_size[1] - 1) // block_size[1],
+        )
+
+        start_event = cp.cuda.Event()
+        end_event = cp.cuda.Event()
+
+        start_event.record()
+        kernel(
+            grid_size,
+            block_size,
+            (d_params, d_output),
+        )
+        end_event.record()
+        end_event.synchronize()
+
+        kernel_ms = cp.cuda.get_elapsed_time(start_event, end_event)
+
+        # Copy to host
+        h_output = d_output.get()
+
+        # Reshape and flip (same as render_frame)
+        pixel_array = h_output.reshape(height, width, 3)
+        pixel_array = np.flipud(pixel_array)
+
+        t_wall_end = _time.monotonic()
+        total_ms = (t_wall_end - t_wall_start) * 1000.0
+
+        return {
+            "raw_rgb": pixel_array.tobytes(),
+            "kernel_ms": float(kernel_ms),
+            "total_ms": float(total_ms),
+            "gpu_mem_alloc_bytes": gpu_mem_alloc,
+        }
+
+    @property
+    def available_methods(self) -> list[str]:
+        """Return list of all available integration method names."""
+        return list(_KERNEL_REGISTRY.keys())
+
+    def precompile_all(self) -> dict[str, bool]:
+        """Pre-compile all CUDA kernels and return compilation status.
+
+        Returns:
+            dict mapping method name to True (compiled) or False (failed).
+        """
+        results = {}
+        for method in _KERNEL_REGISTRY:
+            try:
+                self._get_kernel(method)
+                results[method] = True
+            except Exception as e:
+                logger.error("Failed to compile kernel '%s': %s", method, e)
+                results[method] = False
+        return results
 
     def shutdown(self) -> None:
         """Clean up CUDA resources."""

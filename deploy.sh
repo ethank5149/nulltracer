@@ -194,6 +194,7 @@ cmd_static() {
     # Files and directories to deploy
     local -a files=(
         "index.html"
+        "bench.html"
         "styles.css"
         "nulltracer-icon.png"
         "nulltracer-icon.svg"
