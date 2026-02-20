@@ -284,10 +284,11 @@ nulltracer/
         ├── disk.cu           # Accretion disk emission and color
         └── integrators/      # Integration method kernels
             ├── rk4.cu        # 4th-order Runge-Kutta
-            ├── yoshida4.cu   # 4th-order symplectic
-            ├── yoshida6.cu   # 6th-order symplectic
-            ├── yoshida8.cu   # 8th-order symplectic
-            └── rkdp8.cu      # Adaptive Runge-Kutta-Dormand-Prince
+            ├── yoshida4.cu       # 4th-order symplectic
+            ├── rkdp8.cu          # Adaptive Runge-Kutta-Dormand-Prince
+            ├── tao_yoshida4.cu   # Tao + Yoshida 4th-order symplectic
+            ├── tao_yoshida6.cu   # Tao + Yoshida 6th-order symplectic
+            └── tao_kahan_li8.cu  # Tao + Kahan-Li 8th-order symplectic
 ```
 
 ---

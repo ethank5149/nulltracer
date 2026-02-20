@@ -28,12 +28,12 @@ function requestRender() {
 const presets = {
     low:    {method:'yoshida4', steps:80,  stepSize:0.5,  obsDist:30, starLayers:1},
     medium: {method:'yoshida4', steps:200, stepSize:0.3,  obsDist:40, starLayers:3},
-    high:   {method:'yoshida6',  steps:200, stepSize:0.35, obsDist:50, starLayers:4},
-    ultra:  {method:'rkdp8',     steps:180, stepSize:0.45, obsDist:60, starLayers:4},
+    high:   {method:'rkdp8',    steps:180, stepSize:0.40, obsDist:50, starLayers:4},
+    ultra:  {method:'rkdp8',    steps:200, stepSize:0.45, obsDist:60, starLayers:4},
 };
 
 export function refreshLabels() {
-    const integLabels = {yoshida4:'Yoshida 4th symplectic', rk4:'Runge-Kutta 4th', yoshida6:'Yoshida 6th symplectic', yoshida8:'Yoshida 8th symplectic', rkdp8:'Dormand-Prince RK8'};
+    const integLabels = {yoshida4:'Yoshida 4th symplectic', rk4:'Runge-Kutta 4th', rkdp8:'Dormand-Prince RK8', tao_yoshida4:'Tao-Yoshida 4th', tao_yoshida6:'Tao-Yoshida 6th', tao_kahan_li8:'Tao-Kahan-Li 8th'};
     document.getElementById('integ-label').textContent = integLabels[stateRef.qMethod] || stateRef.qMethod;
     document.getElementById('steps-val').textContent = stateRef.qSteps;
     document.getElementById('stepsize-val').textContent = stateRef.qStepSize.toFixed(2);

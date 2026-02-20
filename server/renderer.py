@@ -28,11 +28,12 @@ _INTEGRATOR_DIR = _KERNEL_DIR / "integrators"
 _KERNEL_REGISTRY = {
     "yoshida4": ("yoshida4.cu", "trace_yoshida4"),
     "rk4":      ("rk4.cu",      "trace_rk4"),
-    "yoshida6": ("yoshida6.cu", "trace_yoshida6"),
-    "yoshida8": ("yoshida8.cu", "trace_yoshida8"),
     "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
     "kahanli8s":    ("kahanli8s.cu",    "trace_kahanli8s"),
     "kahanli8s_ks": ("kahanli8s_ks.cu", "trace_kahanli8s_ks"),
+    "tao_yoshida4":  ("tao_yoshida4.cu",  "trace_tao_yoshida4"),
+    "tao_yoshida6":  ("tao_yoshida6.cu",  "trace_tao_yoshida6"),
+    "tao_kahan_li8": ("tao_kahan_li8.cu", "trace_tao_kahan_li8"),
 }
 
 # Map method names to single-ray trace kernel entry points.
@@ -41,11 +42,12 @@ _KERNEL_REGISTRY = {
 _RAY_TRACE_REGISTRY = {
     "yoshida4":     "ray_trace_yoshida4",
     "rk4":          "ray_trace_rk4",
-    "yoshida6":     "ray_trace_yoshida6",
-    "yoshida8":     "ray_trace_yoshida8",
     "rkdp8":        "ray_trace_rkdp8",
     "kahanli8s":    "ray_trace_kahanli8s",
     "kahanli8s_ks": "ray_trace_kahanli8s_ks",
+    "tao_yoshida4":  "ray_trace_tao_yoshida4",
+    "tao_yoshida6":  "ray_trace_tao_yoshida6",
+    "tao_kahan_li8": "ray_trace_tao_kahan_li8",
 }
 
 

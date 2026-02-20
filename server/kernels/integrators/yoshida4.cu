@@ -53,6 +53,9 @@ void trace_yoshida4(const RenderParams *pp, unsigned char *output) {
         /* Yoshida 4th-order step (shared function from steps.cu) */
         yoshida4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
+        /* Hamiltonian constraint projection: solve H=0 for p_r */
+        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
+
         /* Pole reflection */
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }

@@ -1,11 +1,20 @@
 /* ============================================================
- *  RK4 — Classical 4th-order Runge-Kutta integrator
+ *  TAO + KAHAN-LI 8th-ORDER SYMPLECTIC INTEGRATOR
  *
- *  4 stages per step with 1/6, 1/3, 1/3, 1/6 weights.
+ *  Tao extended phase space method (Tao 2016, Phys. Rev. E 94,
+ *  043303) with Kahan-Li s15odr8 optimal 8th-order composition
+ *  (Kahan & Li, Math. Comp. 66:1089–1099, 1997).
+ *
+ *  Uses doubled phase space (10 variables per ray) to make the
+ *  non-separable Kerr-Newman Hamiltonian amenable to symplectic
+ *  splitting, achieving true 8th-order accuracy.
+ *
+ *  Kahan-Li coefficients have max |W_i| = 0.797 (vs 2.447 for
+ *  Yoshida Solution D), giving 3.1× smaller intermediate
+ *  excursions and better numerical stability.
+ *
+ *  15 symmetric substeps × 2 geoRHS per substep = 30 geoRHS/step.
  *  All geodesic integration in float64; color output in float32.
- *
- *  Uses shared step function from steps.cu and shared adaptive
- *  step sizing from adaptive_step.cu for modularity.
  * ============================================================ */
 
 #include "../geodesic_base.cu"
@@ -16,7 +25,7 @@
 
 
 extern "C" __global__
-void trace_rk4(const RenderParams *pp, unsigned char *output) {
+void trace_tao_kahan_li8(const RenderParams *pp, unsigned char *output) {
     const RenderParams &p = *pp;
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -27,34 +36,38 @@ void trace_rk4(const RenderParams *pp, unsigned char *output) {
     float alpha, beta;
     initRay(ix, iy, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta);
 
+    /* Initialize shadow variables = real variables */
+    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
+
     double a = p.spin;
     double Q2 = p.charge * p.charge;
-    float cr = 0.0f, cg = 0.0f, cb = 0.0f;
-    bool done = false;
-
     int STEPS = (int)p.steps;
     int show_disk = (int)p.show_disk;
     int bg_mode = (int)p.bg_mode;
     int star_layers = (int)p.star_layers;
     int show_grid = (int)p.show_grid;
+    float cr = 0.0f, cg = 0.0f, cb = 0.0f;
+    bool done = false;
 
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
-        /* Adaptive step size (shared function) */
-        double he = adaptive_step_rk4(r, rp, p.step_size, p.obs_dist);
+        double he = adaptive_step_tao(r, rp, p.step_size, p.obs_dist);
         double oldTh = th, oldR = r, oldPhi = phi;
 
-        /* RK4 step (shared function from steps.cu) */
-        rk4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
+        /* Tao + Kahan-Li 8th-order step (extended phase space) */
+        tao_kahan_li8_step(&r, &th, &phi, &pr, &pth,
+                           &rs, &ths, &phis, &prs, &pths,
+                           a, b, Q2, he);
 
-        /* Hamiltonian constraint projection: solve H=0 for p_r */
+        /* Hamiltonian constraint projection on real variables */
         projectHamiltonian(r, th, &pr, pth, a, b, Q2);
 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
         if (r <= rp * 1.01) { done = true; break; }
+
         if (show_disk) {
             double cross = (oldTh - PI * 0.5) * (th - PI * 0.5);
             if (cross < 0.0) {
@@ -75,6 +88,7 @@ void trace_rk4(const RenderParams *pp, unsigned char *output) {
                 cr += dcr * atten; cg += dcg * atten; cb += dcb * atten;
             }
         }
+
         if (r > p.esc_radius) {
             double frac = fmin(fmax((p.esc_radius - oldR) /
                           fmax(r - oldR, 1e-14), 0.0), 1.0);
@@ -89,6 +103,7 @@ void trace_rk4(const RenderParams *pp, unsigned char *output) {
             cr += bgr * atten; cg += bgg * atten; cb += bgb * atten;
             done = true; break;
         }
+
         if (r < 0.5 || r != r || th != th) { done = true; break; }
     }
 

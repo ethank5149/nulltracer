@@ -367,9 +367,10 @@ const lightboxLabel = $('lightbox-label');
 const METHOD_INFO = {
   yoshida4:     { name: 'Yoshida 4',      desc: '4th-order symplectic (Forest-Ruth)', type: 'Symplectic' },
   rk4:          { name: 'RK4',             desc: 'Classical Runge-Kutta 4th-order',    type: 'Non-symplectic' },
-  yoshida6:     { name: 'Yoshida 6',       desc: '6th-order symplectic',               type: 'Symplectic' },
-  yoshida8:     { name: 'Yoshida 8',       desc: '8th-order symplectic',               type: 'Symplectic' },
   rkdp8:        { name: 'RKDP8',           desc: 'Dormand-Prince adaptive 8th-order',  type: 'Adaptive' },
+  tao_yoshida4: { name: 'Tao-Yoshida 4',   desc: 'Tao extended phase space + Yoshida 4th-order', type: 'Tao symplectic' },
+  tao_yoshida6: { name: 'Tao-Yoshida 6',   desc: 'Tao extended phase space + Yoshida 6th-order', type: 'Tao symplectic' },
+  tao_kahan_li8:{ name: 'Tao-Kahan-Li 8',  desc: 'Tao extended phase space + Kahan-Li 8th-order', type: 'Tao symplectic' },
   kahanli8s:    { name: 'Kahan-Li 8s',     desc: 'Kahan-Li 8th-order (BL coords)',     type: 'Symplectic' },
   kahanli8s_ks: { name: 'Kahan-Li 8s KS',  desc: 'Kahan-Li 8th-order (Kerr-Schild)',   type: 'Symplectic' },
 };

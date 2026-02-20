@@ -50,7 +50,7 @@ class RenderRequest(BaseModel):
     fov: float = Field(8.0, ge=2, le=25)
     width: int = Field(1280, ge=160, le=3840)
     height: int = Field(720, ge=90, le=2160)
-    method: str = Field("yoshida4", pattern=r"^(yoshida4|rk4|yoshida6|yoshida8|rkdp8|kahanli8s|kahanli8s_ks)$")
+    method: str = Field("yoshida4", pattern=r"^(yoshida4|rk4|rkdp8|kahanli8s|kahanli8s_ks|tao_yoshida4|tao_yoshida6|tao_kahan_li8)$")
     steps: int = Field(200, ge=60, le=500)
     step_size: float = Field(0.3, ge=0.1, le=0.8)
     obs_dist: int = Field(40, ge=20, le=100)
@@ -470,7 +470,7 @@ class RayRequest(BaseModel):
     inclination: float = Field(80.0, ge=3, le=89)
 
     # ── Integration parameters ─────────────────────────────
-    method: str = Field("yoshida4", pattern=r"^(yoshida4|rk4|yoshida6|yoshida8|rkdp8|kahanli8s|kahanli8s_ks)$")
+    method: str = Field("yoshida4", pattern=r"^(yoshida4|rk4|rkdp8|kahanli8s|kahanli8s_ks|tao_yoshida4|tao_yoshida6|tao_kahan_li8)$")
     fov: float = Field(8.0, ge=2, le=25)
     width: int = Field(320, ge=16, le=3840)
     height: int = Field(180, ge=16, le=2160)
