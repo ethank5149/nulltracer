@@ -694,10 +694,13 @@ void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
     int max_traj;
     ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
 
-    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-
     double a = p.spin;
     double Q2 = p.charge * p.charge;
+
+    /* Transform p_r from BL to Kerr coordinates */
+    transformBLtoKS(r, a, b, Q2, &pr);
+
+    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
     int traj_base = 20;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
@@ -719,12 +722,12 @@ void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
                           &rs, &ths, &phis, &prs, &pths,
                           a, b, Q2, he);
 
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
+        projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
-        if (r <= rp * 1.01) { term_reason = 1; break; }
+        if (r <= rp * 0.5) { term_reason = 1; break; }
 
         record_crossing(output, crossing_base, &num_crossings,
                         i, oldR, oldTh, oldPhi, r, th, phi,
@@ -753,10 +756,13 @@ void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
     int max_traj;
     ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
 
-    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-
     double a = p.spin;
     double Q2 = p.charge * p.charge;
+
+    /* Transform p_r from BL to Kerr coordinates */
+    transformBLtoKS(r, a, b, Q2, &pr);
+
+    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
     int traj_base = 20;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
@@ -778,12 +784,12 @@ void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
                           &rs, &ths, &phis, &prs, &pths,
                           a, b, Q2, he);
 
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
+        projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
-        if (r <= rp * 1.01) { term_reason = 1; break; }
+        if (r <= rp * 0.5) { term_reason = 1; break; }
 
         record_crossing(output, crossing_base, &num_crossings,
                         i, oldR, oldTh, oldPhi, r, th, phi,
@@ -812,10 +818,13 @@ void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
     int max_traj;
     ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
 
-    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-
     double a = p.spin;
     double Q2 = p.charge * p.charge;
+
+    /* Transform p_r from BL to Kerr coordinates */
+    transformBLtoKS(r, a, b, Q2, &pr);
+
+    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
     int traj_base = 20;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
@@ -837,12 +846,12 @@ void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
                            &rs, &ths, &phis, &prs, &pths,
                            a, b, Q2, he);
 
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
+        projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
-        if (r <= rp * 1.01) { term_reason = 1; break; }
+        if (r <= rp * 0.5) { term_reason = 1; break; }
 
         record_crossing(output, crossing_base, &num_crossings,
                         i, oldR, oldTh, oldPhi, r, th, phi,

@@ -1,5 +1,6 @@
 /* ============================================================
  *  TAO + KAHAN-LI 8th-ORDER SYMPLECTIC INTEGRATOR
+ *  (Ingoing Kerr coordinates)
  *
  *  Tao extended phase space method (Tao 2016, Phys. Rev. E 94,
  *  043303) with Kahan-Li s15odr8 optimal 8th-order composition
@@ -9,11 +10,16 @@
  *  non-separable Kerr-Newman Hamiltonian amenable to symplectic
  *  splitting, achieving true 8th-order accuracy.
  *
+ *  Integration uses ingoing Kerr coordinates which eliminate the
+ *  Boyer-Lindquist coordinate singularity at Δ = 0 (horizon).
+ *  This prevents catastrophic force blowups when negative
+ *  Kahan-Li substeps temporarily push r below the horizon.
+ *
  *  Kahan-Li coefficients have max |W_i| = 0.797 (vs 2.447 for
  *  Yoshida Solution D), giving 3.1× smaller intermediate
  *  excursions and better numerical stability.
  *
- *  15 symmetric substeps × 2 geoRHS per substep = 30 geoRHS/step.
+ *  15 symmetric substeps × 2 force evals per substep = 30 evals/step.
  *  All geodesic integration in float64; color output in float32.
  * ============================================================ */
 
@@ -36,11 +42,14 @@ void trace_tao_kahan_li8(const RenderParams *pp, unsigned char *output) {
     float alpha, beta;
     initRay(ix, iy, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta);
 
-    /* Initialize shadow variables = real variables */
-    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-
     double a = p.spin;
     double Q2 = p.charge * p.charge;
+
+    /* Transform p_r from BL to Kerr coordinates */
+    transformBLtoKS(r, a, b, Q2, &pr);
+
+    /* Initialize shadow variables = real variables */
+    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
     int STEPS = (int)p.steps;
     int show_disk = (int)p.show_disk;
     int bg_mode = (int)p.bg_mode;
@@ -60,13 +69,14 @@ void trace_tao_kahan_li8(const RenderParams *pp, unsigned char *output) {
                            &rs, &ths, &phis, &prs, &pths,
                            a, b, Q2, he);
 
-        /* Hamiltonian constraint projection on real variables */
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
+        /* Hamiltonian constraint projection on real variables (KS) */
+        projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
-        if (r <= rp * 1.01) { done = true; break; }
+        /* KS coordinates are regular at the horizon */
+        if (r <= rp * 0.5) { done = true; break; }
 
         if (show_disk) {
             double cross = (oldTh - PI * 0.5) * (th - PI * 0.5);

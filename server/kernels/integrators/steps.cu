@@ -119,22 +119,29 @@ __device__ void tao_rotate_cyclic(
 }
 
 
-/* ── Tao φ_A flow ─────────────────────────────────────────── */
+/* ── Tao φ_A flow (Kerr / ingoing coordinates) ───────────── */
 
-/* φ_A^τ: Evaluate geoRHS at (q, y) = (r, th, prs, pths).
- *   geoRHS returns: dr,dth,dphi = ∂_y H(q,y)  [velocity from shadow momenta]
- *                   dpr,dpth    = −∂_q H(q,y)  [force from real positions]
+/* φ_A^τ: Evaluate H(q, y) using Kerr-coordinate functions.
+ *   Velocities from geoVelocityKS(q, y) = ∂_y H(q,y)
+ *   Forces    from geoForceKS(q, y)     = −∂_q H(q,y)
  *
  * Per Tao (2016) Eq. 1:
  *   p  → p  − τ·∂_q H(q,y)  =  p  + τ·dpr   (update real momenta)
  *   x  → x  + τ·∂_y H(q,y)  =  x  + τ·dr    (update shadow positions)
  *   q and y are unchanged.
+ *
+ * Uses ingoing Kerr coordinates (geoVelocityKS / geoForceKS)
+ * which eliminate the Boyer-Lindquist coordinate singularity
+ * at Δ = 0 (event horizon).  This prevents catastrophic force
+ * blowups when negative Yoshida/Kahan-Li substeps temporarily
+ * push r or rs below the horizon.
  */
 #define _TAO_PHI_A(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
                    a, b, Q2, tau) \
     { \
         double dr_, dth_, dphi_, dpr_, dpth_; \
-        geoRHS(r, th, prs, pths, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
+        geoVelocityKS(r, th, prs, pths, a, b, Q2, &dr_, &dth_, &dphi_); \
+        geoForceKS(r, th, prs, pths, a, b, Q2, &dpr_, &dpth_); \
         /* Update real momenta (p) using −∂_q H(q,y) */ \
         pr   += (tau) * dpr_; \
         pth  += (tau) * dpth_; \
@@ -145,22 +152,25 @@ __device__ void tao_rotate_cyclic(
     }
 
 
-/* ── Tao φ_B flow ─────────────────────────────────────────── */
+/* ── Tao φ_B flow (Kerr / ingoing coordinates) ───────────── */
 
-/* φ_B^τ: Evaluate geoRHS at (x, p) = (rs, ths, pr, pth).
- *   geoRHS returns: dr,dth,dphi = ∂_p H(x,p)  [velocity from real momenta]
- *                   dpr,dpth    = −∂_x H(x,p)  [force from shadow positions]
+/* φ_B^τ: Evaluate H(x, p) using Kerr-coordinate functions.
+ *   Velocities from geoVelocityKS(x, p) = ∂_p H(x,p)
+ *   Forces    from geoForceKS(x, p)     = −∂_x H(x,p)
  *
  * Per Tao (2016) Eq. 1:
  *   q  → q  + τ·∂_p H(x,p)  =  q  + τ·dr    (update real positions)
  *   y  → y  − τ·∂_x H(x,p)  =  y  + τ·dpr   (update shadow momenta)
  *   x and p are unchanged.
+ *
+ * Uses ingoing Kerr coordinates — see _TAO_PHI_A comment.
  */
 #define _TAO_PHI_B(r, th, phi, pr, pth, rs, ths, phis, prs, pths, \
                    a, b, Q2, tau) \
     { \
         double dr_, dth_, dphi_, dpr_, dpth_; \
-        geoRHS(rs, ths, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
+        geoVelocityKS(rs, ths, pr, pth, a, b, Q2, &dr_, &dth_, &dphi_); \
+        geoForceKS(rs, ths, pr, pth, a, b, Q2, &dpr_, &dpth_); \
         /* Update real positions (q) using ∂_p H(x,p) */ \
         r    += (tau) * dr_; \
         th   += (tau) * dth_; \
