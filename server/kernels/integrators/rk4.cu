@@ -51,9 +51,6 @@ void trace_rk4(const RenderParams *pp, unsigned char *output) {
         /* RK4 step (shared function from steps.cu) */
         rk4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
-        /* Hamiltonian constraint projection: solve H=0 for p_r */
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
-
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 

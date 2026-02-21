@@ -282,9 +282,6 @@ void ray_trace_rk4(const RenderParams *pp, double *output) {
         double oldR = r, oldTh = th, oldPhi = phi;
         rk4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
-        /* Hamiltonian constraint projection */
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
-
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
@@ -437,9 +434,6 @@ void ray_trace_rkdp8(const RenderParams *pp, double *output) {
                 rejects++;
             }
         }
-
-        /* Hamiltonian constraint projection */
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
