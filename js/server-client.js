@@ -85,6 +85,11 @@ function buildServerParams() {
         disk_temp: stateRef.diskTemp,
         star_layers: stateRef.qStarLayers,
         phi0: stateRef.rotAngle,
+        srgb_output: !!stateRef.srgbOutput,
+        disk_alpha: stateRef.diskAlpha,
+        disk_max_crossings: stateRef.diskMaxCrossings,
+        bloom_enabled: !!stateRef.bloomEnabled,
+        bloom_radius: stateRef.bloomRadius,
         format: 'jpeg',
         quality: 85
     };
@@ -171,4 +176,42 @@ export function autoDetectServer() {
                 setServerStatus('disconnected', 'no server found');
             });
     }
+}
+
+// ── Scene API helpers ───────────────────────────────────────
+
+export async function fetchScenes() {
+    const resp = await fetch(`${serverUrl}/scenes`);
+    if (!resp.ok) throw new Error('Failed to fetch scenes');
+    return resp.json();
+}
+
+export async function fetchScene(name) {
+    const resp = await fetch(`${serverUrl}/scenes/${encodeURIComponent(name)}`);
+    if (!resp.ok) throw new Error(`Scene '${name}' not found`);
+    return resp.json();
+}
+
+export async function saveSceneAPI(name, params) {
+    const resp = await fetch(`${serverUrl}/scenes/${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    });
+    if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to save scene');
+    }
+    return resp.json();
+}
+
+export async function deleteSceneAPI(name) {
+    const resp = await fetch(`${serverUrl}/scenes/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+    });
+    if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to delete scene');
+    }
+    return resp.json();
 }

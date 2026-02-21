@@ -16,6 +16,7 @@ from typing import Optional
 import cupy as cp
 import numpy as np
 
+from .bloom import apply_bloom
 from .isco import isco
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,10 @@ class RenderParams(ctypes.Structure):
         ("show_grid",   ctypes.c_double),
         ("disk_temp",   ctypes.c_double),
         ("doppler_boost", ctypes.c_double),
+        ("srgb_output",   ctypes.c_double),
+        ("disk_alpha",    ctypes.c_double),
+        ("disk_max_crossings", ctypes.c_double),
+        ("bloom_enabled", ctypes.c_double),
     ]
 
 
@@ -126,6 +131,26 @@ class CudaRenderer:
 
         self._initialized = True
         logger.info("CUDA renderer initialized successfully")
+
+    def purge_cache(self) -> int:
+        """Clear all cached compiled kernels, forcing recompilation on next use.
+
+        Also clears CuPy's internal kernel cache to ensure source changes
+        are picked up even if the on-disk cache wasn't cleared.
+
+        Returns the number of kernels that were cached.
+        """
+        count = len(self._kernel_cache)
+        self._kernel_cache.clear()
+
+        # Also clear CuPy's internal compilation cache
+        try:
+            cp.cuda.compiler._kernel_cache = {}
+        except AttributeError:
+            pass  # CuPy internals may vary by version
+
+        logger.info("Purged %d cached kernels", count)
+        return count
 
     @property
     def gpu_info(self) -> str:
@@ -284,6 +309,10 @@ class CudaRenderer:
             show_grid=1 if params.get("show_grid", True) else 0,
             disk_temp=float(params.get("disk_temp", 1.0)),
             doppler_boost=float(params.get("doppler_boost", 2.0)),
+            srgb_output=1.0 if params.get("srgb_output", True) else 0.0,
+            disk_alpha=float(params.get("disk_alpha", 0.95)),
+            disk_max_crossings=float(params.get("disk_max_crossings", 5)),
+            bloom_enabled=1.0 if params.get("bloom_enabled", False) else 0.0,
         )
 
         # Copy params struct to GPU as a byte array
@@ -320,6 +349,15 @@ class CudaRenderer:
         # Flip vertically to get top-to-bottom row order,
         # matching the OpenGL renderer's np.flipud() at readback.
         pixel_array = np.flipud(pixel_array)
+
+        # Apply bloom post-processing if enabled
+        if params.get("bloom_enabled", False):
+            pixel_array = apply_bloom(
+                pixel_array,
+                fov=float(params.get("fov", 8.0)),
+                bloom_radius=float(params.get("bloom_radius", 1.0)),
+                width=width,
+            )
 
         return pixel_array.tobytes()
 
@@ -380,6 +418,10 @@ class CudaRenderer:
             show_grid=1 if params.get("show_grid", True) else 0,
             disk_temp=float(params.get("disk_temp", 1.0)),
             doppler_boost=float(params.get("doppler_boost", 2.0)),
+            srgb_output=1.0 if params.get("srgb_output", True) else 0.0,
+            disk_alpha=float(params.get("disk_alpha", 0.95)),
+            disk_max_crossings=float(params.get("disk_max_crossings", 5)),
+            bloom_enabled=1.0 if params.get("bloom_enabled", False) else 0.0,
         )
 
         # Copy params struct to GPU as a byte array
@@ -421,6 +463,15 @@ class CudaRenderer:
         # Reshape and flip (same as render_frame)
         pixel_array = h_output.reshape(height, width, 3)
         pixel_array = np.flipud(pixel_array)
+
+        # Apply bloom post-processing if enabled
+        if params.get("bloom_enabled", False):
+            pixel_array = apply_bloom(
+                pixel_array,
+                fov=float(params.get("fov", 8.0)),
+                bloom_radius=float(params.get("bloom_radius", 1.0)),
+                width=width,
+            )
 
         t_wall_end = _time.monotonic()
         total_ms = (t_wall_end - t_wall_start) * 1000.0
@@ -584,6 +635,10 @@ class CudaRenderer:
             show_grid=0,  # Not used for ray tracing
             disk_temp=float(params.get("disk_temp", 1.0)),
             doppler_boost=float(params.get("doppler_boost", 2.0)),
+            srgb_output=1.0 if params.get("srgb_output", True) else 0.0,
+            disk_alpha=float(params.get("disk_alpha", 0.95)),
+            disk_max_crossings=float(params.get("disk_max_crossings", 5)),
+            bloom_enabled=0.0,  # Not used for single-ray tracing
         )
 
         # Copy params struct to GPU

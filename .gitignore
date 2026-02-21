@@ -13,5 +13,6 @@ Thumbs.db
 plans/
 screenshots/
 reference/
+reference-code/
 
 __pycache__/

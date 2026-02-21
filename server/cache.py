@@ -112,6 +112,18 @@ class ImageCache:
             _, evicted = self._cache.popitem(last=False)
             self._current_memory -= len(evicted)
 
+    def clear(self) -> int:
+        """Clear all cached entries.
+
+        Returns:
+            Number of entries that were cleared.
+        """
+        with self._lock:
+            count = len(self._cache)
+            self._cache.clear()
+            self._current_memory = 0
+            return count
+
     def stats(self) -> dict:
         """Return cache statistics.
 

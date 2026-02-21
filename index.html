@@ -75,6 +75,14 @@
     <input type="range" id="temp" min="0.2" max="2.5" step="0.05" value="1.0">
   </div>
   <div class="control-row">
+    <div class="control-label"><span>Disk Opacity</span><span class="control-value" id="disk-alpha-val">0.95</span></div>
+    <input type="range" id="disk-alpha" min="0" max="1" step="0.05" value="0.95">
+  </div>
+  <div class="control-row">
+    <div class="control-label"><span>Max Crossings</span><span class="control-value" id="disk-max-crossings-val">5</span></div>
+    <input type="range" id="disk-max-crossings" min="1" max="20" step="1" value="5">
+  </div>
+  <div class="control-row">
     <div class="control-label"><span>Background</span></div>
     <div class="toggle-row">
       <button class="toggle-btn" data-bg="0">Stars</button>
@@ -95,7 +103,21 @@
 </div>
 
 <div class="panel settings-panel hidden" id="settings-panel">
-  <div class="panel-title">Performance &amp; Quality</div>
+  <div class="panel-title">Scenes</div>
+  <div class="control-row">
+    <div style="display: flex; gap: 4px; align-items: center; flex-wrap: wrap;">
+      <select id="scene-select" class="ctrl-select" style="flex: 1; min-width: 120px;">
+        <option value="">— Select Scene —</option>
+      </select>
+      <button id="btn-load-scene" class="toggle-btn" title="Load selected scene">Load</button>
+      <button id="btn-delete-scene" class="toggle-btn" title="Delete selected scene">Del</button>
+    </div>
+    <div style="display: flex; gap: 4px; align-items: center; margin-top: 4px;">
+      <input id="scene-name-input" type="text" class="ctrl-select" placeholder="Scene name…" style="flex: 1; min-width: 120px;">
+      <button id="btn-save-scene" class="toggle-btn" title="Save current settings as scene">Save</button>
+    </div>
+  </div>
+  <div class="panel-title" style="margin-top: 4px;">Performance &amp; Quality</div>
   <div class="control-row">
     <div class="control-label"><span>Preset</span></div>
     <div class="toggle-row">
@@ -131,6 +153,22 @@
   <div class="control-row">
     <div class="control-label"><span>Star Layers</span><span class="control-value" id="starlayers-val">3</span></div>
     <input type="range" id="star-layers" min="1" max="4" step="1" value="3">
+  </div>
+  <div class="control-row">
+    <div class="control-label"><span>sRGB Output</span></div>
+    <div class="toggle-row">
+      <button class="toggle-btn active" id="btn-srgb">sRGB</button>
+    </div>
+  </div>
+  <div class="control-row">
+    <div class="control-label"><span>Bloom</span></div>
+    <div class="toggle-row">
+      <button class="toggle-btn" id="btn-bloom">Bloom</button>
+    </div>
+  </div>
+  <div class="control-row" id="bloom-radius-row" style="display:none">
+    <div class="control-label"><span>Bloom Radius</span><span class="control-value" id="bloom-radius-val">1.0</span></div>
+    <input type="range" id="bloom-radius" min="0.1" max="5.0" step="0.1" value="1.0">
   </div>
   <div class="control-row" id="server-settings">
     <div class="panel-title" style="margin-top:4px">Server Rendering</div>

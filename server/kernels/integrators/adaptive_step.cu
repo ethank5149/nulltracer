@@ -85,13 +85,151 @@ __device__ double sundman_dtau(double a, double Q2, double rp,
 }
 
 /* Convert Mino-time step to physical affine parameter step.
- * Physical step Δλ = Δτ·Σ, clamped to prevent vanishing/overshooting. */
+ * Physical step Δλ = Δτ·Σ, with angular rate limiting.
+ *
+ * The Sundman transformation gives Δλ = Δτ·Σ, which automatically
+ * shrinks near the horizon (small Σ) and grows far away (large Σ).
+ * However, at large r the step can become so large that rays aimed
+ * near the coordinate pole overshoot θ = 0 or θ = π in a single
+ * step, triggering the pole reflection boundary and corrupting the
+ * ray trajectory.
+ *
+ * Following ipole (Mościbrodzka et al.), we add an angular rate
+ * limiter: the step is clamped so that |Δθ| = |p_θ/Σ| × Δλ ≤ θ_max.
+ * This ensures no single step can move the ray more than ~17° in
+ * the θ direction, preventing pole overshooting while preserving
+ * the Sundman scaling's benefits for radial motion.
+ *
+ * Additionally, near the pole (θ < 0.1 or θ > π−0.1), the step
+ * is further reduced proportionally to the distance from the pole,
+ * matching ipole's d2fac pole-proximity factor.
+ *
+ * Reference: ipole, model_geodesics.c:267 (Mościbrodzka et al.)
+ */
 __device__ double sundman_physical_step(double dtau, double r, double th,
-                                        double a, double obs_dist) {
+                                        double pth, double a, double obs_dist) {
     double cth = cos(th);
     double sig = r * r + a * a * cth * cth;
     double he = dtau * sig;
+
+    /* Angular rate limiter: |Δθ| ≤ 0.3 rad (~17°) per step.
+     * dθ/dλ = p_θ / Σ  (from the geodesic equations). */
+    double dth_dlam = fabs(pth) / fmax(sig, 1e-14);
+    double max_dth = 0.3;
+    if (dth_dlam * he > max_dth) {
+        he = max_dth / dth_dlam;
+    }
+
+    /* Pole proximity factor (ipole-inspired): reduce step further
+     * when within ~0.1 rad of either pole.  This prevents the
+     * accumulation of small angular errors from repeated near-pole
+     * passages that can corrupt the ray direction. */
+    double dpole = fmin(th, PI - th);
+    double pole_cut = 0.1;
+    if (dpole < pole_cut) {
+        double pole_fac = fmax(dpole / pole_cut, 0.05);
+        he *= pole_fac;
+    }
+
     return fmin(fmax(he, 0.005), 0.2 * obs_dist);
+}
+
+
+/* ── Φ-variable adaptive stepping (Wu et al. 2024 / Preto & Saha 2009)
+ *
+ *  The AS₂ algorithm wraps the existing S₂ integrator with two
+ *  additional leapfrog half-steps per outer iteration that evolve
+ *  an auxiliary variable Φ.  This provides adaptive time stepping
+ *  that preserves symplecticity.
+ *
+ *  The Sundman function here is g = Σ/r² (NOT the implicit g = Σ
+ *  used in sundman_physical_step).  Combined with Φ ≈ j/r, the
+ *  physical step h/Φ grows with r, providing larger steps far
+ *  from the black hole while maintaining small steps near it.
+ *
+ *  References:
+ *    [1] X. Wu et al., "Explicit symplectic methods in black hole
+ *        spacetimes," Astrophys. J. 2024.
+ *    [2] M. Preto & S. Saha, "On post-Newtonian orbits and the
+ *        Galactic-center stars," Astrophys. J. 703:1743, 2009.
+ * ─────────────────────────────────────────────────────────────── */
+
+/* Compute the Sundman function g = Σ/r² for the Φ-variable method.
+ * This differs from the implicit g = Σ used in sundman_physical_step().
+ * For large r, g → 1 since Σ → r². */
+__device__ double phi_var_sundman_g(double r, double th, double a) {
+    double cth = cos(th);
+    double sig = r * r + a * a * cth * cth;  /* Σ */
+    return sig / (r * r);                      /* g = Σ/r² */
+}
+
+/* Compute the Φ half-step increment for Boyer-Lindquist coordinates.
+ * dΦ = −g · h · (g^rr · p_r) / (2r)
+ * where g^rr = Δ/Σ in BL. */
+__device__ double phi_var_dphi_BL(double r, double th, double pr,
+                                   double a, double Q2,
+                                   double g, double h) {
+    double cth = cos(th);
+    double sig = r * r + a * a * cth * cth;  /* Σ */
+    double del = r * r - 2.0 * r + a * a + Q2;  /* Δ */
+    if (del < 1e-14) del = 1e-14;  /* clamp like geoRHS does */
+    double grr = del / sig;  /* g^rr in BL */
+    double v_r = grr * pr;   /* radial velocity component from p_r */
+    return -g * h * v_r / (2.0 * r);
+}
+
+/* Compute the Φ half-step increment for Kerr-Schild coordinates.
+ * dΦ = −g · h · (g^rr_KS · p_r_KS) / (2r)
+ * In KS, g^rr_KS = Δ/Σ + (2r − Q²)/Σ = (Δ + 2r − Q²)/Σ. */
+__device__ double phi_var_dphi_KS(double r, double th, double pr,
+                                   double a, double Q2,
+                                   double g, double h) {
+    double cth = cos(th);
+    double sig = r * r + a * a * cth * cth;  /* Σ */
+    double del = r * r - 2.0 * r + a * a + Q2;  /* Δ */
+    double w = 2.0 * r - Q2;
+    double grr_ks = (del + w) / sig;  /* g^rr in KS = (Δ + w)/Σ */
+    double v_r = grr_ks * pr;
+    return -g * h * v_r / (2.0 * r);
+}
+
+/* Compute the physical step for the Φ-variable method.
+ * Returns h/Φ with angular rate limiting and safety clamping,
+ * matching the same limiters as sundman_physical_step(). */
+__device__ double phi_var_physical_step(double h, double Phi,
+                                         double r, double th,
+                                         double pth, double a,
+                                         double obs_dist) {
+    double he = h / Phi;
+
+    /* Angular rate limiter: |Δθ| ≤ 0.3 rad (~17°) per step.
+     * dθ/dλ = p_θ / Σ  (from the geodesic equations). */
+    double sth = sin(th);
+    if (fabs(sth) > 1e-8) {
+        double sig = r * r + a * a * cos(th) * cos(th);
+        double dth_rate = fabs(pth / sig);
+        double max_dth = 0.3;
+        if (fabs(he) * dth_rate > max_dth) {
+            he = copysign(max_dth / dth_rate, he);
+        }
+    }
+
+    /* Pole proximity factor (ipole-inspired): reduce step further
+     * when within ~0.1 rad of either pole. */
+    double pole_dist = fmin(th, PI - th);
+    if (pole_dist < 0.1) {
+        double pole_factor = pole_dist / 0.1;
+        pole_factor = fmax(pole_factor, 0.05);
+        he *= pole_factor;
+    }
+
+    /* Final clamp (same bounds as sundman_physical_step) */
+    double abs_he = fabs(he);
+    abs_he = fmax(abs_he, 0.005);
+    abs_he = fmin(abs_he, 0.2 * obs_dist);
+    he = copysign(abs_he, he);
+
+    return he;
 }
 
 

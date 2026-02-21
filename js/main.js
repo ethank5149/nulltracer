@@ -4,7 +4,7 @@
 //  No local WebGL rendering — server is the sole renderer.
 // ============================================================
 
-import { initUI, refreshLabels } from './ui-controller.js';
+import { initUI, refreshLabels, loadSceneList } from './ui-controller.js';
 import { initServerClient, autoDetectServer, scheduleServerRender } from './server-client.js';
 import { initWsClient, setFallbackRender, connectWebSocket } from './ws-client.js';
 
@@ -29,6 +29,11 @@ const state = {
     qStepSize: 0.3,
     qObsDist: 40,
     qStarLayers: 3,
+    srgbOutput: true,
+    diskAlpha: 0.95,
+    diskMaxCrossings: 5,
+    bloomEnabled: false,
+    bloomRadius: 1.0,
     renderMode: 'server',
 };
 
@@ -75,3 +80,6 @@ refreshLabels();
 // Auto-detect same-origin server and begin rendering
 autoDetectServer();
 connectWebSocket(location.origin);
+
+// Populate scene list (non-blocking — will populate once server responds)
+loadSceneList();

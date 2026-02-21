@@ -9,6 +9,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
+# CACHEBUST arg invalidates the COPY layer cache on each deploy,
+# ensuring CUDA kernel source changes are always picked up.
+# Layers above this (apt-get, pip install) remain cached.
+ARG CACHEBUST=0
 RUN mkdir -p server
 COPY . server/
 

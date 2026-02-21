@@ -38,6 +38,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from .cache import ImageCache
 from .renderer import CudaRenderer
+from .scenes import SceneManager
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,11 @@ class RenderRequest(BaseModel):
     star_layers: int = Field(3, ge=1, le=4)
     phi0: float = Field(0.0)
     doppler_boost: int = Field(default=2, ge=0, le=2, description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick")
+    srgb_output: bool = Field(default=True, description="Apply IEC 61966-2-1 sRGB transfer function (proper gamma for standard displays)")
+    disk_alpha: float = Field(default=0.95, ge=0.0, le=1.0, description="Base opacity per disk crossing")
+    disk_max_crossings: int = Field(default=5, ge=1, le=20, description="Maximum disk crossings to accumulate")
+    bloom_enabled: bool = Field(default=False, description="Enable Airy disk bloom post-processing")
+    bloom_radius: float = Field(default=1.0, ge=0.1, le=5.0, description="Bloom radius multiplier (1.0 = physical default)")
     format: str = Field("jpeg", pattern=r"^(jpeg|webp)$")
     quality: int = Field(85, ge=10, le=100)
 
@@ -92,6 +98,11 @@ class BenchRequest(BaseModel):
     star_layers: int = Field(3, ge=1, le=4)
     phi0: float = Field(0.0)
     doppler_boost: int = Field(default=2, ge=0, le=2, description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick")
+    srgb_output: bool = Field(default=True, description="Apply IEC 61966-2-1 sRGB transfer function")
+    disk_alpha: float = Field(default=0.95, ge=0.0, le=1.0, description="Base opacity per disk crossing")
+    disk_max_crossings: int = Field(default=5, ge=1, le=20, description="Maximum disk crossings to accumulate")
+    bloom_enabled: bool = Field(default=False, description="Enable Airy disk bloom post-processing")
+    bloom_radius: float = Field(default=1.0, ge=0.1, le=5.0, description="Bloom radius multiplier (1.0 = physical default)")
     methods: Optional[list[str]] = Field(
         None,
         description="Subset of integrator methods to benchmark. Defaults to all available methods."
@@ -112,6 +123,7 @@ class BenchRequest(BaseModel):
 renderer = CudaRenderer()
 cache = ImageCache()
 gpu_lock = asyncio.Lock()
+scene_manager = SceneManager()
 
 # ── FastAPI app ──────────────────────────────────────────────
 
@@ -120,7 +132,7 @@ app = FastAPI(title="Nulltracer — GPU-Accelerated Curved Spacetime Renderer")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["POST", "GET"],
+    allow_methods=["POST", "GET", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -151,6 +163,62 @@ async def health():
         "gpu": renderer.gpu_info,
         "backends": ["cuda"] if renderer._initialized else [],
     }
+
+
+@app.post("/purge-cache")
+async def purge_cache():
+    """Purge all CUDA kernel caches (in-memory and CuPy disk cache).
+
+    Use after updating kernel source files to force recompilation.
+    """
+    count = renderer.purge_cache()
+    # Also clear the image cache since renders may differ after kernel changes
+    cache.clear()
+    logger.info("Cache purged: %d kernels cleared, image cache cleared", count)
+    return {"status": "purged", "kernels_cleared": count}
+
+
+# ── Scene management endpoints ──────────────────────────────
+
+@app.get("/scenes")
+async def list_scenes():
+    """List all available scenes."""
+    return {"scenes": scene_manager.list_scenes()}
+
+
+@app.get("/scenes/{name}")
+async def get_scene(name: str):
+    """Load a scene by name."""
+    scene = scene_manager.get_scene(name)
+    if scene is None:
+        raise HTTPException(status_code=404, detail=f"Scene '{name}' not found")
+    return scene
+
+
+@app.post("/scenes/{name}")
+async def save_scene(name: str, params: dict):
+    """Save a scene with the given name and parameters."""
+    if not scene_manager.validate_name(name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid scene name. Use alphanumeric characters, hyphens, underscores, and spaces (1-63 chars).",
+        )
+    success = scene_manager.save_scene(name, params)
+    if not success:
+        raise HTTPException(status_code=409, detail=f"Cannot overwrite built-in scene '{name}'")
+    return {"status": "saved", "name": name}
+
+
+@app.delete("/scenes/{name}")
+async def delete_scene(name: str):
+    """Delete a scene by name."""
+    success = scene_manager.delete_scene(name)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Scene '{name}' not found or is a built-in scene",
+        )
+    return {"status": "deleted", "name": name}
 
 
 @app.post("/render")
@@ -292,6 +360,11 @@ async def bench(req: BenchRequest):
         "star_layers": req.star_layers,
         "phi0": req.phi0,
         "doppler_boost": req.doppler_boost,
+        "srgb_output": req.srgb_output,
+        "disk_alpha": req.disk_alpha,
+        "disk_max_crossings": req.disk_max_crossings,
+        "bloom_enabled": req.bloom_enabled,
+        "bloom_radius": req.bloom_radius,
     }
 
     # Echo input parameters for the started event
@@ -480,6 +553,9 @@ class RayRequest(BaseModel):
     phi0: float = Field(0.0)
     doppler_boost: int = Field(default=2, ge=0, le=2,
                                description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick")
+    srgb_output: bool = Field(default=True, description="Apply IEC 61966-2-1 sRGB transfer function")
+    disk_alpha: float = Field(default=0.95, ge=0.0, le=1.0, description="Base opacity per disk crossing")
+    disk_max_crossings: int = Field(default=5, ge=1, le=20, description="Maximum disk crossings to accumulate")
 
     # ── Disk parameters ────────────────────────────────────
     disk_temp: float = Field(1.0, ge=0.2, le=2.5)
@@ -547,6 +623,9 @@ async def ray(req: RayRequest):
         "obs_dist": req.obs_dist,
         "phi0": req.phi0,
         "doppler_boost": req.doppler_boost,
+        "srgb_output": req.srgb_output,
+        "disk_alpha": req.disk_alpha,
+        "disk_max_crossings": req.disk_max_crossings,
         "disk_temp": req.disk_temp,
         "max_trajectory_points": req.max_trajectory_points,
     }

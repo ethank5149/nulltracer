@@ -180,7 +180,10 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
     int bg_mode = (int)p.bg_mode;
     int star_layers = (int)p.star_layers;
     int show_grid = (int)p.show_grid;
-    float cr = 0.0f, cg = 0.0f, cb = 0.0f;
+    float acc_r = 0.0f, acc_g = 0.0f, acc_b = 0.0f, acc_a = 0.0f;
+    int disk_crossings = 0;
+    int max_crossings = (int)p.disk_max_crossings;
+    float base_alpha = (float)p.disk_alpha;
     bool done = false;
 
     /* ── Compensated summation accumulators ────────────────── */
@@ -226,6 +229,14 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
      */
     double dtau = sundman_dtau(a, Q2, rp, p.step_size, p.esc_radius, STEPS);
 
+    /* ── Φ-variable adaptive stepping (Wu et al. 2024 / Preto & Saha 2009)
+     * Φ₀ = j/r₀ where j = obs_dist (observer distance parameter).
+     * h_phi is the fixed new-time step (reuses dtau as the base step).
+     * The Φ-variable modulates this into an adaptive physical step. */
+    double Phi = p.obs_dist / r;  /* Φ₀ = j/r₀ */
+    double Phi_comp = 0.0;        /* Kahan compensator for Φ */
+    double h_phi = dtau * p.obs_dist * p.obs_dist;  /* Fixed new-time step h = dtau·r₀² */
+
     /* ── Integration loop ─────────────────────────────────── */
 
     for (int i = 0; i < STEPS; i++) {
@@ -234,8 +245,17 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
         /* Save state for disk crossing interpolation */
         double oldR = r, oldTh = th, oldPhi = phi;
 
-        /* Sundman-scaled step size (shared function) */
-        double he = sundman_physical_step(dtau, r, th, a, p.obs_dist);
+        /* ── AS₂ Step 1: Half-step Φ update ────────────────── */
+        double g_sun = phi_var_sundman_g(r, th, a);
+        double dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
+        kahan_add(&Phi, &Phi_comp, dPhi);
+        if (Phi < 0.01) Phi = 0.01;  /* Safety floor */
+
+        /* ── AS₂ Step 2: Half-step τ update (not tracked) ──── */
+        /* τ += g_sun * h_phi / (2.0 * Phi); — not needed for ray tracing */
+
+        /* ── AS₂ Step 3: Compute physical step h/Φ ─────────── */
+        double he = phi_var_physical_step(h_phi, Phi, r, th, pth, a, p.obs_dist);
 
         /* ════════════════════════════════════════════════════
          *  KAHAN-LI s15odr8 8th-ORDER: 15 symmetric substeps
@@ -364,6 +384,14 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
         pr_comp = 0.0;  /* reset compensator after algebraic reset of pr */
 
+        /* ── AS₂ Step 4: Second half-step τ update (not tracked) ── */
+
+        /* ── AS₂ Step 5: Second half-step Φ update ─────────── */
+        g_sun = phi_var_sundman_g(r, th, a);
+        dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
+        kahan_add(&Phi, &Phi_comp, dPhi);
+        if (Phi < 0.01) Phi = 0.01;  /* Safety floor */
+
         /* ── Pole reflection ──────────────────────────────── */
         /* θ is the same coordinate in BL and KS, so the pole
          * reflection logic is identical. */
@@ -383,7 +411,10 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
          * the point of no return) before we terminate it.
          *
          * Reference: Kerr (1963); Visser (2007), Section 3. */
-        if (r <= rp * 0.5) { done = true; break; }
+        if (r <= rp * 0.5) {
+            blendColor(0.0f, 0.0f, 0.0f, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);
+            done = true; break;
+        }
 
         /* Disk crossing detection — θ is the same coordinate
          * in both BL and KS, so equatorial plane crossing
@@ -391,9 +422,9 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
          * radius r_hit and azimuth φ_hit are also valid since
          * r is the same coordinate and φ_KS ≈ φ_BL at disk
          * radii (the correction is O(a/r), negligible). */
-        if (show_disk) {
+        if (show_disk && acc_a < 0.99f) {
             double cross = (oldTh - PI * 0.5) * (th - PI * 0.5);
-            if (cross < 0.0) {
+            if (cross < 0.0 && disk_crossings < max_crossings) {
                 double f = fmin(fmax(fabs(oldTh - PI * 0.5) /
                            fmax(fabs(th - oldTh), 1e-14), 0.0), 1.0);
                 double r_hit = oldR + f * (r - oldR);
@@ -411,10 +442,9 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
                          (float)p.isco, (float)p.disk_outer, (float)p.disk_temp,
                          g, (int)p.doppler_boost,
                          &dcr, &dcg, &dcb);
-                float atten = 1.0f - fminf(sqrtf(cr*cr + cg*cg + cb*cb) * 0.4f, 0.9f);
-                cr += dcr * atten;
-                cg += dcg * atten;
-                cb += dcb * atten;
+                float crossing_alpha = base_alpha;
+                blendColor(dcr, dcg, dcb, crossing_alpha, &acc_r, &acc_g, &acc_b, &acc_a);
+                disk_crossings++;
             }
         }
 
@@ -434,10 +464,9 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
             float bgr, bgg, bgb;
             background(dx, dy, dz, bg_mode, star_layers, show_grid,
                        &bgr, &bgg, &bgb);
-            float atten = 1.0f - fminf(sqrtf(cr*cr + cg*cg + cb*cb) * 0.3f, 0.9f);
-            cr += bgr * atten;
-            cg += bgg * atten;
-            cb += bgb * atten;
+            if (acc_a < 1.0f) {
+                blendColor(bgr, bgg, bgb, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);
+            }
             done = true; break;
         }
 
@@ -450,9 +479,10 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
     }
 
     /* ── Post-processing: tone mapping + gamma ────────────── */
+    float cr = acc_r, cg = acc_g, cb = acc_b;
     float ux = 2.0f * (ix + 0.5f) / (float)W  - 1.0f;
     float uy = 2.0f * (iy + 0.5f) / (float)H - 1.0f;
-    postProcess(&cr, &cg, &cb, alpha, beta, (float)p.spin, ux, uy);
+    postProcess(&cr, &cg, &cb, alpha, beta, p, ux, uy);
 
     /* ── Write output (RGB, uint8) ────────────────────────── */
     int idx = (iy * W + ix) * 3;

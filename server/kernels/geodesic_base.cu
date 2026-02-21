@@ -58,6 +58,10 @@ struct RenderParams {
     double show_grid;   /* 1=show grid overlay */
     double disk_temp;   /* disk temperature multiplier */
     double doppler_boost; /* 0=off, 1=g^3 (thin), 2=g^4 (thick) */
+    double srgb_output;   /* >0.5 = apply IEC 61966-2-1 sRGB transfer */
+    double disk_alpha;          /* base opacity per disk crossing (0.0–1.0) */
+    double disk_max_crossings;  /* max disk crossings to accumulate (as double, cast to int) */
+    double bloom_enabled;       /* 1.0 = output float32 linear for bloom, 0.0 = normal uint8 sRGB */
 };
 
 
@@ -310,6 +314,17 @@ __device__ void sphereDir(double th, double ph,
 
 /* ── Post-processing: tone mapping + gamma ────────────────── */
 
+/* Standard sRGB transfer function (IEC 61966-2-1).
+ * Maps linear-light [0,1] to sRGB-encoded [0,1].
+ * The piecewise function avoids the infinite slope at zero
+ * that a pure gamma curve would have. */
+__device__ float linear_to_srgb(float c) {
+    if (c <= 0.0031308f)
+        return 12.92f * c;
+    else
+        return 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
+}
+
 /* ACES filmic tone mapping curve (Narkowicz 2015 approximation).
  * Maps HDR luminance [0, ∞) to SDR [0, ~1.0) with a natural
  * film-like S-curve: deep toe (rich shadows), linear mid-range,
@@ -323,10 +338,26 @@ __device__ float aces_curve(float x) {
     return fminf(fmaxf((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f), 1.0f);
 }
 
+/* Front-to-back alpha compositing.
+ * Blends source color (sr,sg,sb) with opacity sa onto accumulated
+ * destination (dr,dg,db) with accumulated opacity da.
+ * Updates destination in-place. */
+__device__ void blendColor(float sr, float sg, float sb, float sa,
+                           float *dr, float *dg, float *db, float *da) {
+    float one_minus_da = 1.0f - *da;
+    float contrib = sa * one_minus_da;
+    *dr += sr * contrib;
+    *dg += sg * contrib;
+    *db += sb * contrib;
+    *da += contrib;
+}
+
 __device__ void postProcess(float *cr, float *cg, float *cb,
                             float alpha, float beta,
-                            float spin, float ux, float uy) {
+                            const RenderParams &p,
+                            float ux, float uy) {
     /* Photon ring glow */
+    float spin = (float)p.spin;
     float imp = sqrtf(alpha * alpha + beta * beta);
     float rc = 5.2f - 1.0f * spin;
     float d = (imp - rc) / 0.3f;
@@ -368,11 +399,20 @@ __device__ void postProcess(float *cr, float *cg, float *cb,
     *cg = fminf(*cg, 1.0f);
     *cb = fminf(*cb, 1.0f);
 
-    /* Gamma correction (sRGB, 1/2.2) */
-    float inv_gamma = 1.0f / 2.2f;
-    *cr = powf(fmaxf(*cr, 0.0f), inv_gamma);
-    *cg = powf(fmaxf(*cg, 0.0f), inv_gamma);
-    *cb = powf(fmaxf(*cb, 0.0f), inv_gamma);
+    /* sRGB transfer function (IEC 61966-2-1) or simple gamma.
+     * When srgb_output is enabled, apply the standard piecewise
+     * sRGB OETF for correct display on sRGB monitors.
+     * Otherwise, fall back to the simple 1/2.2 power curve. */
+    if (p.srgb_output > 0.5) {
+        *cr = linear_to_srgb(fmaxf(*cr, 0.0f));
+        *cg = linear_to_srgb(fmaxf(*cg, 0.0f));
+        *cb = linear_to_srgb(fmaxf(*cb, 0.0f));
+    } else {
+        float inv_gamma = 1.0f / 2.2f;
+        *cr = powf(fmaxf(*cr, 0.0f), inv_gamma);
+        *cg = powf(fmaxf(*cg, 0.0f), inv_gamma);
+        *cb = powf(fmaxf(*cb, 0.0f), inv_gamma);
+    }
 }
 
 

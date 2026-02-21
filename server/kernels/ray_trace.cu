@@ -492,13 +492,24 @@ void ray_trace_kahanli8s(const RenderParams *pp, double *output) {
     /* Sundman / Mino time step */
     double dtau = sundman_dtau(a, Q2, rp, p.step_size, p.esc_radius, STEPS);
 
+    /* Φ-variable adaptive stepping (AS₂ algorithm) */
+    double Phi = p.obs_dist / r;
+    double Phi_comp = 0.0;
+    double h_phi = dtau * p.obs_dist * p.obs_dist;  /* h = dtau·r₀² */
+
     for (int i = 0; i < STEPS; i++) {
         steps_used = i + 1;
 
         double oldR = r, oldTh = th, oldPhi = phi;
 
-        /* Sundman-scaled step size */
-        double he = sundman_physical_step(dtau, r, th, a, p.obs_dist);
+        /* AS₂ Step 1: Half-step Φ update */
+        double g_sun = phi_var_sundman_g(r, th, a);
+        double dPhi = phi_var_dphi_BL(r, th, pr, a, Q2, g_sun, h_phi);
+        rt_kahan_add(&Phi, &Phi_comp, dPhi);
+        if (Phi < 0.01) Phi = 0.01;
+
+        /* AS₂ Step 3: Compute physical step */
+        double he = phi_var_physical_step(h_phi, Phi, r, th, pth, a, p.obs_dist);
 
         if (i < max_traj) {
             int off = traj_base + i * 4;
@@ -547,6 +558,12 @@ void ray_trace_kahanli8s(const RenderParams *pp, double *output) {
         /* Hamiltonian projection */
         projectHamiltonian(r, th, &pr, pth, a, b, Q2);
         pr_comp = 0.0;
+
+        /* AS₂ Step 5: Second half-step Φ update */
+        g_sun = phi_var_sundman_g(r, th, a);
+        dPhi = phi_var_dphi_BL(r, th, pr, a, Q2, g_sun, h_phi);
+        rt_kahan_add(&Phi, &Phi_comp, dPhi);
+        if (Phi < 0.01) Phi = 0.01;
 
         /* Pole reflection */
         if (th < 0.005) { th = 0.005; pth = fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
@@ -604,13 +621,24 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
     /* Sundman / Mino time step */
     double dtau = sundman_dtau(a, Q2, rp, p.step_size, p.esc_radius, STEPS);
 
+    /* Φ-variable adaptive stepping (AS₂ algorithm) */
+    double Phi = p.obs_dist / r;
+    double Phi_comp = 0.0;
+    double h_phi = dtau * p.obs_dist * p.obs_dist;  /* h = dtau·r₀² */
+
     for (int i = 0; i < STEPS; i++) {
         steps_used = i + 1;
 
         double oldR = r, oldTh = th, oldPhi = phi;
 
-        /* Sundman-scaled step size */
-        double he = sundman_physical_step(dtau, r, th, a, p.obs_dist);
+        /* AS₂ Step 1: Half-step Φ update */
+        double g_sun = phi_var_sundman_g(r, th, a);
+        double dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
+        rt_kahan_add(&Phi, &Phi_comp, dPhi);
+        if (Phi < 0.01) Phi = 0.01;
+
+        /* AS₂ Step 3: Compute physical step */
+        double he = phi_var_physical_step(h_phi, Phi, r, th, pth, a, p.obs_dist);
 
         if (i < max_traj) {
             int off = traj_base + i * 4;
@@ -659,6 +687,12 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
         /* KS Hamiltonian projection */
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
         pr_comp = 0.0;
+
+        /* AS₂ Step 5: Second half-step Φ update */
+        g_sun = phi_var_sundman_g(r, th, a);
+        dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
+        rt_kahan_add(&Phi, &Phi_comp, dPhi);
+        if (Phi < 0.01) Phi = 0.01;
 
         /* Pole reflection */
         if (th < 0.005) { th = 0.005; pth = fabs(pth); th_comp = 0.0; pth_comp = 0.0; }

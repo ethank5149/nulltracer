@@ -228,6 +228,11 @@ function buildParams() {
         disk_temp:   stateRef.diskTemp,
         star_layers: stateRef.qStarLayers,
         phi0:        stateRef.rotAngle || 0,
+        srgb_output: !!stateRef.srgbOutput,
+        disk_alpha:  stateRef.diskAlpha,
+        disk_max_crossings: stateRef.diskMaxCrossings,
+        bloom_enabled: !!stateRef.bloomEnabled,
+        bloom_radius:  stateRef.bloomRadius,
         format:      'jpeg',
         quality:     80
     };

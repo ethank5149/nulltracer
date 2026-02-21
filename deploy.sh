@@ -145,8 +145,12 @@ cmd_build() {
     timer_start
 
     # Step 1: Build the new image (don't stop anything yet)
+    # Use CACHEBUST build arg to invalidate the COPY layer cache, ensuring
+    # CUDA kernel source changes are always picked up. This only busts the
+    # COPY layer — pip install and other layers remain cached.
     info "Building new image..."
-    $COMPOSE_CMD -f "$COMPOSE_FILE" build renderer
+    CACHEBUST="$(date +%s)" $COMPOSE_CMD -f "$COMPOSE_FILE" build \
+        --build-arg CACHEBUST renderer
     success "Image built successfully"
 
     # Step 2: Tag current image as :previous for rollback
@@ -278,6 +282,36 @@ cmd_logs() {
     docker logs -f "$CONTAINER_NAME"
 }
 
+cmd_purge_cache() {
+    info "${BOLD}Purging CUDA kernel caches...${NC}"
+
+    # Step 1: Clear CuPy on-disk cache inside the container
+    info "Clearing CuPy disk cache..."
+    docker exec "$CONTAINER_NAME" rm -rf /tmp/cupy_cache/* 2>/dev/null || \
+        warn "Could not clear CuPy disk cache (container may not be running)"
+
+    # Step 2: Clear in-memory kernel cache via API endpoint
+    info "Clearing in-memory kernel cache via /purge-cache..."
+    local response
+    response=$(curl -sf -X POST "$HEALTH_URL/../purge-cache" 2>/dev/null) || \
+        response=$(curl -sf -X POST "http://localhost:8420/purge-cache" 2>/dev/null) || true
+    if echo "$response" | grep -q "purged"; then
+        success "In-memory kernel cache purged"
+    else
+        warn "Could not reach /purge-cache endpoint — restart container to clear in-memory cache"
+    fi
+
+    # Step 3: Restart the container to ensure clean state
+    info "Restarting container..."
+    docker restart "$CONTAINER_NAME"
+    if health_check; then
+        success "${BOLD}Cache purged and service is healthy${NC}"
+    else
+        error "Service did not become healthy after cache purge"
+        exit 1
+    fi
+}
+
 cmd_rollback() {
     info "${BOLD}Rolling back to previous image...${NC}"
     timer_start
@@ -325,13 +359,14 @@ cmd_help() {
     echo "Usage: $0 [command]"
     echo ""
     echo "Commands:"
-    echo "  all        Full deploy: build + static + health check (default)"
-    echo "  build      Build and restart only the renderer container"
-    echo "  static     Deploy only static files to ${STATIC_DEST}"
-    echo "  status     Show container status and health"
-    echo "  logs       Tail renderer container logs"
-    echo "  rollback   Restore previous Docker image"
-    echo "  help       Show this help message"
+    echo "  all          Full deploy: build + static + health check (default)"
+    echo "  build        Build and restart only the renderer container"
+    echo "  static       Deploy only static files to ${STATIC_DEST}"
+    echo "  purge-cache  Clear CUDA kernel caches and restart renderer"
+    echo "  status       Show container status and health"
+    echo "  logs         Tail renderer container logs"
+    echo "  rollback     Restore previous Docker image"
+    echo "  help         Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0              # Full deploy (same as 'all')"
@@ -370,10 +405,11 @@ main() {
     preflight
 
     case "$command" in
-        all)      cmd_all ;;
-        build)    cmd_build ;;
-        static)   cmd_static ;;
-        rollback) cmd_rollback ;;
+        all)          cmd_all ;;
+        build)        cmd_build ;;
+        static)       cmd_static ;;
+        purge-cache)  cmd_purge_cache ;;
+        rollback)     cmd_rollback ;;
         *)
             error "Unknown command: ${command}"
             cmd_help

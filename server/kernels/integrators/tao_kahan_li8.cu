@@ -55,7 +55,10 @@ void trace_tao_kahan_li8(const RenderParams *pp, unsigned char *output) {
     int bg_mode = (int)p.bg_mode;
     int star_layers = (int)p.star_layers;
     int show_grid = (int)p.show_grid;
-    float cr = 0.0f, cg = 0.0f, cb = 0.0f;
+    float acc_r = 0.0f, acc_g = 0.0f, acc_b = 0.0f, acc_a = 0.0f;
+    int disk_crossings = 0;
+    int max_crossings = (int)p.disk_max_crossings;
+    float base_alpha = (float)p.disk_alpha;
     bool done = false;
 
     for (int i = 0; i < STEPS; i++) {
@@ -76,11 +79,14 @@ void trace_tao_kahan_li8(const RenderParams *pp, unsigned char *output) {
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
         /* KS coordinates are regular at the horizon */
-        if (r <= rp * 0.5) { done = true; break; }
+        if (r <= rp * 0.5) {
+            blendColor(0.0f, 0.0f, 0.0f, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);
+            done = true; break;
+        }
 
-        if (show_disk) {
+        if (show_disk && acc_a < 0.99f) {
             double cross = (oldTh - PI * 0.5) * (th - PI * 0.5);
-            if (cross < 0.0) {
+            if (cross < 0.0 && disk_crossings < max_crossings) {
                 double f = fmin(fmax(fabs(oldTh - PI * 0.5) /
                            fmax(fabs(th - oldTh), 1e-14), 0.0), 1.0);
                 double r_hit = oldR + f * (r - oldR);
@@ -94,8 +100,9 @@ void trace_tao_kahan_li8(const RenderParams *pp, unsigned char *output) {
                          (float)p.isco, (float)p.disk_outer, (float)p.disk_temp,
                          g, (int)p.doppler_boost,
                          &dcr, &dcg, &dcb);
-                float atten = 1.0f - fminf(sqrtf(cr*cr + cg*cg + cb*cb) * 0.4f, 0.9f);
-                cr += dcr * atten; cg += dcg * atten; cb += dcb * atten;
+                float crossing_alpha = base_alpha;
+                blendColor(dcr, dcg, dcb, crossing_alpha, &acc_r, &acc_g, &acc_b, &acc_a);
+                disk_crossings++;
             }
         }
 
@@ -109,17 +116,19 @@ void trace_tao_kahan_li8(const RenderParams *pp, unsigned char *output) {
             float bgr, bgg, bgb;
             background(dx, dy, dz, bg_mode, star_layers, show_grid,
                        &bgr, &bgg, &bgb);
-            float atten = 1.0f - fminf(sqrtf(cr*cr + cg*cg + cb*cb) * 0.3f, 0.9f);
-            cr += bgr * atten; cg += bgg * atten; cb += bgb * atten;
+            if (acc_a < 1.0f) {
+                blendColor(bgr, bgg, bgb, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);
+            }
             done = true; break;
         }
 
         if (r < 0.5 || r != r || th != th) { done = true; break; }
     }
 
+    float cr = acc_r, cg = acc_g, cb = acc_b;
     float ux = 2.0f * (ix + 0.5f) / (float)W  - 1.0f;
     float uy = 2.0f * (iy + 0.5f) / (float)H - 1.0f;
-    postProcess(&cr, &cg, &cb, alpha, beta, (float)p.spin, ux, uy);
+    postProcess(&cr, &cg, &cb, alpha, beta, p, ux, uy);
 
     int idx = (iy * W + ix) * 3;
     output[idx + 0] = (unsigned char)(fminf(fmaxf(cr * 255.0f, 0.0f), 255.0f));

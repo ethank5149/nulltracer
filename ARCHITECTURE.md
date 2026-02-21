@@ -48,15 +48,23 @@ sequenceDiagram
 
 ```
 nulltracer/server/
-├── app.py                 # FastAPI application entry point (/render, /ray, /health endpoints)
+├── app.py                 # FastAPI application entry point (/render, /ray, /health, /scenes endpoints)
 ├── renderer.py            # CudaRenderer: kernel compilation, execution, GPU management
 ├── cache.py               # LRU image cache by parameter hash
 ├── isco.py                # ISCO calculation (port of iscoJS/iscoKN)
+├── bloom.py               # Airy disk bloom post-processing (FFT convolution, sRGB-linear-sRGB)
+├── scenes.py              # Scene file management (SceneManager, JSON persistence, bundled defaults)
 ├── Dockerfile             # nvidia/cuda:12.2.0-devel-ubuntu22.04 base
-├── requirements.txt       # fastapi, uvicorn, cupy-cuda12x, Pillow, numpy
+├── requirements.txt       # fastapi, uvicorn, cupy-cuda12x, Pillow, numpy, scipy
 ├── __init__.py
+├── scenes/                # Built-in scene JSON files (read-only)
+│   ├── default.json           # Default scene (Kerr spin=0.6)
+│   ├── schwarzschild.json     # Non-spinning black hole (a=0)
+│   ├── extreme-kerr.json      # Near-maximal spin (a=0.998)
+│   ├── face-on.json           # Face-on inclination (θ=12°)
+│   └── charged-black-hole.json # Reissner-Nordström (charge parameter)
 └── kernels/
-    ├── geodesic_base.cu    # Shared metric functions, geodesic RHS, constants (float64)
+    ├── geodesic_base.cu    # Shared metric functions, geodesic RHS, constants, sRGB conversion, compositing (float64)
     ├── backgrounds.cu      # Background rendering (stars, checker, colormap)
     ├── disk.cu             # Accretion disk emission and color computation
     ├── ray_trace.cu        # Single-ray tracing kernel for /ray endpoint
@@ -326,10 +334,20 @@ struct RenderParams {
     double show_disk;               // Show disk: 1.0 or 0.0
     double show_grid;               // Show grid: 1.0 or 0.0
     double disk_temp;               // Disk temperature multiplier
+    double srgb_output;             // Apply sRGB OETF: 1.0 or 0.0 (default: 1.0)
+    double disk_alpha;              // Base opacity per disk crossing (0.0-1.0, default: 1.0)
+    double disk_max_crossings;      // Maximum disk crossings per ray (1-20, default: 1)
+    double bloom_enabled;           // Enable Airy disk bloom: 1.0 or 0.0 (default: 0.0)
 };
 ```
 
 **Note**: All fields are `double` (float64) for alignment consistency between Python ctypes and CUDA. Integer values are stored as doubles and cast within the kernel.
+
+**New fields** (post-processing and compositing):
+- `srgb_output` — When > 0.5, applies the IEC 61966-2-1 sRGB transfer function (gamma encoding) to linear RGB before output
+- `disk_alpha` — Controls the base opacity (alpha) of each disk crossing. Value in [0.0, 1.0]; used in front-to-back alpha blending
+- `disk_max_crossings` — Limits the number of times a ray can cross the disk. When set to 1 (default), only the first crossing contributes color (backward compatible); higher values enable multi-crossing compositing
+- `bloom_enabled` — When > 0.5, post-processing applies Airy disk bloom convolution (CPU-side after CUDA render)
 
 ### 3.3 Kernel Execution Model
 
@@ -461,6 +479,11 @@ Not recommended for:
   "disk_temp": 1.0,
   "star_layers": 3,
   "phi0": 0.0,
+  "srgb_output": true,
+  "disk_alpha": 1.0,
+  "disk_max_crossings": 1,
+  "bloom_enabled": false,
+  "bloom_radius": 1.0,
   "format": "jpeg",
   "quality": 85
 }
@@ -486,6 +509,11 @@ class RenderRequest(BaseModel):
     disk_temp: float = Field(1.0, ge=0.2, le=2.5)
     star_layers: int = Field(3, ge=1, le=4)
     phi0: float = Field(0.0)
+    srgb_output: bool = Field(True)
+    disk_alpha: float = Field(1.0, ge=0.0, le=1.0)
+    disk_max_crossings: int = Field(1, ge=1, le=20)
+    bloom_enabled: bool = Field(False)
+    bloom_radius: float = Field(1.0, ge=0.1, le=5.0)
     format: str = Field("jpeg", pattern=r"^(jpeg|webp)$")
     quality: int = Field(85, ge=10, le=100)
 
@@ -706,7 +734,132 @@ class RayRequest(BaseModel):
 - `T_emit` — emitted blackbody temperature (K)
 - `T_observed` — observed temperature after redshift (K)
 
-### 4.4 CORS Configuration
+### 4.4 Scene Management Endpoints
+
+Scene files are stored as JSON in `server/scenes/` and managed via REST endpoints.
+
+#### `GET /scenes`
+
+List all available scenes (built-in and user-saved).
+
+**Response** (success — `200 OK`, `application/json`):
+
+```json
+{
+  "scenes": [
+    {
+      "name": "default",
+      "builtin": true,
+      "params": {
+        "spin": 0.6,
+        "charge": 0.0,
+        "inclination": 80.0,
+        ...
+      }
+    },
+    {
+      "name": "my-custom-scene",
+      "builtin": false,
+      "params": { ... }
+    }
+  ]
+}
+```
+
+#### `GET /scenes/{name}`
+
+Retrieve a specific scene by name.
+
+**Parameters**:
+- `name` (path) — Scene name (alphanumeric, hyphens, underscores, spaces; 1-63 chars)
+
+**Response** (success — `200 OK`, `application/json`):
+
+```json
+{
+  "name": "default",
+  "builtin": true,
+  "params": {
+    "spin": 0.6,
+    "charge": 0.0,
+    "inclination": 80.0,
+    "fov": 8.0,
+    ...
+  }
+}
+```
+
+**Response** (not found — `404 Not Found`):
+
+```json
+{
+  "error": "scene_not_found",
+  "detail": "Scene 'unknown' not found"
+}
+```
+
+#### `POST /scenes/{name}`
+
+Save or update a scene. Built-in scenes cannot be modified.
+
+**Request body** (`application/json`):
+
+```json
+{
+  "params": {
+    "spin": 0.7,
+    "charge": 0.0,
+    "inclination": 75.0,
+    "fov": 8.5,
+    ...
+  }
+}
+```
+
+**Validation**:
+- Scene name must pass alphanumeric + hyphens/underscores/spaces (1-63 chars) validation
+- Built-in scenes (marked `_builtin: true` in JSON) cannot be overwritten
+- Parameter whitelist (`VALID_PARAMS`) ensures only rendering parameters are stored
+
+**Response** (success — `201 Created` or `200 OK`):
+
+```json
+{
+  "name": "my-custom-scene",
+  "builtin": false,
+  "params": { ... }
+}
+```
+
+**Response** (forbidden — `403 Forbidden`):
+
+```json
+{
+  "error": "builtin_scene_protected",
+  "detail": "Cannot modify built-in scene 'default'"
+}
+```
+
+#### `DELETE /scenes/{name}`
+
+Delete a user-saved scene. Built-in scenes cannot be deleted.
+
+**Response** (success — `204 No Content`):
+
+```
+(empty body)
+```
+
+**Response** (forbidden — `403 Forbidden`):
+
+```json
+{
+  "error": "builtin_scene_protected",
+  "detail": "Cannot delete built-in scene 'default'"
+}
+```
+
+### 4.5 CORS Configuration
 
 The server enables CORS for all origins by default (configurable):
 
@@ -714,7 +867,7 @@ The server enables CORS for all origins by default (configurable):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
     expose_headers=["X-Render-Time-Ms", "X-Cache", "X-Backend"],
 )
@@ -746,14 +899,14 @@ The client is a thin server-only viewer with modular JavaScript:
 | [`styles.css`](styles.css) | CSS layout, responsive design, panel styling |
 | [`js/main.js`](js/main.js) | ES6 entry point, shared state, module initialization |
 | [`js/server-client.js`](js/server-client.js) | Server render fetch, debouncing, auto-detection, health checks |
-| [`js/ui-controller.js`](js/ui-controller.js) | DOM event handlers, slider/button logic, presets, labels |
+| [`js/ui-controller.js`](js/ui-controller.js) | DOM event handlers, slider/button logic, presets, scene management |
 
 ### 5.3 Rendering Flow
 
 ```
-1. User adjusts parameter (slider/button)
+1. User adjusts parameter (slider/button) or loads scene
    ↓
-2. DOM event handler increments state, calls scheduleServerRender()
+2. DOM event handler updates state, calls scheduleServerRender()
    ↓
 3. Debounce timer starts (200ms)
    ↓
@@ -765,9 +918,11 @@ The client is a thin server-only viewer with modular JavaScript:
    ↓
 7. Server checks cache, on miss renders via CUDA
    ↓
-8. Server returns JPEG/WebP image
+8. Server applies post-processing (sRGB, bloom) if enabled
    ↓
-9. Client displays in <img id="server-frame">
+9. Server returns JPEG/WebP image
+   ↓
+10. Client displays in <img id="server-frame">
 ```
 
 ### 5.4 Server Auto-Detection
@@ -810,11 +965,25 @@ const state = {
     qStepSize: 0.3,
     qObsDist: 40,
     qStarLayers: 3,
+    srgbOutput: true,
+    diskAlpha: 1.0,
+    diskMaxCrossings: 1,
+    bloomEnabled: false,
+    bloomRadius: 1.0,
+    currentScene: 'default',
     renderMode: 'server',
 };
 ```
 
 This is passed to all modules so they can read/write shared parameters and coordinate.
+
+**New parameters** (post-processing and advanced features):
+- `srgbOutput` — Enable sRGB gamma encoding on output (default: true)
+- `diskAlpha` — Base opacity per disk crossing; controls how opaque each disk intersection appears (default: 1.0, range 0.0-1.0)
+- `diskMaxCrossings` — Maximum number of disk crossings per ray (default: 1, range 1-20; backward compatible)
+- `bloomEnabled` — Enable Airy disk bloom post-processing (default: false)
+- `bloomRadius` — Bloom kernel radius multiplier (default: 1.0, range 0.1-5.0)
+- `currentScene` — Currently loaded scene name (default: 'default')
 
 ### 5.6 Spin/Charge Constraint Enforcement
 
@@ -856,11 +1025,174 @@ Presets are applied via buttons in the settings panel, updating sliders and stat
 - **ultra** — Maximum accuracy (rkdp8, 200 steps) with excellent convergence
 - **extreme** — Maximum accuracy (kahanli8s, 180 steps) for publication-quality output at extreme inclinations
 
+### 5.8 Client UI Controls for New Features
+
+The client interface includes new controls for post-processing and advanced rendering:
+
+- **sRGB Output toggle** — Enable/disable sRGB color output (default: enabled)
+  - When enabled, applies IEC 61966-2-1 OETF to convert linear RGB → sRGB for standard display calibration
+- **Disk Opacity slider** — Control base opacity per disk crossing (0.0-1.0, default: 1.0)
+  - Used in alpha-blended compositing for semi-transparent disk effects
+- **Max Crossings slider** — Maximum disk crossings per ray (1-20, default: 1)
+  - Default value of 1 preserves backward compatibility (first hit wins)
+  - Higher values enable multi-crossing alpha compositing
+- **Bloom toggle** — Enable/disable Airy disk bloom post-processing (default: disabled)
+- **Bloom Radius slider** — Bloom kernel radius multiplier (0.1-5.0, default: 1.0)
+  - Controls the size of the Airy diffraction halo
+- **Scene dropdown and buttons** — Load saved scenes, save current parameters as scene, or delete custom scenes
+  - Built-in scenes (default, schwarzschild, extreme-kerr, face-on, charged-black-hole) are read-only
+
 ---
 
-## 6. Rendering Pipeline Detail
+## 6. Post-Processing Pipeline
 
-### 6.1 Server-Side CUDA Render Steps
+Post-processing occurs CPU-side after CUDA rendering is complete. It consists of sRGB color conversion and optional Airy disk bloom diffraction convolution.
+
+### 6.1 sRGB Color Pipeline
+
+sRGB output conversion implements the IEC 61966-2-1 standard piecewise transfer function:
+
+```cuda
+// In geodesic_base.cu
+__device__ float linear_to_srgb(float c) {
+    if (c <= 0.0031308f) {
+        return 12.92f * c;
+    } else {
+        return 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
+    }
+}
+```
+
+**Applied in `postProcess()`** when `params.srgb_output > 0.5`:
+
+1. Each pixel's linear RGB value is converted individually
+2. Clipped to [0, 1] range before conversion
+3. Scaled to uint8 [0, 255] for output
+
+**Rationale**:
+- Linear RGB is used throughout CUDA rendering for physical accuracy (photons are additive in linear space)
+- sRGB encoding is required for correct display on standard monitors
+- Default: enabled (True) for proper color perception
+- Can be disabled for scientific analysis (linear output)
+
+### 6.2 Airy Disk Bloom Post-Processing
+
+Airy disk bloom simulates diffraction effects from the human eye's pupil aperture. Implemented in [`server/bloom.py`](server/bloom.py):
+
+**Physics**:
+- Airy diffraction pattern: `I(r) = (2*J1(r)/r)²` where r is diffraction angle in radians
+- Spectral dependence (red diffracts more due to longer wavelength):
+  - **Red**: 1.0 (reference)
+  - **Green**: 0.86 (shorter wavelength, less diffraction)
+  - **Blue**: 0.61 (much less diffraction)
+- Diffraction angle from eye physics: `θ = 1.22 × λ / D`
+  - λ = 650 nm (mean human eye spectral response)
+  - D = 4 mm (typical pupil diameter)
+  - Scaled by FOV and image resolution
+
+**Implementation**:
+1. **Preprocessing**: Convert sRGB → linear RGB (reverse encoding)
+2. **Kernel generation**: Compute Airy disk pattern at per-channel resolution
+   - Kernel size adapts based on maximum image brightness (adaptive to prevent noise amplification)
+3. **FFT convolution**: Apply bloom via frequency-domain convolution (scipy.ndimage.fft_convolve)
+4. **Postprocessing**: Clamp result, convert linear → sRGB
+
+**Parameters**:
+- `bloom_enabled: bool` — Enable/disable bloom (default: False)
+- `bloom_radius: float` (0.1-5.0, default: 1.0) — Multiplier on diffraction radius
+  - 1.0 = physical diffraction from 4mm pupil
+  - 0.5 = reduced bloom, sharper image
+  - 2.0 = enhanced bloom for artistic effect
+
+**Performance**:
+- FFT convolution: O(n log n) where n = width × height
+- Typical: 10-50 ms for 1920×1080 (single-threaded CPU)
+- **Zero overhead when disabled** — Post-processing is skipped entirely if `bloom_enabled == false`
+
+---
+
+## 7. Scene Management System
+
+Scenes are named collections of rendering parameters stored as JSON files in `server/scenes/`.
+
+### 7.1 Scene Storage and Organization
+
+**Directory structure**:
+```
+server/scenes/
+├── default.json               # Kerr spin=0.6, θ=80° (default view)
+├── schwarzschild.json         # Non-spinning (a=0) black hole
+├── extreme-kerr.json          # Near-maximal spin (a=0.998)
+├── face-on.json               # Face-on inclination (θ=12°)
+└── charged-black-hole.json    # Reissner-Nordström (Q≠0)
+```
+
+Built-in scenes are marked with `_builtin: true` in JSON and cannot be modified or deleted via API.
+
+### 7.2 Scene File Format
+
+Each scene is a JSON file with:
+
+```json
+{
+  "_name": "default",
+  "_builtin": true,
+  "spin": 0.6,
+  "charge": 0.0,
+  "inclination": 80.0,
+  "fov": 8.0,
+  "width": 1920,
+  "height": 1080,
+  "method": "rkdp8",
+  "steps": 200,
+  "step_size": 0.3,
+  "obs_dist": 40,
+  "bg_mode": 1,
+  "show_disk": true,
+  "show_grid": true,
+  "disk_temp": 1.0,
+  "star_layers": 3,
+  "phi0": 0.0,
+  "srgb_output": true,
+  "disk_alpha": 1.0,
+  "disk_max_crossings": 1,
+  "bloom_enabled": false,
+  "bloom_radius": 1.0
+}
+```
+
+**Validation**:
+- Scene name: alphanumeric + hyphens/underscores/spaces, 1-63 characters
+- Parameter whitelist (`VALID_PARAMS`) enforces only rendering parameters can be stored (no arbitrary keys)
+- Built-in scenes cannot be overwritten or deleted
+
+### 7.3 Scene Management API
+
+Implemented in [`server/scenes.py`](server/scenes.py) via `SceneManager` class:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/scenes` | GET | List all available scenes (built-in + user-saved) |
+| `/scenes/{name}` | GET | Retrieve a specific scene's parameters |
+| `/scenes/{name}` | POST | Save/update a scene (fails if built-in) |
+| `/scenes/{name}` | DELETE | Delete a user-saved scene (fails if built-in) |
+
+### 7.4 Client Scene UI
+
+The client includes scene management controls:
+
+- **Scene dropdown** — List all available scenes; selecting a scene loads its parameters
+- **Load Scene button** — Applies scene parameters and triggers a render
+- **Save Scene button** — Saves current parameters as a named scene (prompts for scene name)
+- **Delete Scene button** — Removes a user-saved scene (disabled for built-in scenes)
+
+Scene loading updates all UI controls (sliders, dropdowns) to match the loaded scene.
+
+---
+
+## 8. Rendering Pipeline Detail
+
+### 8.1 Server-Side CUDA Render Steps
 
 ```mermaid
 flowchart TD
@@ -896,7 +1228,7 @@ flowchart TD
         C["Allocate GPU output buffer (width × height × 3 uint8)"]
         C --> D["Copy RenderParams to GPU memory"]
         D --> E["Launch kernel: grid=(width,height), block=(1,1,1)"]
-        E --> F["Each thread: initialize ray, integrate, write color"]
+        E --> F["Each thread: initialize ray, integrate, disk crossings, compositing"]
         F --> G["Synchronize GPU (cudaDeviceSynchronize)"]
         G --> H["Copy output buffer to CPU"]
         H --> ReadErr{"Readback succeeded?"}
@@ -911,6 +1243,12 @@ flowchart TD
     End2 --> EndAll
     EndRead --> EndAll
     
+    subgraph PostProc["CPU POST-PROCESSING"]
+        J["If srgb_output: linear → sRGB"]
+        K["If bloom_enabled: FFT Airy diffraction"]
+        J --> K
+    end
+    
     subgraph ImageEncode["IMAGE ENCODING & CACHING"]
         I["Encode JPEG/WebP at quality setting"]
         EncErr{"Encoding succeeded?"}
@@ -919,7 +1257,8 @@ flowchart TD
         EncErr -->|"Yes"| Cache2["Store in image cache"]
     end
     
-    ToPillow --> I
+    ToPillow --> J
+    K --> I
     I --> EncErr
     CleanEnc --> EndEnc["End - 500 Error"]
     
@@ -941,7 +1280,7 @@ flowchart TD
     style Success fill:#32CD32,color:#fff,stroke:#333,stroke-width:2px
 ```
 
-### 6.2 Per-Pixel Ray Tracing
+### 8.2 Per-Pixel Ray Tracing
 
 Each CUDA thread traces a single ray from the observer:
 
@@ -964,7 +1303,7 @@ Each CUDA thread traces a single ray from the observer:
 7. Write RGBA to output buffer
 ```
 
-### 6.3 Integrator Kernels
+### 8.3 Integrator Kernels
 
 Each integrator kernel implements the same interface:
 
@@ -987,7 +1326,7 @@ __global__ void trace_yoshida4(RenderParams params, uint8_t *output_buffer) {
 
 All integrators use the same `geoRHS()` function from [`geodesic_base.cu`](server/kernels/geodesic_base.cu) to compute the geodesic equations in Kerr-Newman spacetime.
 
-### 6.4 Kerr-Newman Metric and Geodesics
+### 8.4 Kerr-Newman Metric and Geodesics
 
 The metric is computed in Boyer-Lindquist coordinates with mass M = 1, spin parameter `a`, and charge `Q`. The [`geodesic_base.cu`](server/kernels/geodesic_base.cu) kernel provides:
 
@@ -997,7 +1336,7 @@ The metric is computed in Boyer-Lindquist coordinates with mass M = 1, spin para
 
 All metric computations use float64 for maximum accuracy.
 
-### 6.5 Background Rendering
+### 8.5 Background Rendering
 
 The [`backgrounds.cu`](server/kernels/backgrounds.cu) kernel provides three background modes:
 
@@ -1007,7 +1346,7 @@ The [`backgrounds.cu`](server/kernels/backgrounds.cu) kernel provides three back
 
 Each is selected at runtime based on `params.bg_mode`.
 
-### 6.6 Accretion Disk Color
+### 8.6 Accretion Disk Color
 
 The [`disk.cu`](server/kernels/disk.cu) kernel computes disk color when a ray hits the equatorial plane within the disk bounds:
 
@@ -1027,9 +1366,9 @@ The [`disk.cu`](server/kernels/disk.cu) kernel computes disk color when a ray hi
 
 ---
 
-## 7. Performance Characteristics
+## 9. Performance Characteristics
 
-### 7.1 Bottleneck Analysis
+### 9.1 Bottleneck Analysis
 
 **CUDA kernel time** (per frame, typical):
 - Resolution: 1920×1080 (2.07 MP)
@@ -1052,7 +1391,7 @@ The [`disk.cu`](server/kernels/disk.cu) kernel computes disk color when a ray hi
 
 **Total wall time**: ~130-350 ms per render (highly dependent on GPU and integration method)
 
-### 7.2 Optimization Opportunities
+### 9.2 Optimization Opportunities
 
 - **Adaptive step size** (RKDP8): Uses fewer steps in smooth regions
 - **Kernel compilation caching**: Avoids recompilation when parameters don't change
@@ -1061,7 +1400,7 @@ The [`disk.cu`](server/kernels/disk.cu) kernel computes disk color when a ray hi
 
 ---
 
-## 8. Error Handling
+## 10. Error Handling
 
 | Scenario | Server Response | Client Behavior |
 |----------|----------------|-----------------|
@@ -1074,7 +1413,7 @@ The [`disk.cu`](server/kernels/disk.cu) kernel computes disk color when a ray hi
 
 ---
 
-## 9. Future Considerations
+## 11. Future Considerations
 
 These are **out of scope** for the initial CUDA-only implementation but worth noting for roadmap planning:
 
@@ -1087,29 +1426,29 @@ These are **out of scope** for the initial CUDA-only implementation but worth no
 
 ---
 
-## 10. Key Technical Decisions
+## 12. Key Technical Decisions
 
-### 10.1 Why CUDA (Not OpenGL/OpenCL)
+### 12.1 Why CUDA (Not OpenGL/OpenCL)
 
 - **Mature ecosystem**: CUDA is battle-tested, well-documented
 - **Performance**: Native float64 support; OpenGL requires extensions
 - **Simplicity**: CUDA context setup is cleaner than EGL for Docker
 - **Future extensibility**: CUDA Graphs for optimization, cuDNN integration possible
 
-### 10.2 Why float64 for Integration
+### 12.2 Why float64 for Integration
 
 - **Stability**: Geodesic integration is sensitive to numerical error
 - **Accuracy**: long-term stability (200+ integration steps) requires double precision
 - **Drift reduction**: float32 diverges visibly; float64 keeps rays stable
 
-### 10.3 Why One Thread Per Pixel
+### 12.3 Why One Thread Per Pixel
 
 - **Simplicity** — No inter-thread communication complexity
 - **Scalability** — Fully independent workloads scale linearly
 - **Debugging** — Easy to verify per-pixel behavior
 - **Memory** — Ray state fits in registers (~30 regs/thread); minimal shared memory needed
 
-### 10.4 Cache Key Design
+### 12.4 Cache Key Design
 
 The cache key is a truncated SHA-256 hash of the canonical JSON of all parameters:
 
@@ -1126,7 +1465,7 @@ This ensures:
 
 ---
 
-## 11. File Structure Summary
+## 13. File Structure Summary
 
 ### Frontend
 
@@ -1142,11 +1481,13 @@ This ensures:
 
 | File | Purpose |
 |------|---------|
-| [`server/app.py`](server/app.py) | FastAPI entry point, `/render`, `/ray`, `/bench`, and `/health` endpoints |
+| [`server/app.py`](server/app.py) | FastAPI entry point, `/render`, `/ray`, `/scenes`, `/bench`, and `/health` endpoints |
 | [`server/renderer.py`](server/renderer.py) | CudaRenderer: kernel compilation, GPU memory, execution, single-ray tracing |
 | [`server/isco.py`](server/isco.py) | ISCO radius calculation (Kerr-Newman) |
 | [`server/cache.py`](server/cache.py) | LRU image cache with memory limits |
-| [`server/kernels/geodesic_base.cu`](server/kernels/geodesic_base.cu) | Metric functions, geodesic RHS, shared utilities |
+| [`server/bloom.py`](server/bloom.py) | Airy disk bloom post-processing (FFT convolution) |
+| [`server/scenes.py`](server/scenes.py) | Scene file management (JSON persistence, built-in scenes) |
+| [`server/kernels/geodesic_base.cu`](server/kernels/geodesic_base.cu) | Metric functions, geodesic RHS, sRGB conversion, compositing utilities |
 | [`server/kernels/backgrounds.cu`](server/kernels/backgrounds.cu) | Background rendering (stars, checker, colormap) |
 | [`server/kernels/disk.cu`](server/kernels/disk.cu) | Disk emission, blackbody color, GR redshift |
 | [`server/kernels/ray_trace.cu`](server/kernels/ray_trace.cu) | Single-ray tracing kernel with trajectory recording and disk physics |
@@ -1169,7 +1510,7 @@ This ensures:
 
 ---
 
-## 12. Development Workflow
+## 14. Development Workflow
 
 ### Local Development (CPU Only)
 
@@ -1204,7 +1545,7 @@ python3 -m pytest tests/ -v
 
 ---
 
-## 13. Monitoring and Debugging
+## 15. Monitoring and Debugging
 
 ### Server Logs
 
@@ -1247,7 +1588,7 @@ nvtop                        # Interactive GPU monitor
 
 ---
 
-## 14. Physics and Mathematics Reference
+## 16. Physics and Mathematics Reference
 
 ### Kerr-Newman Spacetime
 
