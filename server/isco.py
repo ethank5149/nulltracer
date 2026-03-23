@@ -8,19 +8,6 @@ Kerr and Kerr-Newman black holes.
 import math
 
 
-def r_plus(a: float, Q: float) -> float:
-    """Event horizon radius for a Kerr-Newman black hole.
-
-    Args:
-        a: Dimensionless spin parameter (0 <= a < 1).
-        Q: Dimensionless electric charge (0 <= Q < 1).
-
-    Returns:
-        Outer event horizon radius r+.
-    """
-    return 1.0 + math.sqrt(max(1.0 - a * a - Q * Q, 0.0))
-
-
 def isco_kerr(a: float) -> float:
     """Analytic Kerr ISCO (Bardeen, Press & Teukolsky 1972).
 

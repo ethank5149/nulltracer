@@ -586,34 +586,6 @@ __device__ void geoForce(
  * Reference: B. Carter, "Global structure of the Kerr family of
  * gravitational fields," Phys. Rev. 174:1559–1571, 1968.
  */
-__device__ double computeHamiltonian(
-    double r, double th, double pr, double pth,
-    double a, double b, double Q2
-) {
-    double sth = sin(th), cth = cos(th);
-    double s2 = sth * sth + S2_EPS;
-    double c2 = cth * cth;
-    double a2 = a * a, r2 = r * r;
-    double sig = r2 + a2 * c2;
-    double del = r2 - 2.0 * r + a2 + Q2;
-    double sdel = fmax(del, 1e-14);
-    double rpa2 = r2 + a2;
-    double w = 2.0 * r - Q2;
-    double A_ = rpa2 * rpa2 - sdel * a2 * s2;
-    double iSD = 1.0 / (sig * sdel);
-    double is2 = 1.0 / s2;
-
-    double gtt   = -A_ * iSD;
-    double gtf   = -a * w * iSD;
-    double grr   = sdel / sig;
-    double gthth = 1.0 / sig;
-    double gff   = (sig - w) * iSD * is2;
-
-    /* H = ½(g^tt·E² + 2·g^tφ·E·b + g^rr·p_r² + g^θθ·p_θ² + g^φφ·b²)
-     * With E = 1 (affine normalization): */
-    return 0.5 * (gtt + 2.0 * b * gtf + grr * pr * pr
-                  + gthth * pth * pth + gff * b * b);
-}
 
 
 /* ── computeCarter: Carter constant diagnostic ────────────── */
@@ -928,28 +900,6 @@ __device__ void geoForceKS(
  *
  * Reference: MTW (1973), Box 33.2; Carter (1968).
  */
-__device__ double computeHamiltonianKS(
-    double r, double th, double pr, double pth,
-    double a, double b, double Q2
-) {
-    double sth = sin(th), cth = cos(th);
-    double s2 = sth * sth + S2_EPS;
-    double a2 = a * a, r2 = r * r;
-    double sig = r2 + a2 * cth * cth;          /* Σ */
-    double del = r2 - 2.0 * r + a2 + Q2;       /* Δ */
-    double rpa2 = r2 + a2;                      /* r² + a² */
-
-    /* F = a²s² − 2ab + Δ·p_r² + 2[ab − (r²+a²)]·p_r + p_θ² + b²/s²
-     *
-     * Grouping the linear p_r terms:
-     *   −2(r²+a²)·p_r + 2ab·p_r = 2[ab − (r²+a²)]·p_r */
-    double F = a2 * s2 - 2.0 * a * b
-               + del * pr * pr
-               + 2.0 * (a * b - rpa2) * pr
-               + pth * pth + b * b / s2;
-
-    return 0.5 * F / sig;
-}
 
 
 /* ── projectHamiltonianKS: constraint projection in Kerr ───── */
@@ -1076,30 +1026,6 @@ __device__ void transformBLtoKS(
 
     /* p_r^KS = p_r^BL + (r² + a² − a·b) / Δ */
     *pr += (r2 + a2 - a * b) / del;
-}
-
-
-/* ── pr_KS_to_BL: inverse momentum transformation KS → BL ─── */
-
-/* Transforms p_r from Kerr-Schild back to Boyer-Lindquist:
- *
- *   p_r^BL = p_r^KS − (r² + a² − a·b) / Δ
- *
- * Used at disk crossing points to convert the KS momentum back
- * to BL for the g-factor computation (which uses BL metric).
- * The disk is at finite r > r_ISCO > r₊, so Δ > 0 and the
- * transformation is well-defined.
- *
- * Reference: See plans/kahanli8s-ks-design.md, Section 6.4.
- */
-__device__ double pr_KS_to_BL(
-    double pr_ks, double r, double a, double b, double Q2
-) {
-    double a2 = a * a, r2 = r * r;
-    double del = r2 - 2.0 * r + a2 + Q2;       /* Δ at crossing */
-
-    /* p_r^BL = p_r^KS − (r² + a² − a·b) / Δ */
-    return pr_ks - (r2 + a2 - a * b) / del;
 }
 
 

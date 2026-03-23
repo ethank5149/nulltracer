@@ -8,7 +8,7 @@
 import {
     scheduleServerRender, checkServerHealth,
     setServerUrl, setServerQuality, resetServerFailCount,
-    setServerStatus, getServerUrl,
+    setServerStatus,
     fetchScenes, fetchScene, saveSceneAPI, deleteSceneAPI
 } from './server-client.js';
 import { sendParams, isWsConnected, connectWebSocket, disconnectWebSocket } from './ws-client.js';

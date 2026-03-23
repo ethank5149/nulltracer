@@ -381,7 +381,6 @@ class CudaRenderer:
         if not self._initialized:
             raise RuntimeError("Renderer not initialized. Call initialize() first.")
 
-        import time as _time
         t_wall_start = _time.monotonic()
 
         width = params.get("width", 1280)

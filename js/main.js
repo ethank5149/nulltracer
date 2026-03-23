@@ -34,7 +34,6 @@ const state = {
     diskMaxCrossings: 5,
     bloomEnabled: false,
     bloomRadius: 1.0,
-    renderMode: 'server',
 };
 
 // ============================================================

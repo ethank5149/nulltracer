@@ -28,16 +28,10 @@ export function initServerClient(opts) {
     onFirstFrameCb = opts.onFirstFrame || null;
 }
 
-export function getServerUrl() { return serverUrl; }
 export function setServerUrl(url) { serverUrl = url; }
-export function getServerQuality() { return serverQuality; }
 export function setServerQuality(q) { serverQuality = q; }
 export function resetServerFailCount() { serverFailCount = 0; }
 
-// Detect if we're on a mobile/low-power device
-export function detectMobile() {
-    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-}
 
 export function setServerStatus(status, text) {
     serverDot.className = 'server-dot ' + status;

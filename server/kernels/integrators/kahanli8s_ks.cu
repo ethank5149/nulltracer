@@ -190,14 +190,6 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output) {
     double r_comp = 0.0, th_comp = 0.0, phi_comp = 0.0;
     double pr_comp = 0.0, pth_comp = 0.0;
 
-    /* ── Carter constant at initialization (diagnostic) ───── */
-    /* The Carter constant has the same form in KS coordinates
-     * (it depends on r, θ, p_θ, b, a, Q — not on the time/
-     * azimuthal coordinates that differ between BL and KS).
-     * Reference: Carter (1968). */
-    double Q0 = computeCarter(th, pth, a, b, Q2);
-    (void)Q0;  /* retained as diagnostic; no guard rail */
-
     /* ── Sundman / Mino time step from geodesic budget ────── */
     /* Sundman (Mino time) transformation: dτ = dλ/Σ.
      * Fixed steps in Mino time τ give physical steps Δλ = Σ·Δτ

@@ -106,33 +106,6 @@ __device__ double sundman_dtau(double a, double Q2, double rp,
  *
  * Reference: ipole, model_geodesics.c:267 (Mościbrodzka et al.)
  */
-__device__ double sundman_physical_step(double dtau, double r, double th,
-                                        double pth, double a, double obs_dist) {
-    double cth = cos(th);
-    double sig = r * r + a * a * cth * cth;
-    double he = dtau * sig;
-
-    /* Angular rate limiter: |Δθ| ≤ 0.3 rad (~17°) per step.
-     * dθ/dλ = p_θ / Σ  (from the geodesic equations). */
-    double dth_dlam = fabs(pth) / fmax(sig, 1e-14);
-    double max_dth = 0.3;
-    if (dth_dlam * he > max_dth) {
-        he = max_dth / dth_dlam;
-    }
-
-    /* Pole proximity factor (ipole-inspired): reduce step further
-     * when within ~0.1 rad of either pole.  This prevents the
-     * accumulation of small angular errors from repeated near-pole
-     * passages that can corrupt the ray direction. */
-    double dpole = fmin(th, PI - th);
-    double pole_cut = 0.1;
-    if (dpole < pole_cut) {
-        double pole_fac = fmax(dpole / pole_cut, 0.05);
-        he *= pole_fac;
-    }
-
-    return fmin(fmax(he, 0.005), 0.2 * obs_dist);
-}
 
 
 /* ── Φ-variable adaptive stepping (Wu et al. 2024 / Preto & Saha 2009)

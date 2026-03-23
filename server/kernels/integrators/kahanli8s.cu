@@ -142,10 +142,6 @@ void trace_kahanli8s(const RenderParams *pp, unsigned char *output) {
     double r_comp = 0.0, th_comp = 0.0, phi_comp = 0.0;
     double pr_comp = 0.0, pth_comp = 0.0;
 
-    /* ── Carter constant at initialization (diagnostic) ───── */
-    double Q0 = computeCarter(th, pth, a, b, Q2);
-    (void)Q0;  /* retained as diagnostic; no guard rail */
-
     /* ── Sundman / Mino time step from geodesic budget ────── */
     /* Sundman (Mino time) transformation: dτ = dλ/Σ.
      * Fixed steps in Mino time τ give physical steps Δλ = Σ·Δτ

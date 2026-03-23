@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nulltracer — Integrator Benchmark</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Cormorant+Garamond:wght@300;400;600&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 body{
@@ -12,7 +11,7 @@ body{
   font-family:'IBM Plex Mono',monospace;color:#c8bfa9;
 }
 
-/* ── Header ─────────────────────────────────────────── */
+/* Header */
 .header{
   padding:24px 32px 16px;
   border-bottom:1px solid rgba(200,180,140,.06);
@@ -35,7 +34,7 @@ body{
 }
 .header .back-link:hover{color:#d4c8b0;border-color:rgba(200,180,140,.25);}
 
-/* ── Controls Panel ─────────────────────────────────── */
+/* Controls Panel */
 .controls-panel{
   padding:20px 32px;
   border-bottom:1px solid rgba(200,180,140,.06);
@@ -76,7 +75,7 @@ select.ctrl-input option{background:#1a1510;color:#c8bfa9;}
 }
 @keyframes pulse-btn{0%,100%{opacity:.6}50%{opacity:1}}
 
-/* ── Status Bar ─────────────────────────────────────── */
+/* Status Bar */
 .status-bar{
   padding:10px 32px;font-size:10px;color:#6a6050;
   letter-spacing:.1em;min-height:32px;
@@ -84,7 +83,7 @@ select.ctrl-input option{background:#1a1510;color:#c8bfa9;}
 }
 .status-bar .highlight{color:#c8b890;}
 
-/* ── Summary Panel ──────────────────────────────────── */
+/* Summary Panel */
 .summary-panel{
   padding:16px 32px;
   border-bottom:1px solid rgba(200,180,140,.06);
@@ -113,7 +112,7 @@ select.ctrl-input option{background:#1a1510;color:#c8bfa9;}
 .summary-card.slowest{border-color:rgba(200,100,80,.15);background:rgba(200,100,80,.03);}
 .summary-card.slowest .value{color:#d4a088;}
 
-/* ── Results Grid ───────────────────────────────────── */
+/* Results Grid */
 .results-container{
   padding:20px 32px 40px;
 }
@@ -186,7 +185,7 @@ select.ctrl-input option{background:#1a1510;color:#c8bfa9;}
 }
 .result-card.slowest .bar-fill{background:linear-gradient(90deg,#d4a088,#c09060);}
 
-/* ── Progress / Placeholder Card ────────────────────── */
+/* Progress / Placeholder Card */
 .result-card.rendering{
   border-color:rgba(200,180,140,.2);
   animation:card-pulse 2s ease-in-out infinite;
@@ -214,7 +213,7 @@ select.ctrl-input option{background:#1a1510;color:#c8bfa9;}
 }
 @keyframes card-appear{to{opacity:1;transform:translateY(0)}}
 
-/* ── Lightbox ───────────────────────────────────────── */
+/* Lightbox */
 .lightbox{
   position:fixed;inset:0;z-index:1000;
   background:rgba(0,0,0,.92);
@@ -230,7 +229,7 @@ select.ctrl-input option{background:#1a1510;color:#c8bfa9;}
   border:1px solid rgba(200,180,140,.1);
 }
 
-/* ── Responsive ─────────────────────────────────────── */
+/* Responsive */
 @media(max-width:720px){
   .header{padding:16px 16px 12px;}
   .controls-panel{padding:12px 16px;}
@@ -243,7 +242,7 @@ select.ctrl-input option{background:#1a1510;color:#c8bfa9;}
 </head>
 <body>
 
-<!-- ── Header ──────────────────────────────────────── -->
+<!-- Header -->
 <div class="header">
   <div>
     <h1>Integrator Benchmark</h1>
@@ -252,7 +251,7 @@ select.ctrl-input option{background:#1a1510;color:#c8bfa9;}
   <a href="/" class="back-link">← Back to Renderer</a>
 </div>
 
-<!-- ── Controls ────────────────────────────────────── -->
+<!-- Controls -->
 <div class="controls-panel">
   <div class="ctrl-group">
     <div class="ctrl-label">Spin (a)</div>
@@ -325,32 +324,30 @@ select.ctrl-input option{background:#1a1510;color:#c8bfa9;}
   </div>
 </div>
 
-<!-- ── Status ──────────────────────────────────────── -->
+<!-- Status -->
 <div class="status-bar" id="status-bar">
   Ready — configure parameters and click <span class="highlight">Run Benchmark</span>
 </div>
 
-<!-- ── Summary ─────────────────────────────────────── -->
+<!-- Summary -->
 <div class="summary-panel" id="summary-panel">
   <div class="summary-grid" id="summary-grid"></div>
 </div>
 
-<!-- ── Results ─────────────────────────────────────── -->
+<!-- Results -->
 <div class="results-container">
   <div class="results-grid" id="results-grid"></div>
 </div>
 
-<!-- ── Lightbox ────────────────────────────────────── -->
+<!-- Lightbox -->
 <div class="lightbox" id="lightbox">
   <div class="lightbox-label" id="lightbox-label"></div>
   <img id="lightbox-img" src="" alt="">
 </div>
 
 <script>
-// ============================================================
-//  BENCH UI — SSE streaming client for /bench endpoint
-//  Results appear incrementally as each integrator completes.
-// ============================================================
+// BENCH UI — SSE streaming client for /bench endpoint
+// Results appear incrementally as each integrator completes.
 
 const $ = id => document.getElementById(id);
 
@@ -374,7 +371,7 @@ const METHOD_INFO = {
   kahanli8s_ks: { name: 'Kahan-Li 8s KS',  desc: 'Kahan-Li 8th-order (Kerr-Schild)',   type: 'Symplectic' },
 };
 
-// ── Lightbox ────────────────────────────────────────
+// Lightbox
 lightbox.addEventListener('click', () => lightbox.classList.remove('visible'));
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') lightbox.classList.remove('visible');
@@ -386,12 +383,12 @@ function openLightbox(src, label) {
   lightbox.classList.add('visible');
 }
 
-// ── Status helpers ──────────────────────────────────
+// Status helpers
 function setStatus(html) {
   statusBar.innerHTML = html;
 }
 
-// ── Build request payload ───────────────────────────
+// Build request payload
 function buildRequest() {
   return {
     spin:           parseFloat($('ctrl-spin').value),
@@ -414,7 +411,7 @@ function buildRequest() {
   };
 }
 
-// ── Format helpers ──────────────────────────────────
+// Format helpers
 function fmtMs(ms) {
   if (ms == null) return '—';
   return ms < 1000 ? `${ms.toFixed(1)} ms` : `${(ms / 1000).toFixed(2)} s`;
@@ -427,7 +424,7 @@ function fmtBytes(b) {
   return `${(b / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-// ── Create a "rendering..." placeholder card ────────
+// Create a "rendering..." placeholder card
 function createPlaceholderCard(method) {
   const info = METHOD_INFO[method] || { name: method, desc: '', type: '' };
   const card = document.createElement('div');
@@ -451,7 +448,7 @@ function createPlaceholderCard(method) {
   return card;
 }
 
-// ── Create a completed result card ──────────────────
+// Create a completed result card
 function createResultCard(r) {
   const info = METHOD_INFO[r.method] || { name: r.method, desc: '', type: '' };
   const isError = r.status !== 'ok';
