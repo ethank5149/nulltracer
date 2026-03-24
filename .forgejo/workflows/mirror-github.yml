@@ -4,6 +4,8 @@ on: [push]
 jobs:
   mirror:
     runs-on: ubuntu-latest
+    container:
+      image: alpine/git:latest
     steps:
       - name: Push to GitHub
         run: |
