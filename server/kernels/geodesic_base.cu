@@ -1066,33 +1066,33 @@ __device__ void accumulate_volume_emission(
     double r_horizon = 1.0 + sqrt(fmax(1.0 - a * a, 0.0));
 
     /* ── Hot corona (disk atmosphere) ─────────────────────── */
-    /* Exponential density profile: ρ ∝ exp(-z²/2h²) / r²
-     * Scale height h = 0.3 × r_cyl (flared disk).
-     * Only emits near the disk, outside the horizon. */
+    /* Exponential density profile above/below the equatorial plane.
+     * Scale height h = 0.3 × r_cyl (flared disk geometry).
+     * Emission ∝ ρ × ds / r where ds = he is the path length.
+     * Using 1/r (column density through a slab) not 1/r²
+     * (point source), since we're integrating through an
+     * extended atmosphere.  Warm orange-white color (~10^7 K). */
     if (r_cyl > r_horizon * 1.5 && r_cyl < disk_outer * 0.7 && r > r_horizon * 1.3) {
         double scale_h = 0.3 * r_cyl;
         double rho = exp(-z * z / (2.0 * scale_h * scale_h));
-        /* Emission ∝ ρ × path_length / r² (falls off with distance)
-         * Coefficient tuned so accumulated emission over ~50 steps at r~10
-         * reaches ~0.05–0.1, which survives ACES toe mapping. */
-        float emit = (float)(rho * he * 0.08 / (r * r));
-        /* Warm white: ~10^7 K corona (slightly orange) */
-        blendColor(0.020f * emit, 0.014f * emit, 0.008f * emit, emit,
+        float opacity = (float)(rho * he * 0.5 / r);
+        opacity = fminf(opacity, 0.08f);  /* cap per-step opacity */
+        blendColor(0.80f * opacity, 0.50f * opacity, 0.25f * opacity, opacity,
                    acc_r, acc_g, acc_b, acc_a);
     }
 
     /* ── Relativistic jet (polar funnel) ──────────────────── */
-    /* Collimated emission along the spin axis.
-     * Jet half-opening angle ~15° (|cos θ| > 0.966).
-     * Power ∝ 1/r² (jet expands conically).
-     * Blue-shifted synchrotron color. */
-    if (fabs(cth) > 0.90 && r > r_horizon * 1.5 && r < 25.0) {
-        /* Jet intensity: concentrated near axis, falls as 1/r² */
-        double axis_dist = 1.0 - fabs(cth);  /* 0 on axis, ~0.1 at edge */
+    /* Collimated synchrotron emission along the spin axis.
+     * Half-opening angle ~10° (|cos θ| > 0.985).
+     * Gaussian intensity profile in angle from axis.
+     * Blue-white color (relativistic electrons).
+     * Falls as 1/r (conical expansion). */
+    if (fabs(cth) > 0.90 && r > r_horizon * 1.5 && r < 30.0) {
+        double axis_dist = 1.0 - fabs(cth);
         double jet_profile = exp(-axis_dist * axis_dist / 0.003);
-        float jet = (float)(jet_profile * he * 0.04 / (r * r));
-        /* Synchrotron blue-white: relativistic electrons */
-        blendColor(0.006f * jet, 0.010f * jet, 0.020f * jet, jet,
+        float opacity = (float)(jet_profile * he * 0.3 / r);
+        opacity = fminf(opacity, 0.06f);
+        blendColor(0.30f * opacity, 0.50f * opacity, 1.00f * opacity, opacity,
                    acc_r, acc_g, acc_b, acc_a);
     }
 }
