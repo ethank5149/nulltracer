@@ -322,7 +322,7 @@ def classify_kerr(spin, inclination_deg, width=512, height=512, fov=7.0,
 
 def compare_integrators(spin=0.6, inclination=80, obs_dist=40, step_size=0.3,
                         width=512, height=512, fov=7.0,
-                        methods=None, fit_fn=None):
+                        methods=None, **render_kwargs):
     import matplotlib.pyplot as plt
     if methods is None:
         methods = list(_RENDER_REGISTRY.keys())
@@ -331,8 +331,10 @@ def compare_integrators(spin=0.6, inclination=80, obs_dist=40, step_size=0.3,
     fig, axes = plt.subplots(1, len(methods), figsize=(5 * len(methods), 5))
     if len(methods) == 1: axes = [axes]
     for ax, m in zip(axes, methods):
-        img, info = render_kerr(spin, inclination, width, height, fov=fov,
-                                obs_dist=obs_dist, step_size=step_size, method=m)
+        img, info = render_kerr(
+            spin, inclination, width, height, fov=fov,
+            obs_dist=obs_dist, step_size=step_size, method=m,
+            **render_kwargs)
         ax.imshow(img); ax.axis('off')
         ax.set_title(f"{METHODS[m]}\n{info['render_ms']:.0f} ms, "
                      f"{info['max_steps']} steps", fontsize=10)
