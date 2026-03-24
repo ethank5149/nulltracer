@@ -1066,36 +1066,38 @@ __device__ void accumulate_volume_emission(
     double r_horizon = 1.0 + sqrt(fmax(1.0 - a * a, 0.0));
 
     /* ── Hot corona (disk atmosphere) ─────────────────────── */
-    /* Exponential density profile above/below the equatorial plane.
-     * Scale height h = 0.3 × r_cyl (flared disk geometry).
-     * Emission ∝ ρ × ds / r where ds = he is the path length.
-     * Using 1/r (column density through a slab) not 1/r²
-     * (point source), since we're integrating through an
-     * extended atmosphere.  Warm orange-white color (~10^7 K).
+    /* Optically thin thermal bremsstrahlung from the hot corona.
+     * Real AGN coronas have scattering depth τ_es ~ 0.1–1 but
+     * thermal emission depth τ_ff ~ 10⁻⁴ (Fabian et al. 2015).
+     * The visual effect should be a subtle warm haze, not a fog.
+     *
+     * Coefficient 0.03 gives τ ~ 0.01–0.03 through the midplane
+     * at r ~ 10M, consistent with optically thin emission.
      *
      * NOTE: blendColor(R,G,B, alpha) applies alpha internally as
      * R * alpha * (1 - acc_a), so pass UN-premultiplied colors. */
     if (r_cyl > r_horizon * 1.5 && r_cyl < disk_outer * 0.7 && r > r_horizon * 1.3) {
         double scale_h = 0.3 * r_cyl;
         double rho = exp(-z * z / (2.0 * scale_h * scale_h));
-        float opacity = (float)(rho * he * 0.5 / r);
-        opacity = fminf(opacity, 0.08f);
-        /* Pass bright emission color; blendColor handles the alpha multiply */
+        float opacity = (float)(rho * he * 0.03 / r);
+        opacity = fminf(opacity, 0.005f);
         blendColor(0.80f, 0.50f, 0.25f, opacity,
                    acc_r, acc_g, acc_b, acc_a);
     }
 
     /* ── Relativistic jet (polar funnel) ──────────────────── */
-    /* Collimated synchrotron emission along the spin axis.
-     * Half-opening angle ~10° (|cos θ| > 0.985).
-     * Gaussian intensity profile in angle from axis.
-     * Blue-white color (relativistic electrons).
-     * Falls as 1/r (conical expansion). */
+    /* Optically thin synchrotron emission along the spin axis.
+     * Jets are primarily radio/X-ray emitters; optical emission
+     * is faint.  This produces a subtle blue-white brightening
+     * near the poles, visible mainly against dark backgrounds.
+     *
+     * Half-opening angle ~10° (|cos θ| > 0.985 at core).
+     * Coefficient 0.015 gives a barely-visible streak. */
     if (fabs(cth) > 0.90 && r > r_horizon * 1.5 && r < 30.0) {
         double axis_dist = 1.0 - fabs(cth);
         double jet_profile = exp(-axis_dist * axis_dist / 0.003);
-        float opacity = (float)(jet_profile * he * 0.3 / r);
-        opacity = fminf(opacity, 0.06f);
+        float opacity = (float)(jet_profile * he * 0.015 / r);
+        opacity = fminf(opacity, 0.004f);
         blendColor(0.30f, 0.50f, 1.00f, opacity,
                    acc_r, acc_g, acc_b, acc_a);
     }
