@@ -342,7 +342,7 @@ void trace_kahanli8s(const RenderParams *pp, unsigned char *output, const float 
                 float dr_f = (float)r_hit;
                 float dphi_f = (float)(oldPhi + f * (phi - oldPhi));
 
-                float g = compute_g_factor(r_hit, a, Q2, b);
+                float g = compute_g_factor_extended(r_hit, a, Q2, b, (double)p.isco);
 
                 float dcr, dcg, dcb;
                 diskColor(dr_f, dphi_f, (float)a,

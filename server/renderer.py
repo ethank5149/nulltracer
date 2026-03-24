@@ -303,7 +303,7 @@ class CudaRenderer:
             steps=int(params.get("steps", 200)),
             obs_dist=obs_dist,
             esc_radius=obs_dist + 12.0,
-            disk_outer=14.0,
+            disk_outer=50.0,
             step_size=float(params.get("step_size", 0.30)),
             bg_mode=int(params.get("bg_mode", 1)),
             star_layers=int(params.get("star_layers", 3)),
@@ -416,7 +416,7 @@ class CudaRenderer:
             steps=int(params.get("steps", 200)),
             obs_dist=obs_dist,
             esc_radius=obs_dist + 12.0,
-            disk_outer=14.0,
+            disk_outer=50.0,
             step_size=float(params.get("step_size", 0.30)),
             bg_mode=int(params.get("bg_mode", 1)),
             star_layers=int(params.get("star_layers", 3)),
@@ -636,7 +636,7 @@ class CudaRenderer:
             steps=int(params.get("steps", 200)),
             obs_dist=obs_dist,
             esc_radius=obs_dist + 12.0,
-            disk_outer=14.0,
+            disk_outer=50.0,
             step_size=float(params.get("step_size", 0.30)),
             bg_mode=0,  # Not used for ray tracing
             star_layers=1,  # Not used for ray tracing

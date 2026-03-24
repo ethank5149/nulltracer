@@ -427,7 +427,7 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output, const flo
                  * Since the disk is at finite r > r_ISCO > r₊, the
                  * BL metric is well-defined (Δ > 0).  We use the
                  * existing compute_g_factor() which works in BL. */
-                float g = compute_g_factor(r_hit, a, Q2, b);
+                float g = compute_g_factor_extended(r_hit, a, Q2, b, (double)p.isco);
 
                 float dcr, dcg, dcb;
                 diskColor(dr_f, dphi_f, (float)a,
