@@ -1071,13 +1071,17 @@ __device__ void accumulate_volume_emission(
      * Emission ∝ ρ × ds / r where ds = he is the path length.
      * Using 1/r (column density through a slab) not 1/r²
      * (point source), since we're integrating through an
-     * extended atmosphere.  Warm orange-white color (~10^7 K). */
+     * extended atmosphere.  Warm orange-white color (~10^7 K).
+     *
+     * NOTE: blendColor(R,G,B, alpha) applies alpha internally as
+     * R * alpha * (1 - acc_a), so pass UN-premultiplied colors. */
     if (r_cyl > r_horizon * 1.5 && r_cyl < disk_outer * 0.7 && r > r_horizon * 1.3) {
         double scale_h = 0.3 * r_cyl;
         double rho = exp(-z * z / (2.0 * scale_h * scale_h));
         float opacity = (float)(rho * he * 0.5 / r);
-        opacity = fminf(opacity, 0.08f);  /* cap per-step opacity */
-        blendColor(0.80f * opacity, 0.50f * opacity, 0.25f * opacity, opacity,
+        opacity = fminf(opacity, 0.08f);
+        /* Pass bright emission color; blendColor handles the alpha multiply */
+        blendColor(0.80f, 0.50f, 0.25f, opacity,
                    acc_r, acc_g, acc_b, acc_a);
     }
 
@@ -1092,7 +1096,7 @@ __device__ void accumulate_volume_emission(
         double jet_profile = exp(-axis_dist * axis_dist / 0.003);
         float opacity = (float)(jet_profile * he * 0.3 / r);
         opacity = fminf(opacity, 0.06f);
-        blendColor(0.30f * opacity, 0.50f * opacity, 1.00f * opacity, opacity,
+        blendColor(0.30f, 0.50f, 1.00f, opacity,
                    acc_r, acc_g, acc_b, acc_a);
     }
 }
