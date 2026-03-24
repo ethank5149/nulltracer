@@ -79,6 +79,8 @@ class RenderParams(ctypes.Structure):
         ("disk_alpha",         ctypes.c_double),
         ("disk_max_crossings", ctypes.c_double),
         ("bloom_enabled",      ctypes.c_double),
+        ("sky_width",          ctypes.c_double),
+        ("sky_height",         ctypes.c_double),
     ]
 
 
@@ -188,6 +190,99 @@ extern "C" __global__ void classify_kerr(
 
 _render_cache = {}
 _classify_cache = None
+_skymap_cache = None  # (d_gpu_array, width, height) or None
+
+
+def load_skymap(path=None):
+    """Load an equirectangular skymap image to GPU as float32 linear light.
+
+    Accepts any format PIL/OpenEXR can read:
+      - JPEG/PNG (8-bit sRGB): converted to float32 linear via inverse sRGB
+      - 16-bit PNG: converted to float32, assumed linear or sRGB based on bit depth
+      - EXR (float HDR): loaded as-is in linear light
+      - NumPy .npy: loaded directly, assumed float32 linear
+
+    The image is uploaded as packed float32 RGB (3 floats per pixel).
+    """
+    global _skymap_cache
+    if path is None:
+        _skymap_cache = None
+        return None
+
+    path = Path(path)
+    if not path.exists():
+        print(f"Warning: skymap not found at {path}, using procedural background")
+        _skymap_cache = None
+        return None
+
+    ext = path.suffix.lower()
+
+    if ext == '.exr':
+        # OpenEXR — true HDR, already linear light
+        try:
+            import OpenEXR, Imath, array
+            exr = OpenEXR.InputFile(str(path))
+            header = exr.header()
+            dw = header['dataWindow']
+            w = dw.max.x - dw.min.x + 1
+            h = dw.max.y - dw.min.y + 1
+            pt = Imath.PixelType(Imath.PixelType.FLOAT)
+            rgb = [np.frombuffer(exr.channel(c, pt), dtype=np.float32).reshape(h, w)
+                   for c in ('R', 'G', 'B')]
+            data = np.stack(rgb, axis=-1).astype(np.float32)
+            fmt_info = "EXR HDR (linear)"
+        except ImportError:
+            # Fallback: try imageio
+            import imageio.v3 as iio
+            data = iio.imread(str(path)).astype(np.float32)
+            if data.ndim == 2:
+                data = np.stack([data]*3, axis=-1)
+            elif data.shape[2] > 3:
+                data = data[:, :, :3]
+            h, w = data.shape[:2]
+            fmt_info = "EXR via imageio (linear)"
+    elif ext == '.npy':
+        # Pre-processed NumPy array — assumed float32 linear
+        data = np.load(str(path)).astype(np.float32)
+        h, w = data.shape[:2]
+        fmt_info = "NumPy (linear)"
+    else:
+        # JPEG, PNG, TIFF, etc. via PIL
+        from PIL import Image
+        img = Image.open(path).convert('RGB')
+        w, h = img.size
+        raw = np.asarray(img)
+
+        if raw.dtype == np.uint16:
+            # 16-bit PNG — normalize to [0,1], apply inverse sRGB
+            data = raw.astype(np.float32) / 65535.0
+            fmt_info = f"16-bit ({ext})"
+        elif raw.dtype == np.uint8:
+            data = raw.astype(np.float32) / 255.0
+            fmt_info = f"8-bit ({ext})"
+        else:
+            data = raw.astype(np.float32)
+            fmt_info = f"{raw.dtype} ({ext})"
+
+        # sRGB → linear conversion (inverse IEC 61966-2-1)
+        mask = data <= 0.04045
+        data[mask] /= 12.92
+        data[~mask] = ((data[~mask] + 0.055) / 1.055) ** 2.4
+
+    # Ensure contiguous float32 RGB
+    data = np.ascontiguousarray(data[:, :, :3].astype(np.float32))
+    d_skymap = cp.asarray(data.ravel())
+    _skymap_cache = (d_skymap, w, h)
+    print(f"Skymap loaded: {path.name} ({w}×{h}, {fmt_info}, "
+          f"{data.nbytes/1e6:.1f} MB on GPU)")
+    return _skymap_cache
+
+
+def _get_skymap():
+    """Return cached GPU skymap or a null placeholder."""
+    if _skymap_cache is not None:
+        return _skymap_cache
+    return (cp.zeros(1, dtype=cp.float32), 0, 0)
 
 
 def _compile_render(method):
@@ -256,6 +351,10 @@ def render_kerr(spin, inclination_deg, width=512, height=512, fov=7.0,
     rp_est = 1.0 + math.sqrt(max(1.0 - spin**2, 0.0))
     if max_steps is None:
         max_steps = auto_steps(obs_dist, h_base=step_size, rp=rp_est, method=method)
+    # Get skymap (or null placeholder)
+    d_skymap, sky_w, sky_h = _get_skymap()
+    actual_bg = bg_mode if not (bg_mode == 3 and sky_w == 0) else 0
+
     rp = RenderParams(
         width=float(width), height=float(height),
         spin=float(spin), charge=0.0,
@@ -263,12 +362,13 @@ def render_kerr(spin, inclination_deg, width=512, height=512, fov=7.0,
         phi0=float(phi0), isco=float(isco_kerr(spin)),
         steps=float(max_steps), obs_dist=float(obs_dist),
         esc_radius=float(obs_dist) + 12.0, disk_outer=14.0,
-        step_size=float(step_size), bg_mode=float(bg_mode),
+        step_size=float(step_size), bg_mode=float(actual_bg),
         star_layers=float(star_layers),
         show_disk=1.0 if show_disk else 0.0, show_grid=0.0,
         disk_temp=float(disk_temp), doppler_boost=2.0,
         srgb_output=1.0, disk_alpha=0.95,
         disk_max_crossings=5.0, bloom_enabled=0.0,
+        sky_width=float(sky_w), sky_height=float(sky_h),
     )
     h_params = np.frombuffer(bytes(rp), dtype=np.uint8)
     d_params = cp.asarray(h_params)
@@ -276,7 +376,7 @@ def render_kerr(spin, inclination_deg, width=512, height=512, fov=7.0,
     block = (16, 16, 1)
     grid = ((width + 15) // 16, (height + 15) // 16)
     t0 = _time.time()
-    kernel(grid, block, (d_params, d_output))
+    kernel(grid, block, (d_params, d_output, d_skymap))
     cp.cuda.Device(0).synchronize()
     ms = (_time.time() - t0) * 1000
     img = np.flipud(d_output.get().reshape(height, width, 3))
@@ -323,6 +423,11 @@ def classify_kerr(spin, inclination_deg, width=512, height=512, fov=7.0,
 def compare_integrators(spin=0.6, inclination=80, obs_dist=40, step_size=0.3,
                         width=512, height=512, fov=7.0,
                         methods=None, **render_kwargs):
+    """Render with all integrators — visual + performance comparison.
+
+    Shadow accuracy is validated separately using classify_kerr in §4/§6.
+    This function compares visual output and render speed only.
+    """
     import matplotlib.pyplot as plt
     if methods is None:
         methods = list(_RENDER_REGISTRY.keys())
@@ -331,34 +436,21 @@ def compare_integrators(spin=0.6, inclination=80, obs_dist=40, step_size=0.3,
     fig, axes = plt.subplots(1, len(methods), figsize=(5 * len(methods), 5))
     if len(methods) == 1: axes = [axes]
     for ax, m in zip(axes, methods):
-        img, info = render_kerr(
-            spin, inclination, width, height, fov=fov,
-            obs_dist=obs_dist, step_size=step_size, method=m,
-            **render_kwargs)
+        img, info = render_kerr(spin, inclination, width, height, fov=fov,
+                                obs_dist=obs_dist, step_size=step_size, method=m,
+                                **render_kwargs)
         ax.imshow(img); ax.axis('off')
         ax.set_title(f"{METHODS[m]}\n{info['render_ms']:.0f} ms, "
                      f"{info['max_steps']} steps", fontsize=10)
-        row = {'method': m, 'label': METHODS[m],
-               'render_ms': info['render_ms'], 'max_steps': info['max_steps']}
-        if fit_fn is not None:
-            shadow, _ = classify_kerr(spin, inclination, width, height,
-                                       fov=fov, obs_dist=obs_dist,
-                                       step_size=min(step_size, 0.15))
-            obs = fit_fn(shadow, fov=fov, img_size=width)
-            if obs:
-                row['diameter_M'] = obs['diameter_M']
-                row['delta_C'] = obs['delta_C']
-                row['circularity'] = obs['circularity']
-        results.append(row)
+        results.append({'method': m, 'label': METHODS[m],
+                       'render_ms': info['render_ms'],
+                       'max_steps': info['max_steps']})
     fig.suptitle(f'Integrator Comparison — $a={spin}$, '
                  rf'$\theta={inclination}°$, '
                  rf'$r_{{\rm obs}}={obs_dist}\,M$', fontsize=13, y=1.02)
     plt.tight_layout()
-    hdr = f"\n{'Method':<35} {'Time':>8} {'Steps':>7}"
-    if fit_fn: hdr += f" {'Diameter':>10} {'ΔC':>8}"
-    print(hdr); print("─" * 75)
+    print(f"\n{'Method':<35} {'Time':>8} {'Steps':>7}")
+    print("─" * 55)
     for r in results:
-        line = f"{r['label']:<35} {r['render_ms']:>7.0f}ms {r['max_steps']:>7d}"
-        if 'diameter_M' in r: line += f" {r['diameter_M']:>9.4f}M {r['delta_C']:>7.4f}"
-        print(line)
+        print(f"{r['label']:<35} {r['render_ms']:>7.0f}ms {r['max_steps']:>7d}")
     return results, fig
