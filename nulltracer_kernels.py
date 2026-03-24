@@ -670,11 +670,12 @@ def compile_one(method='rk4'):
 def auto_steps(obs_dist, h_base=0.3, rp=2.0, safety=3.0, symplectic=False):
     N_near = 20.0 / h_base
     if symplectic:
-        # Symplectic steps capped at 1.0, so flat-space transit is O(r_obs)
-        N_far = obs_dist / 1.0
+        N_transit = obs_dist  # h_cap=1.0 → 1 step per M
+        N_strong = 200.0 / h_base  # generous near-horizon budget
+        return max(int((N_transit + N_strong) * safety), 400)
     else:
         N_far = (2 * rp / h_base) * math.log(max(obs_dist / rp, 2.0))
-    return max(int((N_near + N_far) * safety), 400)
+        return max(int((N_near + N_far) * safety), 400)
 
 
 # ══════════════════════════════════════════════════════════════
