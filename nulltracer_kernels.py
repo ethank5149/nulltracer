@@ -193,16 +193,26 @@ _classify_cache = None
 _skymap_cache = None  # (d_gpu_array, width, height) or None
 
 
-def load_skymap(path=None):
+def load_skymap(path=None, brightness=5.0):
     """Load an equirectangular skymap image to GPU as float32 linear light.
 
     Accepts any format PIL/OpenEXR can read:
       - JPEG/PNG (8-bit sRGB): converted to float32 linear via inverse sRGB
-      - 16-bit PNG: converted to float32, assumed linear or sRGB based on bit depth
+      - 16-bit PNG: converted to float32, assumed sRGB
       - EXR (float HDR): loaded as-is in linear light
       - NumPy .npy: loaded directly, assumed float32 linear
 
-    The image is uploaded as packed float32 RGB (3 floats per pixel).
+    Parameters
+    ----------
+    path : str or Path
+        Path to the skymap image. None clears the cached skymap.
+    brightness : float
+        Exposure multiplier applied after linear conversion. Default 5.0
+        compensates for the ACES filmic tone mapping curve, which has a
+        deep toe that crushes dim astronomical backgrounds to invisibility.
+        The Gaia skymap has typical linear values of 0.01-0.05; multiplying
+        by 5.0 maps them to 0.05-0.25, where ACES gives a gentle S-curve.
+        Use ~1.0 for HDR sources that are already properly exposed.
     """
     global _skymap_cache
     if path is None:
@@ -269,12 +279,13 @@ def load_skymap(path=None):
         data[mask] /= 12.92
         data[~mask] = ((data[~mask] + 0.055) / 1.055) ** 2.4
 
-    # Ensure contiguous float32 RGB
+    # Ensure contiguous float32 RGB, apply brightness
     data = np.ascontiguousarray(data[:, :, :3].astype(np.float32))
+    data *= brightness
     d_skymap = cp.asarray(data.ravel())
     _skymap_cache = (d_skymap, w, h)
     print(f"Skymap loaded: {path.name} ({w}×{h}, {fmt_info}, "
-          f"{data.nbytes/1e6:.1f} MB on GPU)")
+          f"brightness={brightness}×, {data.nbytes/1e6:.1f} MB on GPU)")
     return _skymap_cache
 
 
