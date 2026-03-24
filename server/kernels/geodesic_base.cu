@@ -1072,8 +1072,10 @@ __device__ void accumulate_volume_emission(
     if (r_cyl > r_horizon * 1.5 && r_cyl < disk_outer * 0.7 && r > r_horizon * 1.3) {
         double scale_h = 0.3 * r_cyl;
         double rho = exp(-z * z / (2.0 * scale_h * scale_h));
-        /* Emission ∝ ρ × path_length / r² (falls off with distance) */
-        float emit = (float)(rho * he * 0.0008 / (r * r));
+        /* Emission ∝ ρ × path_length / r² (falls off with distance)
+         * Coefficient tuned so accumulated emission over ~50 steps at r~10
+         * reaches ~0.05–0.1, which survives ACES toe mapping. */
+        float emit = (float)(rho * he * 0.08 / (r * r));
         /* Warm white: ~10^7 K corona (slightly orange) */
         blendColor(0.020f * emit, 0.014f * emit, 0.008f * emit, emit,
                    acc_r, acc_g, acc_b, acc_a);
@@ -1088,7 +1090,7 @@ __device__ void accumulate_volume_emission(
         /* Jet intensity: concentrated near axis, falls as 1/r² */
         double axis_dist = 1.0 - fabs(cth);  /* 0 on axis, ~0.1 at edge */
         double jet_profile = exp(-axis_dist * axis_dist / 0.003);
-        float jet = (float)(jet_profile * he * 0.0004 / (r * r));
+        float jet = (float)(jet_profile * he * 0.04 / (r * r));
         /* Synchrotron blue-white: relativistic electrons */
         blendColor(0.006f * jet, 0.010f * jet, 0.020f * jet, jet,
                    acc_r, acc_g, acc_b, acc_a);
