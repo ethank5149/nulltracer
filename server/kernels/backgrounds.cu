@@ -152,11 +152,73 @@ __device__ void bgColorMap(float dx, float dy, float dz,
 }
 
 
+/* ── Skymap texture background (equirectangular) ──────────── */
+
+/* Samples from an equirectangular float32 RGB texture using the
+ * escaped ray's spherical direction. The texture is stored as
+ * packed float RGB (3 floats per pixel, linear light), row-major,
+ * with the first row at the top (θ=0, north pole).
+ *
+ * The Python side normalizes all input formats (JPEG, PNG, EXR)
+ * to float32 linear light before uploading to GPU, so this
+ * function needs no format-specific logic.
+ *
+ * Uses bilinear interpolation for smooth sampling.
+ */
+__device__ void bgSkymap(float dx, float dy, float dz,
+                         const float *skymap,
+                         int sky_w, int sky_h,
+                         float *cr, float *cg, float *cb) {
+    /* Direction → spherical coordinates */
+    double th = acos(fmax(fmin((double)dz, 1.0), -1.0));  /* [0, π] */
+    double ph = atan2((double)dy, (double)dx);             /* [-π, π] */
+    if (ph < 0.0) ph += TAU;                               /* [0, 2π] */
+
+    /* Spherical → equirectangular UV */
+    float u = (float)(ph / TAU);           /* [0, 1] */
+    float v = (float)(th / PI);            /* [0, 1] */
+
+    /* UV → fractional pixel coordinates */
+    float fx = u * (float)(sky_w - 1);
+    float fy = v * (float)(sky_h - 1);
+
+    /* Bilinear interpolation */
+    int ix0 = (int)fx;
+    int iy0 = (int)fy;
+    int ix1 = min(ix0 + 1, sky_w - 1);
+    int iy1 = min(iy0 + 1, sky_h - 1);
+    float wx = fx - (float)ix0;
+    float wy = fy - (float)iy0;
+
+    /* Fetch 4 texels (float32 RGB, already linear light) */
+    int idx00 = (iy0 * sky_w + ix0) * 3;
+    int idx10 = (iy0 * sky_w + ix1) * 3;
+    int idx01 = (iy1 * sky_w + ix0) * 3;
+    int idx11 = (iy1 * sky_w + ix1) * 3;
+
+    float r00 = skymap[idx00], g00 = skymap[idx00+1], b00 = skymap[idx00+2];
+    float r10 = skymap[idx10], g10 = skymap[idx10+1], b10 = skymap[idx10+2];
+    float r01 = skymap[idx01], g01 = skymap[idx01+1], b01 = skymap[idx01+2];
+    float r11 = skymap[idx11], g11 = skymap[idx11+1], b11 = skymap[idx11+2];
+
+    /* Bilinear blend */
+    float w00 = (1-wx)*(1-wy), w10 = wx*(1-wy), w01 = (1-wx)*wy, w11 = wx*wy;
+    *cr = r00*w00 + r10*w10 + r01*w01 + r11*w11;
+    *cg = g00*w00 + g10*w10 + g01*w01 + g11*w11;
+    *cb = b00*w00 + b10*w10 + b01*w01 + b11*w11;
+}
+
+
 /* ── Background dispatcher ────────────────────────────────── */
 
 __device__ void background(float dx, float dy, float dz,
                            int bg_mode, int star_layers, int show_grid,
+                           const float *skymap, int sky_w, int sky_h,
                            float *cr, float *cg, float *cb) {
+    if (bg_mode == 3 && skymap != 0 && sky_w > 0 && sky_h > 0) {
+        bgSkymap(dx, dy, dz, skymap, sky_w, sky_h, cr, cg, cb);
+        return;
+    }
     if (bg_mode == 0) {
         bgStars(dx, dy, dz, star_layers, cr, cg, cb);
     } else if (bg_mode == 1) {

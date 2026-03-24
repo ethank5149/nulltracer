@@ -62,6 +62,10 @@ struct RenderParams {
     double disk_alpha;          /* base opacity per disk crossing (0.0–1.0) */
     double disk_max_crossings;  /* max disk crossings to accumulate (as double, cast to int) */
     double bloom_enabled;       /* 1.0 = output float32 linear for bloom, 0.0 = normal uint8 sRGB */
+
+    /* Skymap texture (equirectangular projection) */
+    double sky_width;           /* skymap pixel width (0 = no skymap, use procedural) */
+    double sky_height;          /* skymap pixel height */
 };
 
 

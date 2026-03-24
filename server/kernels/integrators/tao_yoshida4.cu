@@ -26,7 +26,7 @@
 
 
 extern "C" __global__
-void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output) {
+void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output, const float *skymap) {
     const RenderParams &p = *pp;
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -116,6 +116,7 @@ void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output) {
             sphereDir(fth, fph, &dx, &dy, &dz);
             float bgr, bgg, bgb;
             background(dx, dy, dz, bg_mode, star_layers, show_grid,
+                       skymap, (int)p.sky_width, (int)p.sky_height,
                        &bgr, &bgg, &bgb);
             if (acc_a < 1.0f) {
                 blendColor(bgr, bgg, bgb, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);
