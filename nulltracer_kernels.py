@@ -237,6 +237,17 @@ __device__ double adaptive_step(double r, double rp, double h_base) {
 }
 
 
+/* Symplectic integrators need bounded steps — the Tao composition
+ * substeps are w_i × h, and large h makes linear kicks inaccurate.
+ * Cap at 1.0 (matching production adaptive_step_tao). */
+__device__ double adaptive_step_symplectic(double r, double rp, double h_base) {
+    double x = fmax((r - rp) / rp, 0.0);
+    double f = x / (1.0 + x);
+    double h = h_base * fmax(f * (1.0 + 0.5 * x), 0.02);
+    return fmin(fmax(h, 0.012), 1.0);
+}
+
+
 /* ═══════════════════════════════════════════════════════════
  * Super-Hamiltonian diagnostic (BL coordinates)
  * ═══════════════════════════════════════════════════════════ */
@@ -512,7 +523,7 @@ extern "C" __global__ void trace_kerr(
     int term=0; double rdh=0.0, gh=1.0, oldTh=th;
 
     for (int i=0; i<maxsteps; i++) {
-        double he = adaptive_step(r, rp, hbase);
+        double he = adaptive_step_symplectic(r, rp, hbase);
         double oldR=r; oldTh=th;
 
         /* Yoshida 4th: 3 Strang substeps */
@@ -579,7 +590,7 @@ extern "C" __global__ void trace_kerr(
     double w[8] = {KL0,KL1,KL2,KL3,KL4,KL5,KL6,KL7};
 
     for (int i=0; i<maxsteps; i++) {
-        double he = adaptive_step(r, rp, hbase);
+        double he = adaptive_step_symplectic(r, rp, hbase);
         double oldR=r; oldTh=th;
 
         /* 15-stage palindromic composition */
@@ -656,15 +667,13 @@ def compile_one(method='rk4'):
 #  AUTO STEP BUDGET
 # ══════════════════════════════════════════════════════════════
 
-def auto_steps(obs_dist, h_base=0.3, rp=2.0, safety=3.0):
-    """Compute sufficient step count for a given observer distance.
-
-    The adaptive step h(r) grows with r, so total steps scale as
-    O(ln(r_obs/rp)). The near-horizon budget is set by the photon
-    sphere geometry (~20/h_base steps).
-    """
+def auto_steps(obs_dist, h_base=0.3, rp=2.0, safety=3.0, symplectic=False):
     N_near = 20.0 / h_base
-    N_far  = (2 * rp / h_base) * math.log(max(obs_dist / rp, 2.0))
+    if symplectic:
+        # Symplectic steps capped at 1.0, so flat-space transit is O(r_obs)
+        N_far = obs_dist / 1.0
+    else:
+        N_far = (2 * rp / h_base) * math.log(max(obs_dist / rp, 2.0))
     return max(int((N_near + N_far) * safety), 400)
 
 
@@ -699,7 +708,7 @@ def render_kerr(spin, inclination_deg, width=512, height=512, fov=7.0,
 
     if max_steps is None:
         rp_est = 1.0 + np.sqrt(max(1.0 - spin**2, 0.0))
-        max_steps = auto_steps(obs_dist, h_base=step_size, rp=rp_est)
+        max_steps = auto_steps(obs_dist, h_base=step_size, rp=rp_est, symplectic=method.startswith('tao'))
 
     incl_rad = np.radians(inclination_deg)
     # Import isco_kerr from notebook scope — or define inline
