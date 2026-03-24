@@ -1033,4 +1033,67 @@ __device__ void transformBLtoKS(
 }
 
 
+/* ═══════════════════════════════════════════════════════════
+ * Volumetric emission: hot corona + relativistic jet
+ * ═══════════════════════════════════════════════════════════
+ *
+ * Called once per integration step to accumulate optically thin
+ * emission from the diffuse environment around the black hole.
+ * This fills in the dark regions between the disk images with
+ * a physically motivated glow, matching the appearance of
+ * GRMHD simulation renders (e.g. Moscibrodzka et al. 2016).
+ *
+ * Two components:
+ *   1. Hot corona — exponential atmosphere above/below the disk
+ *      plane. Emits thermal bremsstrahlung (warm white glow).
+ *   2. Relativistic jet — collimated emission along the spin
+ *      axis (|cos θ| > 0.85). Blue-shifted, concentrated near
+ *      the BH. Based on force-free jet models (Blandford &
+ *      Znajek 1977).
+ *
+ * Both are optically thin: emission accumulates proportionally
+ * to path length (step size he) with no self-absorption.
+ */
+
+__device__ void accumulate_volume_emission(
+    double r, double th, double he, double a,
+    double r_isco, double disk_outer,
+    float *acc_r, float *acc_g, float *acc_b, float *acc_a
+) {
+    double cth = cos(th), sth = sin(th);
+    double r_cyl = r * fabs(sth);          /* cylindrical radius */
+    double z = r * cth;                     /* height above equator */
+    double r_horizon = 1.0 + sqrt(fmax(1.0 - a * a, 0.0));
+
+    /* ── Hot corona (disk atmosphere) ─────────────────────── */
+    /* Exponential density profile: ρ ∝ exp(-z²/2h²) / r²
+     * Scale height h = 0.3 × r_cyl (flared disk).
+     * Only emits near the disk, outside the horizon. */
+    if (r_cyl > r_horizon * 1.5 && r_cyl < disk_outer * 0.7 && r > r_horizon * 1.3) {
+        double scale_h = 0.3 * r_cyl;
+        double rho = exp(-z * z / (2.0 * scale_h * scale_h));
+        /* Emission ∝ ρ × path_length / r² (falls off with distance) */
+        float emit = (float)(rho * he * 0.0008 / (r * r));
+        /* Warm white: ~10^7 K corona (slightly orange) */
+        blendColor(0.020f * emit, 0.014f * emit, 0.008f * emit, emit,
+                   acc_r, acc_g, acc_b, acc_a);
+    }
+
+    /* ── Relativistic jet (polar funnel) ──────────────────── */
+    /* Collimated emission along the spin axis.
+     * Jet half-opening angle ~15° (|cos θ| > 0.966).
+     * Power ∝ 1/r² (jet expands conically).
+     * Blue-shifted synchrotron color. */
+    if (fabs(cth) > 0.90 && r > r_horizon * 1.5 && r < 25.0) {
+        /* Jet intensity: concentrated near axis, falls as 1/r² */
+        double axis_dist = 1.0 - fabs(cth);  /* 0 on axis, ~0.1 at edge */
+        double jet_profile = exp(-axis_dist * axis_dist / 0.003);
+        float jet = (float)(jet_profile * he * 0.0004 / (r * r));
+        /* Synchrotron blue-white: relativistic electrons */
+        blendColor(0.006f * jet, 0.010f * jet, 0.020f * jet, jet,
+                   acc_r, acc_g, acc_b, acc_a);
+    }
+}
+
+
 #endif /* GEODESIC_BASE_CU */

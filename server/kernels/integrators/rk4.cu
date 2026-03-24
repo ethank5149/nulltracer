@@ -54,6 +54,12 @@ void trace_rk4(const RenderParams *pp, unsigned char *output, const float *skyma
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
+        /* Volumetric emission: hot corona + relativistic jet */
+        if (acc_a < 0.99f) {
+            accumulate_volume_emission(r, th, he, a, (double)p.isco, p.disk_outer,
+                                       &acc_r, &acc_g, &acc_b, &acc_a);
+        }
+
         if (r <= rp * 1.01) {
             /* Horizon capture: composite black */
             blendColor(0.0f, 0.0f, 0.0f, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);

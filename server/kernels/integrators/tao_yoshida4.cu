@@ -76,6 +76,12 @@ void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output, const flo
         if (th < 0.005) { th = 0.005; pth = fabs(pth); }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
 
+        /* Volumetric emission: hot corona + relativistic jet */
+        if (acc_a < 0.99f) {
+            accumulate_volume_emission(r, th, he, a, (double)p.isco, p.disk_outer,
+                                       &acc_r, &acc_g, &acc_b, &acc_a);
+        }
+
         /* ── Termination conditions ──────────────────────── */
 
         /* KS coordinates are regular at the horizon, so we can

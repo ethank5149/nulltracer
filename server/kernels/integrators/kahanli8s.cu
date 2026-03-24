@@ -324,6 +324,12 @@ void trace_kahanli8s(const RenderParams *pp, unsigned char *output, const float 
         if (th < 0.005) { th = 0.005; pth = fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
         if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
 
+        /* Volumetric emission: hot corona + relativistic jet */
+        if (acc_a < 0.99f) {
+            accumulate_volume_emission(r, th, he, a, (double)p.isco, p.disk_outer,
+                                       &acc_r, &acc_g, &acc_b, &acc_a);
+        }
+
         /* ── Termination conditions ───────────────────────── */
 
         /* Horizon capture */
