@@ -1,0 +1,19 @@
+SHELL=/bin/sh
+DOXYGEN=@DOXYGEN@
+
+all: doxygen.stamp latex.stamp
+
+doxygen.stamp: @top_srcdir@/include/*.h ../include/*.h
+@MKREF_TRUE@	$(DOXYGEN) doxyfile
+	touch  doxygen.stamp
+
+latex.stamp: @srcdir@/user_guide/GyotoManual.tex
+@MKGUIDE_TRUE@	cd user_guide; $(MAKE)
+	touch latex.stamp
+
+distclean clean:
+	-rm doxygen.stamp latex.stamp
+	-rm -fr html xml latex doxygen_sqlite3.db
+@MKGUIDE_TRUE@	cd user_guide; $(MAKE) clean
+
+%: ;

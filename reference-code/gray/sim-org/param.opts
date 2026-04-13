@@ -1,0 +1,18 @@
+# Runtime parameters needed in kernels
+
+# Coordinate system
+real	M_ADM:m	= 4.3e6	= strtod(val, &rem);	/**< Spacetime mass in unit of solar mass; It is needed in radiative transfer and in the spacetime boundary conditions*/
+const char *	coordinates:coor	    = "dyst"	    = val;	/**< Coordinate system */
+const char *	dyst_file:data   	    = "data.h5"	    = val;	/**< File with all the information for dynamical spacetime */
+size_t	enable_fast_light:fast_light	= 0          	= strtoul(val, &rem, 0);	/**< If non-zero, assume fast light */
+
+# Numerical setup
+size_t	w_rays:W	= 512	= strtoul(val, &rem, 0);	/**< Number of rays along the width  of the image */
+size_t	h_rays:H	= 512	= strtoul(val, &rem, 0);	/**< Number of rays along the height of the image */
+
+# Plasma parameter
+real	n_electron:ne	= 1e6	= strtod(val, &rem);	/**< Electron number density normalization */
+real	beta_crit:bc	= 1	= strtod(val, &rem);	/**< Critical plasma \f$\beta_\mathrm{crit} = P_\mathrm{gas}/P_\mathrm{mag}\f$ */
+real	R_high:Rh	= 1	= strtod(val, &rem);	/**< The ratio \f$R_\mathrm{high} = T_p/T_e\f$ at high-beta,  weakly magnetized (disk) regions */
+real	R_low:Rl	= 1	= strtod(val, &rem);	/**< The ratio \f$R_\mathrm{low}  = T_p/T_e\f$ at low-beta, strongly magnetized (jet)  regions */
+real *	nu	= NULL	= strtoda(val, &rem);	/**< Frequency channels; NULL means turning off radiative transfer */

@@ -1,0 +1,368 @@
+"""
+Core rendering and shadow-classification functions.
+
+Two rendering paths:
+
+- :func:`render_frame` — Full visual pipeline (disk, stars, Doppler,
+  tone mapping).  Returns an ``(H, W, 3)`` uint8 sRGB image.
+- :func:`classify_shadow` — Lightweight shadow measurement.  Returns
+  a boolean mask plus disk-crossing radii and g-factors.
+
+Both dispatch to the same production CUDA kernels in ``kernels/``.
+"""
+
+from __future__ import annotations
+
+import math
+import time as _time
+from dataclasses import dataclass, field
+from typing import Optional
+
+import cupy as cp
+import numpy as np
+
+from ._kernel_utils import KernelCache
+from ._params import RenderParams
+from .bloom import apply_bloom
+from .isco import isco, isco_kerr
+from .skymap import get_skymap
+
+__all__ = [
+    "render_frame",
+    "classify_shadow",
+    "auto_steps",
+    "RenderInfo",
+    "ClassifyInfo",
+]
+
+# Module-level kernel cache (shared across calls).
+_kc = KernelCache()
+
+
+def compile_all(*, verbose: bool = True) -> None:
+    """Pre-compile every CUDA kernel.
+
+    Useful at the top of a notebook to front-load compilation latency.
+    """
+    _kc.compile_all(verbose=verbose)
+
+
+def available_methods() -> list[str]:
+    """Return all integration method names with render kernels."""
+    return _kc.available_methods
+
+
+# ── Step-budget heuristic ──────────────────────────────────────
+
+
+def auto_steps(
+    obs_dist: float,
+    step_size: float = 0.3,
+    *,
+    spin: float = 0.0,
+    charge: float = 0.0,
+    method: str = "rk4",
+    safety: float = 3.0,
+) -> int:
+    """Estimate the number of integration steps needed.
+
+    Accounts for observer distance, step size, and integrator type.
+    Symplectic methods use a fixed-step budget; adaptive methods
+    scale with an approximate path-length estimate.
+
+    Parameters
+    ----------
+    obs_dist : float
+        Observer distance in M.
+    step_size : float
+        Base affine-parameter step size.
+    spin, charge : float
+        Black-hole parameters (used for horizon radius estimate).
+    method : str
+        Integrator name.
+    safety : float
+        Multiplicative safety factor.
+    """
+    rp = 1.0 + math.sqrt(max(1.0 - spin**2 - charge**2, 0.0))
+    is_symp = method.startswith("tao") or method.startswith("kahan")
+
+    if method == "_classify":
+        N_near = 20.0 / step_size
+        N_far = (2 * rp / step_size) * math.log(max(obs_dist / rp, 2.0))
+        return max(int((N_near + N_far) * safety), 400)
+    elif is_symp:
+        return max(int((obs_dist + 200.0 / step_size) * safety), 400)
+    else:
+        h_scaled = step_size * (obs_dist / 30.0) * 1.7
+        h_max = 1.4 if method == "rk4" else 3.0
+        N = obs_dist / min(h_scaled, h_max) + 60.0 / step_size
+        return max(int(N * safety), 200)
+
+
+# ── Render (full visual pipeline) ─────────────────────────────
+
+
+@dataclass
+class RenderInfo:
+    """Metadata returned alongside a rendered image."""
+
+    render_ms: float
+    method: str
+    max_steps: int
+    obs_dist: float
+    width: int = 0
+    height: int = 0
+
+
+def render_frame(
+    spin: float,
+    inclination_deg: float,
+    *,
+    charge: float = 0.0,
+    width: int = 512,
+    height: int = 512,
+    fov: float = 7.0,
+    obs_dist: float = 40.0,
+    max_steps: int | None = None,
+    step_size: float = 0.3,
+    method: str = "rkdp8",
+    show_disk: bool = True,
+    bg_mode: int = 0,
+    star_layers: int = 3,
+    disk_temp: float = 1.0,
+    doppler_boost: int = 2,
+    phi0: float = 0.0,
+    srgb_output: bool = True,
+    disk_alpha: float = 0.95,
+    disk_max_crossings: int = 5,
+    bloom_enabled: bool = False,
+    bloom_radius: float = 1.0,
+) -> tuple[np.ndarray, RenderInfo]:
+    """Render a black-hole image using the production visual pipeline.
+
+    Parameters
+    ----------
+    spin : float
+        Dimensionless spin parameter, 0 ≤ a < 1.
+    inclination_deg : float
+        Observer inclination in degrees (0 = pole-on, 90 = equatorial).
+    charge : float
+        Dimensionless charge (Kerr–Newman), default 0.
+    width, height : int
+        Output resolution in pixels.
+    fov : float
+        Field of view in degrees.
+    obs_dist : float
+        Observer distance in gravitational radii (M).
+    max_steps : int, optional
+        Integration steps.  If *None*, estimated automatically.
+    step_size : float
+        Base affine-parameter step size.
+    method : str
+        Integration method (see :func:`available_methods`).
+    show_disk : bool
+        Render the accretion disk.
+    bg_mode : int
+        Background mode: 0 = stars, 1 = checker, 2 = colormap, 3 = skymap.
+    star_layers : int
+        Number of procedural star layers (bg_mode 0).
+    disk_temp : float
+        Disk colour-temperature multiplier.
+    doppler_boost : int
+        0 = off, 1 = g³ (optically thin), 2 = g⁴ (optically thick).
+    phi0 : float
+        Azimuthal rotation offset (radians).
+    srgb_output : bool
+        Apply IEC 61966-2-1 sRGB transfer function.
+    disk_alpha : float
+        Base opacity per disk crossing.
+    disk_max_crossings : int
+        Maximum disk crossings to accumulate.
+    bloom_enabled : bool
+        Apply Airy-disk bloom post-processing.
+    bloom_radius : float
+        Bloom radius multiplier.
+
+    Returns
+    -------
+    (image, info)
+        ``image`` is an ``(H, W, 3)`` uint8 sRGB NumPy array.
+        ``info`` is a :class:`RenderInfo` dataclass.
+    """
+    kernel = _kc.get_render_kernel(method)
+
+    isco_r = isco(spin, charge)
+
+    if max_steps is None:
+        max_steps = auto_steps(
+            obs_dist, step_size, spin=spin, charge=charge, method=method
+        )
+
+    # Skymap
+    d_skymap, sky_w, sky_h = get_skymap()
+    actual_bg = bg_mode if not (bg_mode == 3 and sky_w == 0) else 0
+
+    rp = RenderParams(
+        width=float(width),
+        height=float(height),
+        spin=float(spin),
+        charge=float(charge),
+        incl=math.radians(inclination_deg),
+        fov=float(fov),
+        phi0=float(phi0),
+        isco=float(isco_r),
+        steps=float(max_steps),
+        obs_dist=float(obs_dist),
+        esc_radius=float(obs_dist) + 12.0,
+        disk_outer=50.0,
+        step_size=float(step_size),
+        bg_mode=float(actual_bg),
+        star_layers=float(star_layers),
+        show_disk=1.0 if show_disk else 0.0,
+        show_grid=0.0,
+        disk_temp=float(disk_temp),
+        doppler_boost=float(doppler_boost),
+        srgb_output=1.0 if srgb_output else 0.0,
+        disk_alpha=float(disk_alpha),
+        disk_max_crossings=float(disk_max_crossings),
+        bloom_enabled=1.0 if bloom_enabled else 0.0,
+        sky_width=float(sky_w),
+        sky_height=float(sky_h),
+    )
+
+    d_params = rp.to_gpu()
+    d_output = cp.zeros(width * height * 3, dtype=cp.uint8)
+
+    block = (16, 16)
+    grid = ((width + 15) // 16, (height + 15) // 16)
+
+    t0 = _time.perf_counter()
+    kernel(grid, block, (d_params, d_output, d_skymap))
+    cp.cuda.Device(0).synchronize()
+    ms = (_time.perf_counter() - t0) * 1000.0
+
+    img = np.flipud(d_output.get().reshape(height, width, 3))
+
+    if bloom_enabled:
+        img = apply_bloom(img, fov=fov, bloom_radius=bloom_radius, width=width)
+
+    info = RenderInfo(
+        render_ms=ms,
+        method=method,
+        max_steps=max_steps,
+        obs_dist=obs_dist,
+        width=width,
+        height=height,
+    )
+    return img, info
+
+
+# ── Classify (shadow measurement) ─────────────────────────────
+
+
+@dataclass
+class ClassifyInfo:
+    """Metadata returned alongside a shadow classification."""
+
+    render_ms: float
+    max_steps: int
+    obs_dist: float
+    r_disk: np.ndarray = field(repr=False)
+    g_factor: np.ndarray = field(repr=False)
+
+
+def classify_shadow(
+    spin: float,
+    inclination_deg: float,
+    *,
+    width: int = 512,
+    height: int = 512,
+    fov: float = 7.0,
+    obs_dist: float = 500.0,
+    max_steps: int | None = None,
+    step_size: float = 0.15,
+) -> tuple[np.ndarray, ClassifyInfo]:
+    """Classify pixels as shadow / disk / escape for shadow measurement.
+
+    Uses a dedicated lightweight RK4 kernel (no visual pipeline) with
+    the production ``geoRHS`` for maximum accuracy.  The large default
+    ``obs_dist`` (500 M) approximates the asymptotic observer limit
+    needed for comparing against analytic shadow curves.
+
+    Parameters
+    ----------
+    spin : float
+        Dimensionless spin, 0 ≤ a < 1.
+    inclination_deg : float
+        Observer inclination in degrees.
+    width, height : int
+        Classification grid resolution.
+    fov : float
+        Field of view in degrees.
+    obs_dist : float
+        Observer distance in M.
+    max_steps : int, optional
+        If *None*, estimated automatically.
+    step_size : float
+        Base step size (smaller → more accurate near horizon).
+
+    Returns
+    -------
+    (shadow_mask, info)
+        ``shadow_mask`` is a boolean ``(H, W)`` array (True = shadow).
+        ``info`` is a :class:`ClassifyInfo` with ``r_disk`` and
+        ``g_factor`` arrays.
+    """
+    kernel = _kc.get_classify_kernel()
+
+    if max_steps is None:
+        max_steps = auto_steps(
+            obs_dist, step_size, spin=spin, method="_classify"
+        )
+
+    isco_r = isco_kerr(spin)
+    n = width * height
+
+    d_class = cp.zeros(n, dtype=cp.float64)
+    d_rdisk = cp.zeros(n, dtype=cp.float64)
+    d_g = cp.zeros(n, dtype=cp.float64)
+    d_b = cp.zeros(n, dtype=cp.float64)
+
+    block = (16, 16)
+    grid = ((width + 15) // 16, (height + 15) // 16)
+
+    t0 = _time.perf_counter()
+    kernel(
+        grid,
+        block,
+        (
+            d_class,
+            d_rdisk,
+            d_g,
+            d_b,
+            np.int32(width),
+            np.int32(height),
+            np.float64(spin),
+            np.float64(math.radians(inclination_deg)),
+            np.float64(fov),
+            np.float64(obs_dist),
+            np.float64(float(isco_r)),
+            np.int32(max_steps),
+            np.float64(step_size),
+        ),
+    )
+    cp.cuda.Device(0).synchronize()
+    ms = (_time.perf_counter() - t0) * 1000.0
+
+    h_class = np.flipud(d_class.get().reshape(height, width))
+    h_rdisk = np.flipud(d_rdisk.get().reshape(height, width))
+    h_g = np.flipud(d_g.get().reshape(height, width))
+
+    info = ClassifyInfo(
+        render_ms=ms,
+        max_steps=max_steps,
+        obs_dist=obs_dist,
+        r_disk=h_rdisk,
+        g_factor=h_g,
+    )
+    return (h_class == 1.0), info

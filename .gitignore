@@ -1,18 +1,33 @@
-# OS files
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+
+# CuPy kernel cache
+.cupy/
+
+# Environment
+.venv/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
 
-# Editor files
-*.swp
-*.swo
-*~
-.vscode/
-.idea/
-.venv/
-
-plans/
-screenshots/
-reference/
-reference-code/
-
-__pycache__/
+# Large data files (use git-lfs or keep in data/)
+data/*.exr
+data/*.png
+data/*.jpg
+!data/.gitkeep

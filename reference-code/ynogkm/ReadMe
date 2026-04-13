@@ -1,0 +1,42 @@
+J/A+A/561/A127   ynogkm: code for calculating time-like geodesics  (Yang+, 2014)
+================================================================================
+ynogkm: A new public code for calculating time-like geodesics in the
+Kerr-Newmann spacetime.
+    Yang X.-L., Wang J.-C.
+   <Astron. Astrophys. 561, A127 (2014)>
+   =2014A&A...561A.127Y
+================================================================================
+ADC_Keywords: Models ; Accretion
+Keywords: accretion, accretion disks - black hole physics -
+          relativistic processes - methods: numerical
+
+Description:
+    Here we present the source file for a new public code named ynogkm,
+    aim on calculating the time-like geodesics in a Kerr-Newmann spacetime
+    fast. In the code the four Boyer-Lindquis coordinates and proper time
+    are expressed as functions of a parameter p semi-analytically, i.e.,
+    r(p), {mu}(p), {phi}(p), t(p), and {sigma}(p), by using the Weiers-
+    trass' and Jacobi's elliptic functions and integrals. All of the
+    ellip- tic integrals are computed by Carlson's elliptic integral
+    method, which guarantees the fast speed of the code.The source Fortran
+    file ynogkm.f90 contains three modules: constants, rootfind,
+    ellfunction, and blcoordinates.
+
+File Summary:
+--------------------------------------------------------------------------------
+ FileName    Lrecl    Records    Explanations
+--------------------------------------------------------------------------------
+ReadMe          80          .    This file
+ynogkm.f90     128       8763    Source Fortran programs
+ynogkm.zip     512      180617   Tarball if ynogkm code with examples
+readme.txt      80        128    The readme file for the code ynogkm.f90
+--------------------------------------------------------------------------------
+
+Acknowledgements:
+    Xiao-Lin Yang, yangxl(at)ynao.ac.cn
+
+References:
+    Yang & Wang, YNOGK code, 2013ApJS..207....6Y
+
+================================================================================
+(End)                                        Patricia Vannier [CDS]  18-Nov-2013

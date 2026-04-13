@@ -1,0 +1,311 @@
+# Makefile.in
+#
+# Copyright © 2012, 2013 Brandon Invergo <brandon@invergo.net>
+# Copyright © 2014-2025 Thibaut Paumard <thibaut.paumard@obsppm.fr>
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.  This file is offered as-is,
+# without any warranty.
+#
+# Some `source' files of the Gyoto Python extension are
+# generated. They can be built with a single call to make:
+#   make src
+#
+# From then on, standard Python commands can be used to build, test
+# and install the extension. Conventional targets are provided to wrap
+# around such tools: make all, make check, make install, make
+# uninstall.
+#
+
+
+
+# This Makefile contains targets that fail if run in parallel
+.NOTPARALLEL:
+
+# Some targets require a second expansion
+.SECONDEXPANSION:
+
+# List whatever files you want to include in your source distribution here.
+# You can include whole directories but note that *everything* under that 
+# directory will be included
+DISTFILES = PKG-INFO Makefile.in configure setup.py install-sh
+
+DESTDIR =
+ifdef DESTDIR
+DESTDIRFLAG = --ignore-installed
+else
+DESTDIRFLAG = --force-reinstall
+endif
+VPATH = @srcdir@
+SED = @SED@
+PACKAGE_BUGREPORT = @PACKAGE_BUGREPORT@
+PACKAGE_NAME = @PACKAGE_NAME@
+PACKAGE_STRING = @PACKAGE_STRING@
+PACKAGE_TARNAME = @PACKAGE_TARNAME@
+PACKAGE_DISTNAME = ${PACKAGE_NAME}-${PACKAGE_VERSION}
+PACKAGE_URL = @PACKAGE_URL@
+PACKAGE_VERSION = @PACKAGE_VERSION@
+PATH_SEPARATOR = @PATH_SEPARATOR@
+PYTHON = @PYTHON@
+VIRTUALENV = @VIRTUALENV@
+SPHINXBUILD = @SPHINXBUILD@
+SHELL = @SHELL@
+MKDIR_P = @MKDIR_P@
+INSTALL = @INSTALL@
+INSTALL_PROGRAM = @INSTALL_PROGRAM@
+INSTALL_DATA = @INSTALL_DATA@
+INSTALL_SCRIPT = @INSTALL_SCRIPT@
+exec_prefix = @exec_prefix@
+includedir = @includedir@
+infodir = @infodir@
+prefix = @prefix@
+srcdir = @srcdir@
+top_srcdir = @top_srcdir@
+builddir = @builddir@
+abs_builddir = @abs_builddir@
+abs_srcdir = @abs_srcdir@
+abs_top_builddir = @abs_top_builddir@
+abs_top_srcdir = @abs_top_srcdir@
+datadir = @datadir@
+datarootdir = @datarootdir@
+pythondir = @pythondir@
+pyexecdir = @pyexecdir@
+pkgdatadir = $(datadir)/@PACKAGE_NAME@
+pkgincludedir = $(includedir)/@PACKAGE_NAME@
+pkgpyexecdir = @pkgpyexecdir@
+PYTHONPATH = $(pythondir)$(PATH_SEPARATOR)$(DESTDIR)$(pythondir)
+SWIG=@SWIG@
+
+CFITSIO_CFLAGS = @CFITSIO_CFLAGS@
+CFITSIO_LIBS = @CFITSIO_LIBS@
+XERCES_CFLAGS = @XERCES_CFLAGS@
+XERCES_LIBS = @XERCES_LIBS@
+UDUNITS_CFLAGS = @UDUNITS_CFLAGS@
+UDUNITS_CPPFLAGS = @UDUNITS_CPPFLAGS@
+UDUNITS_LDFLAGS = @UDUNITS_LDFLAGS@
+UDUNITS_LIBS = @UDUNITS_LIBS@
+EIGEN_CFLAGS = @EIGEN_CFLAGS@
+
+CXX=@CXX@
+CC=$(CXX)
+
+PYTHON = @PYTHON@
+PYTHON_ABI_FLAGS = @PYTHON_ABI_FLAGS@
+PYTHON_CFLAGS = @PYTHON_CFLAGS@
+PYTHON_CONFIG = @PYTHON_CONFIG@
+PYTHON_EXTENSION_SUFFIX = @PYTHON_EXTENSION_SUFFIX@
+PYTHON_INCLUDES = @PYTHON_INCLUDES@
+PYTHON_LDFLAGS = @PYTHON_LDFLAGS@
+PYTHON_LIBS = @PYTHON_LIBS@
+PYTHON_PREFIX = @PYTHON_PREFIX@
+
+CPPFLAGS=-Iinclude -I$(srcdir)/include -I../include -I$(top_srcdir)/include $(CFITSIO_CFLAGS) $(XERCES_CFLAGS) $(UDUNITS_CFLAGS) $(EIGEN_CFLAGS)
+CXXFLAGS=@CXXFLAGS@ $(CFITSIO_CFLAGS) $(XERCES_CFLAGS) $(UDUNITS_CFLAGS)
+CFLAGS=$(CXXFLAGS)
+
+SWIG_CMD = $(SWIG) -Iinclude -I$(srcdir)/include -I../include -I$(srcdir)/../include -c++ -python -outdir src/gyoto
+
+WHEEL := dist/gyoto-$(PACKAGE_VERSION)-$(shell $(PYTHON) -c \
+'from packaging import tags; import sysconfig; tag = next(tags.sys_tags()); \
+tag_interpreter=tag.interpreter; tag_abi=tag.abi; \
+tag_platform=sysconfig.get_platform().replace("-", "_").replace(".", "_"); \
+print(f"{tag_interpreter}-{tag_abi}-{tag_platform}")').whl
+
+CHECK_ENV = @DYLIB_VAR@=../lib/.libs:../plugins/python/lib/.libs:$$@DYLIB_VAR@ \
+	PYTHONPATH=testbed:$$PYTHONPATH
+
+MPIRUN = mpirun --mca btl_tcp_if_include lo 
+
+INSTALLED_VERSION := $(shell $(PYTHON) -m pip show gyoto 2> /dev/null | grep Version: | awk '{print $$2}')
+INSTALLED_LOCATION := $(shell $(PYTHON) -m pip show gyoto 2> /dev/null | grep Location: | awk '{print $$2}')
+
+export LDFLAGS
+export CFLAGS
+export CPPFLAGS
+export CXXFLAGS
+export CXX
+export CC
+
+GYOTO_PYFILES = src/gyoto/core.py src/gyoto/std.py
+GYOTO_CXXFILES = src/core_wrap.cxx src/std_wrap.cxx
+GYOTO_SWIGFILES = $(srcdir)/include/gyoto.i $(srcdir)/include/gyoto_std.i include/gyoto_doc.i $(srcdir)/include/numpy.i $(srcdir)/include/gyoto_swig.h $(srcdir)/include/gyoto_std_swig.h
+@HAVE_LORENE_TRUE@GYOTO_PYFILES += src/gyoto/lorene.py
+@HAVE_LORENE_TRUE@GYOTO_CXXFILES += src/lorene_wrap.cxx
+@HAVE_LORENE_TRUE@GYOTO_SWIGFILES += $(srcdir)/include/gyoto_lorene.i
+GYOTO_STATIC_SRC = $(addprefix $(abs_builddir)/, $(filter-out $(GYOTO_PYFILES),$(addprefix src/gyoto/, $(notdir $(wildcard $(srcdir)/src/gyoto/*.py)))))
+
+### High level entry points
+# default target is wheel, see below
+all: wheel
+
+## 1) Generate source files for python -m build
+# See low level targets below for details. This is the last step that
+# is best done by make, the rest can be done with Python standard
+# tools such as PIP if the user prefers.
+src: $(GYOTO_STATIC_SRC) $(GYOTO_PYFILES) $(GYOTO_CXXFILES)
+
+## 2) Build wheel file using python -m build
+wheel: $(WHEEL)
+$(WHEEL): $(GYOTO_STATIC_SRC) $(GYOTO_PYFILES) $(GYOTO_CXXFILES)
+	$(PYTHON) -m build --wheel --no-isolation
+
+## 3) Optional: check the built wheel
+# install the wheel in a testbed folder
+testbed: testbed/stamp
+testbed/stamp: $(WHEEL)
+	$(MAKE) install-python pythondir=testbed
+	touch testbed/stamp
+
+# run test suite based on unittest
+unittest: testbed/stamp
+	$(CHECK_ENV) PYTHONPATH=$(top_srcdir)/doc/examples:$$PYTHONPATH $(PYTHON) -m unittest discover -s $(srcdir)/tests -p "*.py"
+
+# check calls the above and runs the example files
+check: testbed/stamp unittest
+	$(CHECK_ENV) $(PYTHON) $(srcdir)/example.py \
+		--pdf=example.pdf --examples-dir=$(top_srcdir)/doc/examples
+	$(CHECK_ENV) $(PYTHON) $(srcdir)/example-patterndisk.py \
+		--pdf=example-patterndisk.pdf
+	$(CHECK_ENV) $(PYTHON) $(srcdir)/example-python.py \
+		--pdf=example-python.pdf \
+		--examples-dir=$(top_srcdir)/doc/examples
+
+# check-mpi runs the MPI example
+check-mpi: testbed/stamp ../bin/lib/.libs/gyoto-mpi-worker.@sovers@@EXEEXT@
+	@echo Checking MPI non-singleton
+	$(CHECK_ENV) $(MPIRUN) -np 5 $(PYTHON) $(srcdir)/example-mpi.py \
+		--examples-dir=$(top_srcdir)/doc/examples
+	@echo Checkin MPI singleton
+	$(CHECK_ENV) $(MPIRUN) -np 1 --oversubscribe $(PYTHON) $(srcdir)/example-mpi.py \
+		--examples-dir=$(top_srcdir)/doc/examples
+	$(CHECK_ENV) PYTHONPATH=$(top_srcdir)/doc/examples:$$PYTHONPATH \
+		$(MPIRUN) -np 1 --oversubscribe $(PYTHON) $(srcdir)/example-python.py \
+		--pdf=example-python.pdf \
+		--examples-dir=$(top_srcdir)/doc/examples \
+		--mpi
+
+# check-mpi requires bin to have been built
+../bin/lib/.libs/gyoto-mpi-worker.@sovers@@EXEEXT@:
+	$(MAKE) -C ../bin
+
+# clean up:
+check-clean:
+	-rm -f example.pdf example-patterndisk.pdf
+
+# those targets are yet empty:
+check-lorene check-lorene-clean check-lorene-mpi check-lorene-mpi-clean check-mpi-clean check-python check-python-clean check-python-mpi check-python-mpi-clean: ;
+
+## 3) Install the built wheel and include files
+# Install the Swig include files under $prefix
+install-data: all
+	$(MKDIR_P) $(DESTDIR)$(pkgincludedir)
+	$(INSTALL_DATA) $(GYOTO_SWIGFILES) $(DESTDIR)$(pkgincludedir)
+
+# Install the built wheel using python -m pip
+install-python: all
+ifeq ($(pythondir),nowhere)
+	@echo \$pythondir is set to \'nowhere\', skip installing Python module
+else
+	$(PYTHON) -m pip install --no-cache-dir --root-user-action=ignore --no-deps --upgrade \
+		 $(DESTDIRFLAG) --target=$(DESTDIR)$(pythondir) $(WHEEL)
+endif
+
+# Run both targets above
+install: install-data install-python
+
+## 5) Uninstallation
+# We know how to remove safely the include files, but not the Python
+# module
+uninstall-data:
+	-cd $(DESTDIR)$(pkgincludedir) ; \
+	   for file in $(GYOTO_SWIGFILES) numpy.i gyoto_swig.h ; do \
+	      rm `basename $$file` ;\
+	   done
+	-rmdir $(DESTDIR)$(pkgincludedir)
+
+# Let the user know that we won't remove the Python module for them
+uninstall-python:
+ifeq ($(INSTALLED_LOCATION)$(INSTALLED_VERSION),$(pythondir)$(PACKAGE_VERSION))
+	$(PYTHON) -m pip uninstall --root-user-action=ignore --break-system-packages gyoto
+else
+	@echo No gyoto with version $(PACKAGE_VERSION) found in $(pythondir)
+endif
+
+# Call both targets above
+uninstall: uninstall-data uninstall-python
+
+### Low level targets to generate each source file
+
+## Step 1: generate a Swig include file containing the documentation
+
+# Doxygen needs to run to produce the documentation in XML format
+../doc/xml/index.xml:
+	cd ../doc; $(MAKE) doxygen.stamp
+
+# Run doxy2swig to turn this XML doc to a Swig include file
+.tmp/gyoto_doc.i: ../doc/xml/index.xml
+	$(MKDIR_P) $(dir $@)
+	$(PYTHON) $(srcdir)/doxy2swig.py --no-function-definition $< $@ || rm $@
+
+# Rework a little bit this Swig file
+include/gyoto_doc.i: .tmp/gyoto_doc.i
+	$(MKDIR_P) $(dir $@)
+	$(SED) -e 's/Gyoto::Screen::Angles/Angles/' \
+	       -e 's/Gyoto::Screen::Bucket/Bucket/' \
+	       -e 's/Gyoto::Screen::Coord1dSet/Coord1dSet/' \
+	       -e 's/Gyoto::Screen::Coord2dSet/Coord2dSet/' \
+	       -e 's/Gyoto::Screen::Empty/Empty/' \
+	       -e 's/Gyoto::Screen::Grid/Grid/' \
+	       -e 's/Gyoto::Screen::Indices/Indices/' \
+	       -e 's/Gyoto::Screen::Range/Range/' \
+	       -e 's/Gyoto::Screen::RepeatAngle/RepeatAngle/' \
+	          $< > $@
+
+## Step 2: run Swig to produce cxx and py files
+src/gyoto/core.py src/core_wrap.cxx: $(srcdir)/include/gyoto.i include/gyoto_doc.i $(top_srcdir)/include/*.h $(builddir)/../include/*.h
+	$(MKDIR_P) src/gyoto
+	$(SWIG_CMD) -o src/core_wrap.cxx $(srcdir)/include/gyoto.i
+
+src/gyoto/std.py src/std_wrap.cxx: $(srcdir)/include/gyoto_std.i $(srcdir)/include/gyoto.i include/gyoto_doc.i $(top_srcdir)/include/*.h $(builddir)/../include/*.h
+	$(MKDIR_P) src/gyoto
+	$(SWIG_CMD) -o src/std_wrap.cxx $(srcdir)/include/gyoto_std.i
+
+src/gyoto/lorene.py src/lorene_wrap.cxx: $(srcdir)/include/gyoto_lorene.i $(srcdir)/include/gyoto.i include/gyoto_doc.i $(top_srcdir)/include/*.h $(builddir)/../include/*.h
+	$(MKDIR_P) src/gyoto
+	$(SWIG_CMD) -o src/lorene_wrap.cxx $(srcdir)/include/gyoto_lorene.i
+
+# in case of out-of-tree build, we also need go copy the static
+# sources.  The rule is at for $(GYOTO_STATIS_SRC) is at the end of
+# the Makefile as it requires secondary expansion.
+
+### The clean targets
+
+clean: check-clean check-mpi-clean
+ifeq ("$(wildcard Makefile.in)","")
+#	in case of out-of-tree build, remove src
+	-rm -Rf src
+endif
+	-rm -Rf build dist .tmp $(GYOTO_PYFILES) $(GYOTO_CXXFILES)
+	-rm *.pyc include/gyoto_doc.i .tmp/gyoto_doc.i
+	-rm -f doxygen_sqlite3.db gyoto_*installed.txt
+	-rm -f tests/*.pyc *_wrap.cxx
+	-rm -Rf _gyoto*.so src/Gyoto*.egg-info _*.so testbed
+	-rm -Rf dist gyoto/__pycache__/ tests/__pycache__/ .eggs/ __pycache__/
+	-rmdir include
+
+distclean: clean 
+	-rm -v $(builddir)/setup*.py
+	-rm -v $(builddir)/pyproject.toml
+	-rm -v $(builddir)/Makefile
+
+### .PHONY targets are run even if they appear up to date
+
+.PHONY: all setup-check install install-data install-python uninstall uninstall-data uninstall-python distclean clean dist check src wheel testbed
+
+### Rules requiring secondary expansion
+.SECONDEXPANSION:
+# in case of out-of-tree build, we also need go copy the static sources:
+$(GYOTO_STATIC_SRC): $$(subst $(abs_builddir),$(abs_srcdir),$$@)
+	$(MKDIR_P) $(dir $@)
+	cp $< $@

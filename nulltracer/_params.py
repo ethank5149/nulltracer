@@ -1,0 +1,68 @@
+"""
+C-compatible parameter struct shared between Python and CUDA kernels.
+
+Must be kept in exact field-order sync with ``kernels/geodesic_base.cu``
+``struct RenderParams``.  All fields are ``c_double`` to guarantee
+identical layout (no alignment padding) between ctypes and nvcc.
+"""
+
+import ctypes
+
+__all__ = ["RenderParams"]
+
+
+class RenderParams(ctypes.Structure):
+    """Mirror of the CUDA ``RenderParams`` struct.
+
+    Every field is a ``c_double``.  Integer-valued parameters
+    (width, height, steps, …) are stored as doubles here and
+    cast to ``int`` inside the kernel.
+    """
+
+    _fields_ = [
+        # ── resolution ─────────────────────────────────────────
+        ("width",              ctypes.c_double),
+        ("height",             ctypes.c_double),
+        # ── black-hole parameters ──────────────────────────────
+        ("spin",               ctypes.c_double),  # a
+        ("charge",             ctypes.c_double),  # Q
+        ("incl",               ctypes.c_double),  # observer inclination [rad]
+        ("fov",                ctypes.c_double),
+        ("phi0",               ctypes.c_double),  # azimuthal rotation
+        ("isco",               ctypes.c_double),  # precomputed ISCO radius
+        # ── integration ────────────────────────────────────────
+        ("steps",              ctypes.c_double),
+        ("obs_dist",           ctypes.c_double),
+        ("esc_radius",         ctypes.c_double),  # obs_dist + 12
+        ("disk_outer",         ctypes.c_double),
+        ("step_size",          ctypes.c_double),
+        # ── rendering options ──────────────────────────────────
+        ("bg_mode",            ctypes.c_double),  # 0=stars 1=checker 2=colormap 3=skymap
+        ("star_layers",        ctypes.c_double),
+        ("show_disk",          ctypes.c_double),
+        ("show_grid",          ctypes.c_double),
+        ("disk_temp",          ctypes.c_double),
+        ("doppler_boost",      ctypes.c_double),  # 0=off 1=g^3 thin 2=g^4 thick
+        ("srgb_output",        ctypes.c_double),  # >0.5 → IEC 61966-2-1 sRGB
+        ("disk_alpha",         ctypes.c_double),
+        ("disk_max_crossings", ctypes.c_double),
+        ("bloom_enabled",      ctypes.c_double),
+        # ── skymap texture ─────────────────────────────────────
+        ("sky_width",          ctypes.c_double),
+        ("sky_height",         ctypes.c_double),
+    ]
+
+    def to_gpu(self):
+        """Copy this struct to GPU memory as a uint8 byte array.
+
+        Returns
+        -------
+        cupy.ndarray
+            Device array containing the raw struct bytes.
+        """
+        import cupy as cp
+        import numpy as np
+
+        return cp.asarray(
+            np.frombuffer(bytes(self), dtype=np.uint8)
+        )
