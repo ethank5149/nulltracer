@@ -55,15 +55,23 @@ def shadow_boundary(
     sO = np.sin(theta_obs)
     cO = np.cos(theta_obs)
 
-    r = np.linspace(
-        1.0 + 2.0 * np.sqrt(1.0 - a) * np.cos(np.arccos(-a) / 3.0) - 0.01,
-        1.0 + 2.0 * np.sqrt(1.0 - a) * np.cos(np.arccos(a) / 3.0) + 0.01,
-        N,
-    )
+    if a < 1e-5:
+        r_shadow = 3.0 * np.sqrt(3.0)
+        phi = np.linspace(0.0, 2.0 * np.pi, N)
+        alpha = r_shadow * np.cos(phi)
+        beta = r_shadow * np.sin(phi)
+        return alpha, beta, -beta
 
-    Delta = r**2 - 2.0 * r + a**2
-    xi = (r**2 * (r - 3.0) + a**2 * (r + 1.0)) / (a * (1.0 - r))
-    eta = r**3 * (4.0 * a**2 - r * (r - 3.0) ** 2) / (a**2 * (1.0 - r) ** 2)
+    r_min = 2.0 * (1.0 + np.cos(2.0 / 3.0 * np.arccos(-a)))
+    r_max = 2.0 * (1.0 + np.cos(2.0 / 3.0 * np.arccos(a)))
+    r = np.linspace(r_min + 1e-6, r_max - 1e-6, N)
+
+    xi = -(r**3 - 3.0 * r**2 + a**2 * r + a**2) / (a * (r - 1.0) + 1e-30)
+    eta = (
+        -(r**3)
+        * (r**3 - 6.0 * r**2 + 9.0 * r - 4.0 * a**2)
+        / (a**2 * (r - 1.0) ** 2 + 1e-30)
+    )
 
     alpha = -xi / sO
     beta_sq = eta + a**2 * cO**2 - (xi**2) * (cO**2 / (sO**2))
@@ -127,12 +135,20 @@ def fit_ellipse_to_shadow(
     diameter = max(x_extent, y_extent)
     asymmetry = abs(x_extent - y_extent) / max(diameter, 1e-12)
 
+    circularity = (
+        min(x_extent, y_extent) / max(x_extent, y_extent)
+        if max(x_extent, y_extent) > 0
+        else 1.0
+    )
+
     return {
         "diameter_M": float(diameter),
         "diameter_x_M": float(x_extent),
         "diameter_y_M": float(y_extent),
         "asymmetry": float(asymmetry),
         "centroid_offset_M": float(centroid_offset),
+        "circularity": float(circularity),
+        "delta_C": float(1.0 - circularity),
     }
 
 
@@ -216,7 +232,7 @@ def compare_integrators(
     fig.suptitle(
         f"Integrator Comparison — $a={spin}$, "
         rf"$\theta={inclination_deg}°$, "
-        rf"$r_{{\rm obs}}={obs_dist}\,M$",
+        rf"$r{{\rm obs}}={obs_dist}\,M$",
         fontsize=13,
         y=1.02,
     )
