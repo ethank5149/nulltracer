@@ -34,3 +34,5 @@ data/*.exr
 data/*.png
 data/*.jpg
 !data/.gitkeep
+
+git-purge-ignored.sh
