@@ -17,6 +17,7 @@ build/
 .env
 
 reference/
+legacy/
 
 # IDE
 .idea/
