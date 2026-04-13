@@ -60,6 +60,18 @@ def load_skymap(
             )
 
     path = Path(path)
+    if not path.exists() and not path.is_absolute():
+        pkg_dir = Path(__file__).resolve().parent.parent
+        search_dirs = [Path.cwd(), pkg_dir, pkg_dir / "data"]
+        for search_dir in search_dirs:
+            candidate = search_dir / path
+            if candidate.exists():
+                path = candidate
+                break
+
+    if not path.exists():
+        raise FileNotFoundError(f"Skymap not found: {path}")
+
     ext = path.suffix.lower()
 
     if ext == ".exr":
@@ -76,15 +88,12 @@ def load_skymap(
             channels = []
             for ch in ("R", "G", "B"):
                 raw = exr.channel(ch, pt)
-                channels.append(
-                    np.frombuffer(raw, dtype=np.float32).reshape(h, w)
-                )
+                channels.append(np.frombuffer(raw, dtype=np.float32).reshape(h, w))
             data = np.stack(channels, axis=-1)
             fmt_info = f"EXR float32"
         except ImportError:
             raise ImportError(
-                "OpenEXR is required for .exr files. "
-                "Install with: pip install OpenEXR"
+                "OpenEXR is required for .exr files. Install with: pip install OpenEXR"
             )
     else:
         from PIL import Image

@@ -34,7 +34,7 @@ def shadow_boundary(
     a: float,
     theta_obs: float,
     N: int = 1000,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Bardeen (1973) analytic shadow boundary for a Kerr black hole.
 
     Parameters
@@ -48,13 +48,13 @@ def shadow_boundary(
 
     Returns
     -------
-    (alpha, beta)
-        Impact-parameter coordinates of the shadow edge, in units of M.
+    (alpha, beta_plus, beta_minus)
+        Impact-parameter coordinates of the shadow edge (upper and lower halves),
+        in units of M.
     """
     sO = np.sin(theta_obs)
     cO = np.cos(theta_obs)
 
-    # Range of the parameter r on the unstable photon orbits
     r = np.linspace(
         1.0 + 2.0 * np.sqrt(1.0 - a) * np.cos(np.arccos(-a) / 3.0) - 0.01,
         1.0 + 2.0 * np.sqrt(1.0 - a) * np.cos(np.arccos(a) / 3.0) + 0.01,
@@ -63,19 +63,13 @@ def shadow_boundary(
 
     Delta = r**2 - 2.0 * r + a**2
     xi = (r**2 * (r - 3.0) + a**2 * (r + 1.0)) / (a * (1.0 - r))
-    eta = (
-        r**3 * (4.0 * a**2 - r * (r - 3.0) ** 2) / (a**2 * (1.0 - r) ** 2)
-    )
+    eta = r**3 * (4.0 * a**2 - r * (r - 3.0) ** 2) / (a**2 * (1.0 - r) ** 2)
 
     alpha = -xi / sO
     beta_sq = eta + a**2 * cO**2 - (xi**2) * (cO**2 / (sO**2))
     beta = np.sqrt(np.maximum(beta_sq, 0.0))
 
-    # Full contour: upper half + reversed lower half
-    alpha_full = np.concatenate([alpha, alpha[::-1]])
-    beta_full = np.concatenate([beta, -beta[::-1]])
-
-    return alpha_full, beta_full
+    return alpha, beta, -beta
 
 
 # ── Shadow ellipse fitting ────────────────────────────────────
@@ -210,12 +204,14 @@ def compare_integrators(
             f"{label}\n{info.render_ms:.0f} ms, {info.max_steps} steps",
             fontsize=10,
         )
-        results.append({
-            "method": m,
-            "label": label,
-            "render_ms": info.render_ms,
-            "max_steps": info.max_steps,
-        })
+        results.append(
+            {
+                "method": m,
+                "label": label,
+                "render_ms": info.render_ms,
+                "max_steps": info.max_steps,
+            }
+        )
 
     fig.suptitle(
         f"Integrator Comparison — $a={spin}$, "
