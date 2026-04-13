@@ -1,4 +1,0 @@
-XSPEC	size_t  n;
-ISPEC	size_t  n1, n2;
-PARAMS	double  alpha;
-STATES	double *x, *y, *z;

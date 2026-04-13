@@ -16,6 +16,8 @@ build/
 .venv/
 .env
 
+reference/
+
 # IDE
 .idea/
 .vscode/

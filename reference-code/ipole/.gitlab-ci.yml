@@ -1,7 +1,0 @@
-build:
-  before_script:
-    - cd tests
-    - bash download_tests.sh
-
-  script:
-    - bash run_tests.sh

@@ -1,6 +1,0 @@
-#!/bin/sh
-set -e
-
-yorick -i gyotoy.i $@
-
-exit 0
