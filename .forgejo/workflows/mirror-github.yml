@@ -4,8 +4,11 @@ on: [push]
 jobs:
   mirror:
     runs-on: ubuntu-latest
+    container:
+      image: node:20-slim
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Configure git
