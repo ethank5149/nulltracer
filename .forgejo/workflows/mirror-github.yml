@@ -5,7 +5,7 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     container:
-      image: node:20-slim
+      image: node:20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
