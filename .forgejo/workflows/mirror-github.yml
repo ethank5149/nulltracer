@@ -1,0 +1,18 @@
+name: Mirror to GitHub
+on: [push]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure git
+        run: |
+          git config user.email "actions@forgejo"
+          git config user.name "Forgejo Mirror"
+      - name: Push to GitHub mirror
+        run: |
+          git remote add github https://${{ secrets.USER_GITHUB }}:${{ secrets.PAT_GITHUB }}@github.com/${{ secrets.USER_GITHUB }}/${{ github.event.repository.name }}.git
+          git push github --mirror --force
