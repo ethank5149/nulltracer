@@ -72,23 +72,33 @@ All geodesic integration and metric evaluations use **float64** (double precisio
 
 ## Quick Start
 
-### Docker (recommended)
+### As a Python Package (recommended for analysis)
 
 ```bash
-cd server
-docker build -t nulltracer-server .
-docker run --gpus all -p 8420:8420 nulltracer-server
+pip install -e .
 ```
 
-### Local
+```python
+import nulltracer as nt
+
+# Render an image - returns (H, W, 3) uint8 numpy array
+img, info = nt.render_frame(spin=0.94, inclination_deg=30)
+
+# Pre-compile kernels to avoid first-call latency
+nt.compile_all()
+```
+
+See `notebooks/nulltracer.ipynb` for a full walkthrough.
+
+### As a Web Server (for interactive exploration)
 
 ```bash
+pip install -e ".[server]"
 cd server
-pip install -r requirements.txt
 uvicorn app:app --host 0.0.0.0 --port 8420
 ```
 
-Open `index.html` in a browser. The client auto-detects the server at `/health`.
+Open `web/index.html` in a browser. The client auto-detects the server at `/health`.
 
 ### Running Tests
 

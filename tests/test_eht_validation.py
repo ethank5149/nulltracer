@@ -1,12 +1,9 @@
 """Test EHT shadow metric extraction."""
 
 import numpy as np
-import sys, os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "server"))
-
-from eht_validation import extract_shadow_metrics, fit_circle
 import pytest
+
+from nulltracer.eht_validation import extract_shadow_metrics, fit_circle
 
 
 def test_fit_circle_synthetic():

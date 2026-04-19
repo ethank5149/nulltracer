@@ -37,12 +37,16 @@ from PIL import Image
 from pydantic import BaseModel, Field, model_validator
 
 from .cache import ImageCache
-from .renderer import CudaRenderer
 from .scenes import SceneManager
+
+from nulltracer.renderer import CudaRenderer
+from nulltracer.isco import isco_kerr, isco_kn
+from nulltracer.bloom import apply_bloom
 
 logger = logging.getLogger(__name__)
 
 # ── Pydantic request model ──────────────────────────────────
+
 
 class RenderRequest(BaseModel):
     spin: float = Field(0.6, ge=0, le=0.998)
@@ -51,7 +55,9 @@ class RenderRequest(BaseModel):
     fov: float = Field(8.0, ge=2, le=25)
     width: int = Field(1280, ge=160, le=3840)
     height: int = Field(720, ge=90, le=2160)
-    method: str = Field("rkdp8", pattern=r"^(rk4|rkdp8|kahanli8s|kahanli8s_ks|tao_yoshida4|tao_yoshida6|tao_kahan_li8)$")
+    method: str = Field(
+        "rkdp8", pattern=r"^(rk4|rkdp8|kahanli8s|kahanli8s_ks|tao_yoshida4|tao_yoshida6|tao_kahan_li8)$"
+    )
     steps: int = Field(200, ge=60, le=500)
     step_size: float = Field(0.3, ge=0.1, le=0.8)
     obs_dist: int = Field(40, ge=20, le=100)
@@ -61,18 +67,24 @@ class RenderRequest(BaseModel):
     disk_temp: float = Field(1.0, ge=0.2, le=2.5)
     star_layers: int = Field(3, ge=1, le=4)
     phi0: float = Field(0.0)
-    doppler_boost: int = Field(default=2, ge=0, le=2, description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick")
-    srgb_output: bool = Field(default=True, description="Apply IEC 61966-2-1 sRGB transfer function (proper gamma for standard displays)")
+    doppler_boost: int = Field(
+        default=2, ge=0, le=2, description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick"
+    )
+    srgb_output: bool = Field(
+        default=True, description="Apply IEC 61966-2-1 sRGB transfer function (proper gamma for standard displays)"
+    )
     disk_alpha: float = Field(default=0.95, ge=0.0, le=1.0, description="Base opacity per disk crossing")
     disk_max_crossings: int = Field(default=5, ge=1, le=20, description="Maximum disk crossings to accumulate")
     bloom_enabled: bool = Field(default=False, description="Enable Airy disk bloom post-processing")
-    bloom_radius: float = Field(default=1.0, ge=0.1, le=5.0, description="Bloom radius multiplier (1.0 = physical default)")
+    bloom_radius: float = Field(
+        default=1.0, ge=0.1, le=5.0, description="Bloom radius multiplier (1.0 = physical default)"
+    )
     format: str = Field("jpeg", pattern=r"^(jpeg|webp)$")
     quality: int = Field(85, ge=10, le=100)
 
     @model_validator(mode="after")
     def check_spin_charge_constraint(self):
-        if self.spin ** 2 + self.charge ** 2 > 1.0:
+        if self.spin**2 + self.charge**2 > 1.0:
             raise ValueError("spin² + charge² must be ≤ 1 (naked singularity constraint)")
         return self
 
@@ -84,6 +96,7 @@ class BenchRequest(BaseModel):
     at fixed 1920×1080 using all (or a subset of) integrators for
     side-by-side comparison with detailed timing statistics.
     """
+
     spin: float = Field(0.6, ge=0, le=0.998)
     charge: float = Field(0.0, ge=0, le=0.998)
     inclination: float = Field(80.0, ge=3, le=89)
@@ -97,23 +110,28 @@ class BenchRequest(BaseModel):
     disk_temp: float = Field(1.0, ge=0.2, le=2.5)
     star_layers: int = Field(3, ge=1, le=4)
     phi0: float = Field(0.0)
-    doppler_boost: int = Field(default=2, ge=0, le=2, description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick")
+    doppler_boost: int = Field(
+        default=2, ge=0, le=2, description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick"
+    )
     srgb_output: bool = Field(default=True, description="Apply IEC 61966-2-1 sRGB transfer function")
     disk_alpha: float = Field(default=0.95, ge=0.0, le=1.0, description="Base opacity per disk crossing")
     disk_max_crossings: int = Field(default=5, ge=1, le=20, description="Maximum disk crossings to accumulate")
     bloom_enabled: bool = Field(default=False, description="Enable Airy disk bloom post-processing")
-    bloom_radius: float = Field(default=1.0, ge=0.1, le=5.0, description="Bloom radius multiplier (1.0 = physical default)")
+    bloom_radius: float = Field(
+        default=1.0, ge=0.1, le=5.0, description="Bloom radius multiplier (1.0 = physical default)"
+    )
     methods: Optional[list[str]] = Field(
-        None,
-        description="Subset of integrator methods to benchmark. Defaults to all available methods."
+        None, description="Subset of integrator methods to benchmark. Defaults to all available methods."
     )
     format: str = Field("webp", pattern=r"^(jpeg|webp|png)$")
     quality: int = Field(90, ge=10, le=100)
-    include_images: bool = Field(True, description="Include base64-encoded images in response. Set false for stats-only.")
+    include_images: bool = Field(
+        True, description="Include base64-encoded images in response. Set false for stats-only."
+    )
 
     @model_validator(mode="after")
     def check_spin_charge_constraint(self):
-        if self.spin ** 2 + self.charge ** 2 > 1.0:
+        if self.spin**2 + self.charge**2 > 1.0:
             raise ValueError("spin² + charge² must be ≤ 1 (naked singularity constraint)")
         return self
 
@@ -149,7 +167,8 @@ async def startup_event():
         compiled = sum(1 for v in compile_results.values() if v)
         logger.info(
             "Pre-compiled %d/%d integrator kernels",
-            compiled, len(compile_results),
+            compiled,
+            len(compile_results),
         )
     except Exception as e:
         raise RuntimeError(f"CUDA renderer failed to initialize: {e}")
@@ -179,6 +198,7 @@ async def purge_cache():
 
 
 # ── Scene management endpoints ──────────────────────────────
+
 
 @app.get("/scenes")
 async def list_scenes():
@@ -280,7 +300,11 @@ async def render(req: RenderRequest):
 
     logger.info(
         "CUDA rendered %dx%d %s in %.1fms (%d bytes)",
-        width, height, req.format, render_ms, len(image_bytes),
+        width,
+        height,
+        req.format,
+        render_ms,
+        len(image_bytes),
     )
 
     return Response(
@@ -376,15 +400,18 @@ async def bench(req: BenchRequest):
 
     async def event_generator():
         # Emit started event
-        yield _sse_event("started", {
-            "bench_id": bench_id,
-            "timestamp": timestamp,
-            "gpu": renderer.gpu_info,
-            "resolution": {"width": BENCH_WIDTH, "height": BENCH_HEIGHT},
-            "parameters": input_params,
-            "methods": methods,
-            "total": len(methods),
-        })
+        yield _sse_event(
+            "started",
+            {
+                "bench_id": bench_id,
+                "timestamp": timestamp,
+                "gpu": renderer.gpu_info,
+                "resolution": {"width": BENCH_WIDTH, "height": BENCH_HEIGHT},
+                "parameters": input_params,
+                "methods": methods,
+                "total": len(methods),
+            },
+        )
 
         results = []
         t_bench_start = time.monotonic()
@@ -393,13 +420,16 @@ async def bench(req: BenchRequest):
         async with gpu_lock:
             for idx, method in enumerate(methods):
                 # Emit progress event before rendering
-                yield _sse_event("progress", {
-                    "method": method,
-                    "index": idx + 1,
-                    "total": len(methods),
-                    "status": "rendering",
-                    "elapsed_ms": round((time.monotonic() - t_bench_start) * 1000.0, 2),
-                })
+                yield _sse_event(
+                    "progress",
+                    {
+                        "method": method,
+                        "index": idx + 1,
+                        "total": len(methods),
+                        "status": "rendering",
+                        "elapsed_ms": round((time.monotonic() - t_bench_start) * 1000.0, 2),
+                    },
+                )
 
                 render_params = {**base_params, "method": method}
                 result_entry = {"method": method}
@@ -433,15 +463,17 @@ async def bench(req: BenchRequest):
                     image_bytes = buf.getvalue()
                     encode_ms = (time.monotonic() - t_enc_start) * 1000.0
 
-                    result_entry.update({
-                        "status": "ok",
-                        "kernel_ms": round(kernel_ms, 2),
-                        "render_ms": round(total_render_ms, 2),
-                        "encode_ms": round(encode_ms, 2),
-                        "total_ms": round(total_render_ms + encode_ms, 2),
-                        "gpu_mem_alloc_bytes": gpu_mem_alloc,
-                        "image_size_bytes": len(image_bytes),
-                    })
+                    result_entry.update(
+                        {
+                            "status": "ok",
+                            "kernel_ms": round(kernel_ms, 2),
+                            "render_ms": round(total_render_ms, 2),
+                            "encode_ms": round(encode_ms, 2),
+                            "total_ms": round(total_render_ms + encode_ms, 2),
+                            "gpu_mem_alloc_bytes": gpu_mem_alloc,
+                            "image_size_bytes": len(image_bytes),
+                        }
+                    )
 
                     if req.include_images:
                         b64 = base64.b64encode(image_bytes).decode("ascii")
@@ -451,17 +483,19 @@ async def bench(req: BenchRequest):
 
                 except Exception as e:
                     logger.error("Bench render failed for method '%s': %s", method, e, exc_info=True)
-                    result_entry.update({
-                        "status": "error",
-                        "error": str(e),
-                        "kernel_ms": None,
-                        "render_ms": None,
-                        "encode_ms": None,
-                        "total_ms": None,
-                        "gpu_mem_alloc_bytes": None,
-                        "image_size_bytes": None,
-                        "image_base64": None,
-                    })
+                    result_entry.update(
+                        {
+                            "status": "error",
+                            "error": str(e),
+                            "kernel_ms": None,
+                            "render_ms": None,
+                            "encode_ms": None,
+                            "total_ms": None,
+                            "gpu_mem_alloc_bytes": None,
+                            "image_size_bytes": None,
+                            "image_base64": None,
+                        }
+                    )
 
                 results.append(result_entry)
 
@@ -481,7 +515,9 @@ async def bench(req: BenchRequest):
                 "fastest_kernel_ms": fastest["kernel_ms"],
                 "slowest_method": slowest["method"],
                 "slowest_kernel_ms": slowest["kernel_ms"],
-                "speedup_ratio": round(slowest["kernel_ms"] / fastest["kernel_ms"], 2) if fastest["kernel_ms"] > 0 else None,
+                "speedup_ratio": round(slowest["kernel_ms"] / fastest["kernel_ms"], 2)
+                if fastest["kernel_ms"] > 0
+                else None,
                 "methods_ok": len(ok_results),
                 "methods_failed": len(results) - len(ok_results),
             }
@@ -495,11 +531,14 @@ async def bench(req: BenchRequest):
         )
 
         # Emit complete event with summary
-        yield _sse_event("complete", {
-            "bench_id": bench_id,
-            "total_bench_time_ms": round(total_bench_ms, 2),
-            "summary": summary,
-        })
+        yield _sse_event(
+            "complete",
+            {
+                "bench_id": bench_id,
+                "total_bench_time_ms": round(total_bench_ms, 2),
+                "summary": summary,
+            },
+        )
 
     return StreamingResponse(
         event_generator(),
@@ -514,6 +553,7 @@ async def bench(req: BenchRequest):
 
 # ── Ray request model ────────────────────────────────────────
 
+
 class RayRequest(BaseModel):
     """Request model for the /ray endpoint.
 
@@ -525,17 +565,25 @@ class RayRequest(BaseModel):
       - pixel: specify (ix, iy) pixel coordinates
       - impact_parameter: specify (alpha, beta) directly in radians
     """
+
     # ── Ray specification ──────────────────────────────────
-    mode: str = Field("pixel", pattern=r"^(pixel|impact_parameter)$",
-                      description="Input mode: 'pixel' for screen coordinates, 'impact_parameter' for direct angles")
+    mode: str = Field(
+        "pixel",
+        pattern=r"^(pixel|impact_parameter)$",
+        description="Input mode: 'pixel' for screen coordinates, 'impact_parameter' for direct angles",
+    )
 
     # Pixel mode inputs
     ix: Optional[int] = Field(None, ge=0, description="Pixel x-coordinate (required if mode='pixel')")
     iy: Optional[int] = Field(None, ge=0, description="Pixel y-coordinate (required if mode='pixel')")
 
     # Impact parameter mode inputs
-    alpha: Optional[float] = Field(None, description="Horizontal impact parameter in radians (required if mode='impact_parameter')")
-    beta: Optional[float] = Field(None, description="Vertical impact parameter in radians (required if mode='impact_parameter')")
+    alpha: Optional[float] = Field(
+        None, description="Horizontal impact parameter in radians (required if mode='impact_parameter')"
+    )
+    beta: Optional[float] = Field(
+        None, description="Vertical impact parameter in radians (required if mode='impact_parameter')"
+    )
 
     # ── Black hole parameters ──────────────────────────────
     spin: float = Field(0.6, ge=0, le=0.998)
@@ -543,7 +591,9 @@ class RayRequest(BaseModel):
     inclination: float = Field(80.0, ge=3, le=89)
 
     # ── Integration parameters ─────────────────────────────
-    method: str = Field("rkdp8", pattern=r"^(rk4|rkdp8|kahanli8s|kahanli8s_ks|tao_yoshida4|tao_yoshida6|tao_kahan_li8)$")
+    method: str = Field(
+        "rkdp8", pattern=r"^(rk4|rkdp8|kahanli8s|kahanli8s_ks|tao_yoshida4|tao_yoshida6|tao_kahan_li8)$"
+    )
     fov: float = Field(8.0, ge=2, le=25)
     width: int = Field(320, ge=16, le=3840)
     height: int = Field(180, ge=16, le=2160)
@@ -551,8 +601,9 @@ class RayRequest(BaseModel):
     step_size: float = Field(0.3, ge=0.1, le=0.8)
     obs_dist: int = Field(40, ge=20, le=100)
     phi0: float = Field(0.0)
-    doppler_boost: int = Field(default=2, ge=0, le=2,
-                               description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick")
+    doppler_boost: int = Field(
+        default=2, ge=0, le=2, description="Doppler boost mode: 0=off, 1=g^3 optically thin, 2=g^4 optically thick"
+    )
     srgb_output: bool = Field(default=True, description="Apply IEC 61966-2-1 sRGB transfer function")
     disk_alpha: float = Field(default=0.95, ge=0.0, le=1.0, description="Base opacity per disk crossing")
     disk_max_crossings: int = Field(default=5, ge=1, le=20, description="Maximum disk crossings to accumulate")
@@ -563,12 +614,11 @@ class RayRequest(BaseModel):
     # ── Output control ─────────────────────────────────────
     include_trajectory: bool = Field(True, description="Include full trajectory arrays in response")
     include_disk_physics: bool = Field(True, description="Include disk crossing physics in response")
-    max_trajectory_points: int = Field(200, ge=10, le=500,
-                                       description="Maximum number of trajectory points to record")
+    max_trajectory_points: int = Field(200, ge=10, le=500, description="Maximum number of trajectory points to record")
 
     @model_validator(mode="after")
     def check_spin_charge_constraint(self):
-        if self.spin ** 2 + self.charge ** 2 > 1.0:
+        if self.spin**2 + self.charge**2 > 1.0:
             raise ValueError("spin² + charge² must be ≤ 1 (naked singularity constraint)")
         return self
 
@@ -639,9 +689,7 @@ async def ray(req: RayRequest):
 
     try:
         async with gpu_lock:
-            result = await asyncio.get_running_loop().run_in_executor(
-                None, renderer.trace_single_ray, params
-            )
+            result = await asyncio.get_running_loop().run_in_executor(None, renderer.trace_single_ray, params)
     except Exception as e:
         logger.error("Ray trace failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ray trace failed: {e}")
@@ -674,7 +722,10 @@ async def ray(req: RayRequest):
 
     logger.info(
         "Ray traced: mode=%s method=%s (effective=%s) spin=%.3f term=%s steps=%d/%d crossings=%d in %.1fms",
-        req.mode, req.method, result["spacetime"]["effective_method"], req.spin,
+        req.mode,
+        req.method,
+        result["spacetime"]["effective_method"],
+        req.spin,
         result["termination"]["reason"],
         result["termination"]["steps_used"],
         result["termination"]["steps_max"],
@@ -695,7 +746,7 @@ async def stream(websocket: WebSocket):
     logger.info("WebSocket client connected: %s", client_info)
 
     # Shared state between receiver and render loop
-    latest_request = None        # Most recent validated (render_params, fmt, quality, width, height)
+    latest_request = None  # Most recent validated (render_params, fmt, quality, width, height)
     request_event = asyncio.Event()  # Signaled when a new request arrives
     closed = False
 

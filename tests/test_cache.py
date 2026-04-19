@@ -1,11 +1,6 @@
 """Test LRU cache behavior."""
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "server"))
-
-from cache import ImageCache
+from server.cache import ImageCache
 
 import pytest
 

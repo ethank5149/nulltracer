@@ -1,11 +1,6 @@
 """Test ISCO calculations against known analytic results."""
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "server"))
-
-from isco import isco_kerr
+from nulltracer.isco import isco_kerr
 
 import math
 import pytest
@@ -26,9 +21,7 @@ KNOWN_ISCO = [
 def test_isco_kerr(spin, expected, tol):
     """ISCO radius matches Bardeen-Press-Teukolsky formula."""
     result = isco_kerr(spin)
-    assert abs(result - expected) < tol, (
-        f"ISCO(a={spin}): got {result}, expected {expected} ± {tol}"
-    )
+    assert abs(result - expected) < tol, f"ISCO(a={spin}): got {result}, expected {expected} ± {tol}"
 
 
 def test_schwarzschild_isco_exact():
@@ -43,6 +36,5 @@ def test_isco_monotonically_decreasing():
     iscos = [isco_kerr(a) for a in spins]
     for i in range(len(iscos) - 1):
         assert iscos[i] > iscos[i + 1], (
-            f"ISCO not monotonically decreasing: "
-            f"ISCO(a={spins[i]})={iscos[i]} vs ISCO(a={spins[i + 1]})={iscos[i + 1]}"
+            f"ISCO not monotonically decreasing: ISCO(a={spins[i]})={iscos[i]} vs ISCO(a={spins[i + 1]})={iscos[i + 1]}"
         )
