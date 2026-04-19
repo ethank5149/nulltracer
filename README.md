@@ -10,15 +10,13 @@ Nulltracer is a CUDA-powered application that visualizes black holes by tracing 
 
 ## Gallery
 
-<!-- TODO: Replace placeholders with actual renders once GPU server is available -->
-
 | Schwarzschild (a=0) — checker background | Extreme Kerr (a=0.998) — edge-on |
 |---|---|
 | ![Schwarzschild](docs/images/gallery-schwarzschild.jpg) | ![Extreme Kerr](docs/images/gallery-extreme-kerr.jpg) |
 
-| Kerr-Newman (a=0.5, Q=0.7) | Additional view |
+| Kerr-Newman (a=0.5, Q=0.7) | Face-on Kerr |
 |---|---|
-| ![Kerr-Newman](docs/images/gallery-charged.jpg) | <!-- TODO: fourth render --> |
+| ![Kerr-Newman](docs/images/gallery-charged.jpg) | ![Face-on](docs/images/hero.jpg) |
 
 ## Physics & Numerical Methods
 
