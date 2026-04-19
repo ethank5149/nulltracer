@@ -5,18 +5,19 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Download repository
+        run: |
+          echo "Cloning from git.indecisivephysicist.space"
+          git clone --bare https://git.indecisivephysicist.space/ethank5149/nulltracer.git /repo.git
 
       - name: Push to GitHub
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB }}
           GH_USER: ${{ secrets.USER_GITHUB }}
         run: |
+          cd /repo.git
+          git remote add github "https://${GH_USER}:${GH_TOKEN}@github.com/${GH_USER}/nulltracer.git"
           git config user.email "actions@forgejo"
           git config user.name "Forgejo Mirror"
-          git remote add github "https://${GH_USER}:${GH_TOKEN}@github.com/${GH_USER}/${GITHUB_REPOSITORY}.git"
           git push github refs/heads/refactor/package-migration:refs/heads/refactor/package-migration
           git push github refs/heads/legacy:refs/heads/legacy
