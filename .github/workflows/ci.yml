@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [refactor/package-migration]
   pull_request:
-    branches: [master]
+    branches: [refactor/package-migration]
 
 jobs:
   lint-and-test:
