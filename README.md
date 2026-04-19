@@ -92,6 +92,13 @@ uvicorn app:app --host 0.0.0.0 --port 8420
 
 Open `index.html` in a browser. The client auto-detects the server at `/health`.
 
+### Running Tests
+
+```bash
+pip install -r tests/requirements-test.txt
+pytest tests/ -v
+```
+
 ## API Reference
 
 ### Rendering

@@ -1,5 +1,8 @@
 # Nulltracer — GPU-Accelerated Curved Spacetime Rendering Architecture
 
+> **Note:** This document describes the internal architecture of Nulltracer.
+> For usage and deployment, see [README.md](README.md) and [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## 1. Overview
 
 This document describes the CUDA-only rendering architecture for Nulltracer. The system consists of a lightweight browser client that displays server-rendered frames from a GPU-accelerated backend. All rendering is performed server-side using CUDA compute kernels; there is no local client-side rendering.
@@ -489,7 +492,7 @@ Not recommended for:
 }
 ```
 
-**Pydantic model** ([`app.py`](server/app.py:30)):
+**RenderRequest model** ([`server/app.py`](server/app.py)):
 
 ```python
 class RenderRequest(BaseModel):
@@ -635,7 +638,7 @@ General-purpose single-ray tracing endpoint. Traces one photon geodesic through 
 }
 ```
 
-**Pydantic model** ([`app.py`](server/app.py:444)):
+**RayRequest model** ([`server/app.py`](server/app.py)):
 
 ```python
 class RayRequest(BaseModel):
