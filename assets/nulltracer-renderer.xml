@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>nulltracer-renderer</Name>
+  <Repository>nulltracer-renderer</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project>https://github.com/nulltracer</Project>
+  <Overview>
+    GPU-accelerated ray tracing through curved spacetimes — server-side renderer.
+    Provides a FastAPI endpoint that renders black hole visualizations using
+    CUDA compute kernels, enabling mobile devices to offload heavy GPU work.
+    
+    Pair with your existing Caddy reverse proxy to serve the full application.
+    See the Caddyfile in the nulltracer directory for the configuration snippet.
+    
+    SETUP:
+    1. Build the image first:
+       docker build -t nulltracer-renderer /mnt/user/scripts/nulltracer/server/
+    2. Add this container via the Unraid Docker tab.
+    3. Add the nulltracer site block to your existing Caddy configuration.
+    4. Mount /mnt/user/scripts/nulltracer as /srv/nulltracer in your Caddy container.
+  </Overview>
+  <Category>Productivity: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8420]/health</WebUI>
+  <TemplateURL/>
+  <Icon>http://nulltracer.indecisivephysicist.space:8090/nulltracer-icon.png</Icon>
+  <ExtraParams>--runtime=nvidia --gpus all</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>
+    NVIDIA GPU with driver support.
+    NVIDIA Container Toolkit (nvidia-docker2) installed on Unraid.
+    Build the image first: docker build -t nulltracer-renderer /mnt/user/scripts/nulltracer/server/
+  </Requires>
+  <Config
+    Name="Web API Port"
+    Target="8420"
+    Default="8420"
+    Mode="tcp"
+    Description="FastAPI server port for /render and /health endpoints"
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8420</Config>
+  <Config
+    Name="NVIDIA Visible Devices"
+    Target="NVIDIA_VISIBLE_DEVICES"
+    Default="all"
+    Mode=""
+    Description="Which NVIDIA GPUs to expose (use 'all' or a specific GPU UUID)"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">all</Config>
+  <Config
+    Name="NVIDIA Driver Capabilities"
+    Target="NVIDIA_DRIVER_CAPABILITIES"
+    Default="all"
+    Mode=""
+    Description="NVIDIA driver capabilities needed for CUDA compute"
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">all</Config>
+</Container>
