@@ -9,9 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        run: |
-          git clone https://git.indecisivephysicist.space/ethank5149/nulltracer.git /repo
-          cd /repo
+        uses: actions/checkout@v4
 
       - name: Set up Python
         run: |
@@ -19,22 +17,18 @@ jobs:
 
       - name: Install package
         run: |
-          cd /repo
           pip3 install --upgrade pip
           pip3 install -e .[dev] || true
 
       - name: Run tests
         run: |
-          cd /repo
           python3 -m pytest tests/ -v || true
 
       - name: Lint Python
         run: |
           pip3 install ruff
-          cd /repo
           ruff check nulltracer/ --select=E,F,W --ignore=E501
 
       - name: Validate HTML
         run: |
-          cd /repo
           python3 -c "from html.parser import HTMLParser; p = HTMLParser(); open('web/index.html').close() or print('web/index.html validated')"
