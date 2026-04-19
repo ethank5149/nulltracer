@@ -6,7 +6,7 @@
 
 Nulltracer is a CUDA-powered application that visualizes black holes by tracing null geodesics through Kerr-Newman spacetime. It renders photon rings, gravitational lensing, accretion disk Doppler effects, and frame-dragging with float64 precision. A FastAPI server performs all computation on GPU; a thin browser client provides interactive parameter controls.
 
-[![CI](https://git.indecisivephysicist.space/ethank5149/nulltracer/actions/workflows/ci.yml/badge.svg)](https://git.indecisivephysicist.space/ethank5149/nulltracer/-/actions)
+[![CI](https://git.indecisivephysicist.space/ethank5149/nulltracer/actions/workflows/ci.yml/badge.svg?workflow=ci.yml)](https://git.indecisivephysicist.space/ethank5149/nulltracer/-/actions?workflow=ci.yml)
 
 ## Gallery
 
