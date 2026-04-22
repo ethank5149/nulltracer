@@ -17,13 +17,13 @@ try:
     import cupy as cp
     from cupyx.scipy.signal import fftconvolve
     from cupyx.scipy.ndimage import zoom as cp_zoom
+    from cupyx.scipy.special import j1
     CUPY_AVAILABLE = True
 except ImportError:
     from scipy.signal import fftconvolve
+    from scipy.special import j1
     import cv2
     CUPY_AVAILABLE = False
-
-from scipy.special import j1
 
 logger = logging.getLogger(__name__)
 

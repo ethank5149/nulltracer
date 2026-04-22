@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 
+scipy = pytest.importorskip("scipy")
+
 from nulltracer.eht_validation import extract_shadow_metrics, fit_circle
 
 

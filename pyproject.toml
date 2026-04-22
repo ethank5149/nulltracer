@@ -67,6 +67,9 @@ include = ["nulltracer*"]
 [tool.setuptools.package-data]
 nulltracer = ["kernels/*.cu", "kernels/integrators/*.cu"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.ruff]
 line-length = 120
 select = ["E", "F", "W"]
