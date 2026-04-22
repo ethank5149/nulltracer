@@ -133,7 +133,7 @@ __device__ void geoRHS(
  * This is the common setup shared by all integrators.
  */
 __device__ void initRay(
-    int ix, int iy, const RenderParams &p,
+    double ixf, double iyf, const RenderParams &p,
     double *r, double *th, double *phi,
     double *pr, double *pth,
     double *b_out, double *rp_out,
@@ -146,8 +146,8 @@ __device__ void initRay(
      * iy=0 maps to uy≈-1 (bottom of image).
      * The caller (renderer.py) applies np.flipud() to produce standard
      * top-to-bottom image order. */
-    double ux = (2.0 * (ix + 0.5) / p.width  - 1.0);
-    double uy = (2.0 * (iy + 0.5) / p.height - 1.0);
+    double ux = (2.0 * ixf / p.width  - 1.0);
+    double uy = (2.0 * iyf / p.height - 1.0);
 
     double alpha = ux * p.fov * asp;
     double beta  = uy * p.fov;
@@ -322,9 +322,19 @@ __device__ float aces_curve(float x) {
 }
 
 __device__ void blendColor(float sr, float sg, float sb, float sa,
-                           float *dr, float *dg, float *db, float *da) {
+                            float *dr, float *dg, float *db, float *da) {
     float one_minus_da = 1.0f - *da;
     float contrib = sa * one_minus_da;
+    *dr += sr * contrib;
+    *dg += sg * contrib;
+    *db += sb * contrib;
+    *da += contrib;
+}
+
+__device__ void blendColor_d(double sr, double sg, double sb, double sa,
+                           double *dr, double *dg, double *db, double *da) {
+    double one_minus_da = 1.0 - *da;
+    double contrib = sa * one_minus_da;
     *dr += sr * contrib;
     *dg += sg * contrib;
     *db += sb * contrib;
@@ -378,84 +388,8 @@ __device__ void postProcess(float *cr, float *cg, float *cb,
 
 
 /* ============================================================
- *  SYMPLECTIC SPLITTING FUNCTIONS for Kahan-Li S10 integrator
+ *  HAMILTONIAN CORRECTION
  * ============================================================ */
-
-__device__ void geoVelocity(
-    double r, double th, double pr, double pth,
-    double a, double b, double Q2,
-    double *dr, double *dth, double *dphi
-) {
-    double sth = sin(th), cth = cos(th);
-    double s2 = sth * sth + S2_EPS;
-    double a2 = a * a, r2 = r * r;
-    double sig = r2 + a2 * cth * cth;
-    double del = r2 - 2.0 * r + a2 + Q2;
-    double sdel = fmax(del, 1e-14);
-    double w = 2.0 * r - Q2;
-    double isig = 1.0 / sig;
-    double iSD = 1.0 / (sig * sdel);
-    double is2 = 1.0 / s2;
-
-    /* g^rr · p_r */
-    *dr  = sdel * isig * pr;
-    /* g^θθ · p_θ */
-    *dth = isig * pth;
-    /* g^φφ · b + g^tφ · E  (E = 1 by affine normalization) */
-    *dphi = (sig - w) * iSD * is2 * b - (-a * w * iSD);
-}
-
-
-__device__ void geoForce(
-    double r, double th, double pr, double pth,
-    double a, double b, double Q2,
-    double *dpr, double *dpth
-) {
-    double sth = sin(th), cth = cos(th);
-    double s2 = sth * sth + S2_EPS;
-    double c2 = cth * cth;
-    double a2 = a * a;
-    double r2 = r * r;
-    double sig = r2 + a2 * c2;
-    double del = r2 - 2.0 * r + a2 + Q2;
-    double sdel = fmax(del, 1e-14);
-    double rpa2 = r2 + a2;
-    double w = 2.0 * r - Q2;
-    double A_ = rpa2 * rpa2 - sdel * a2 * s2;
-    double isig = 1.0 / sig;
-    double SD = sig * sdel;
-    double iSD = 1.0 / SD;
-    double is2 = 1.0 / s2;
-
-    /* ∂/∂r derivatives for dp_r/dλ */
-    double dsig_r = 2.0 * r;
-    double ddel_r = 2.0 * r - 2.0;
-    double dA_r = 4.0 * r * rpa2 - ddel_r * a2 * s2;
-    double dSD_r = dsig_r * sdel + sig * ddel_r;
-    double dgtt_r = -(dA_r * SD - A_ * dSD_r) / (SD * SD);
-    double dgtf_r = -a * (2.0 * SD - w * dSD_r) / (SD * SD);
-    double dgrr_r = (ddel_r * sig - sdel * dsig_r) / (sig * sig);
-    double dgthth_r = -dsig_r * isig * isig;
-    double num_ff = sig - w;
-    double den_ff = SD * s2;
-    double dgff_r = ((dsig_r - 2.0) * den_ff - num_ff * dSD_r * s2) / (den_ff * den_ff);
-    *dpr = -0.5 * (dgtt_r - 2.0 * b * dgtf_r + dgrr_r * pr * pr
-                   + dgthth_r * pth * pth + dgff_r * b * b);
-
-    /* ∂/∂θ derivatives for dp_θ/dλ */
-    double dsig_th = -2.0 * a2 * sth * cth;
-    double ds2_th = 2.0 * sth * cth;
-    double dA_th = -sdel * a2 * ds2_th;
-    double dSD_th = dsig_th * sdel;
-    double dgtt_th = -(dA_th * SD - A_ * dSD_th) / (SD * SD);
-    double dgtf_th = a * w * dSD_th / (SD * SD);
-    double dgrr_th = -sdel * dsig_th / (sig * sig);
-    double dgthth_th = -dsig_th * isig * isig;
-    double dgff_th = (dsig_th * den_ff - num_ff * (dsig_th * sdel * s2 + SD * ds2_th))
-                     / (den_ff * den_ff);
-    *dpth = -0.5 * (dgtt_th - 2.0 * b * dgtf_th + dgrr_th * pr * pr
-                    + dgthth_th * pth * pth + dgff_th * b * b);
-}
 
 
 __device__ void projectHamiltonian(
@@ -1022,6 +956,109 @@ __device__ void accumulate_volume_emission(
     double r, double th, double he, double a,
     double r_isco, double disk_outer,
     float *acc_r, float *acc_g, float *acc_b, float *acc_a
+);
+
+/* ============================================================
+ *  ADAPTIVE RKDP5(4) INTEGRATOR
+ * ============================================================ */
+
+// Dormand-Prince 5(4) coefficients
+static __constant__ double DP5_C[7] = {
+    0.0, 1.0/5.0, 3.0/10.0, 4.0/5.0, 8.0/9.0, 1.0, 1.0
+};
+static __constant__ double DP5_A[7][6] = {
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {1.0/5.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {3.0/40.0, 9.0/40.0, 0.0, 0.0, 0.0, 0.0},
+    {44.0/45.0, -56.0/15.0, 32.0/9.0, 0.0, 0.0, 0.0},
+    {19372.0/6561.0, -25360.0/2187.0, 64448.0/6561.0, -212.0/729.0, 0.0, 0.0},
+    {9017.0/3168.0, -355.0/33.0, 46732.0/5247.0, 49.0/176.0, -5103.0/18656.0, 0.0},
+    {35.0/384.0, 0.0, 500.0/1113.0, 125.0/192.0, -2187.0/6784.0, 11.0/84.0}
+};
+// 5th order solution
+static __constant__ double DP5_B[7] = {
+    35.0/384.0, 0.0, 500.0/1113.0, 125.0/192.0, -2187.0/6784.0, 11.0/84.0, 0.0
+};
+// 4th order solution (for error estimation)
+static __constant__ double DP5_B_ERR[7] = {
+    5179.0/57600.0, 0.0, 7571.0/16695.0, 393.0/640.0, -92097.0/339200.0, 187.0/2100.0, 1.0/40.0
+};
+
+struct StateVector {
+    double r, th, phi, pr, pth;
+};
+
+__device__ void add_states(StateVector &s, const StateVector &ds, double scale) {
+    s.r   += ds.r * scale;
+    s.th  += ds.th * scale;
+    s.phi += ds.phi * scale;
+    s.pr  += ds.pr * scale;
+    s.pth += ds.pth * scale;
+}
+
+__device__ void get_derivatives(const StateVector &s, double a, double b, double Q2, StateVector &derivs) {
+    geoRHS(s.r, s.th, s.pr, s.pth, a, b, Q2, &derivs.r, &derivs.th, &derivs.phi, &derivs.pr, &derivs.pth);
+}
+
+__device__ bool rkf45_step(
+    StateVector &y, double &h, double a, double b, double Q2,
+    double tol, double h_min, double h_max
+) {
+    const double safety = 0.9, pgrow = -0.2, pshrink = -0.25;
+
+    StateVector k[7];
+    StateVector y_temp = y;
+
+    get_derivatives(y_temp, a, b, Q2, k[0]);
+
+    for (int i = 1; i < 7; ++i) {
+        y_temp = y;
+        for (int j = 0; j < i; ++j) {
+            if (DP5_A[i][j] != 0.0) {
+                add_states(y_temp, k[j], h * DP5_A[i][j]);
+            }
+        }
+        get_derivatives(y_temp, a, b, Q2, k[i]);
+    }
+
+    StateVector y_err = {0,0,0,0,0};
+    for(int i=0; i<7; ++i) {
+        double err_coeff = DP5_B[i] - DP5_B_ERR[i];
+        add_states(y_err, k[i], h * err_coeff);
+    }
+
+    double err_r   = fabs(y_err.r   / (tol * (1.0 + fabs(y.r))));
+    double err_th  = fabs(y_err.th  / (tol * (1.0 + fabs(y.th))));
+    double err_pr  = fabs(y_err.pr  / (tol * (1.0 + fabs(y.pr))));
+    double err_pth = fabs(y_err.pth / (tol * (1.0 + fabs(y.pth))));
+    double error = fmax(fmax(err_r, err_th), fmax(err_pr, err_pth));
+
+    if (error <= 1.0) {
+        StateVector y_update = {0,0,0,0,0};
+        for (int i = 0; i < 7; ++i) {
+             add_states(y_update, k[i], h * DP5_B[i]);
+        }
+        add_states(y, y_update, 1.0);
+
+        if (error == 0.0) h *= 2.0;
+        else h *= safety * pow(error, pgrow);
+        
+        h = fmin(h, h_max);
+        return true;
+    } else {
+        h *= fmax(safety * pow(error, pshrink), 0.1);
+        h = fmax(h, h_min);
+        return false;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════
+ * Volumetric emission: hot corona + relativistic jet
+ * ═══════════════════════════════════════════════════════════ */
+__device__ void accumulate_volume_emission(
+    double r, double th, double he, double a,
+    double r_isco, double disk_outer,
+    double *acc_r, double *acc_g, double *acc_b, double *acc_a
 ) {
     double cth = cos(th), sth = sin(th);
     double r_cyl = r * fabs(sth);
@@ -1030,68 +1067,45 @@ __device__ void accumulate_volume_emission(
     if (r_cyl > r_horizon * 1.5 && r_cyl < disk_outer * 0.7 && r > r_horizon * 1.3) {
         double scale_h = 0.3 * r_cyl;
         double rho = exp(-z * z / (2.0 * scale_h * scale_h));
-        float opacity = (float)(rho * he * 0.03 / r);
-        opacity = fminf(opacity, 0.005f);
-        blendColor(0.80f, 0.50f, 0.25f, opacity,
+        double opacity = (rho * he * 0.03 / r);
+        opacity = fmin(opacity, 0.005);
+        blendColor_d(0.80, 0.50, 0.25, opacity,
                    acc_r, acc_g, acc_b, acc_a);
     }
     if (fabs(cth) > 0.90 && r > r_horizon * 1.5 && r < 30.0) {
         double axis_dist = 1.0 - fabs(cth);
         double jet_profile = exp(-axis_dist * axis_dist / 0.003);
-        float opacity = (float)(jet_profile * he * 0.015 / r);
-        opacity = fminf(opacity, 0.004f);
-        blendColor(0.30f, 0.50f, 1.00f, opacity,
+        double opacity = (jet_profile * he * 0.015 / r);
+        opacity = fmin(opacity, 0.004);
+        blendColor_d(0.30, 0.50, 1.00, opacity,
                    acc_r, acc_g, acc_b, acc_a);
     }
 }
 
-/* ============================================================
- *  KAHANLI8S — KAHAN-LI 8th-ORDER SYMPLECTIC INTEGRATOR WITH
- *  SUNDMAN (MINO TIME) TRANSFORMATION
- * ============================================================ */
+/* =================================================================
+ *  ADAPTIVE SAMPLING KERNEL
+ * ================================================================= */
 
-static __constant__ double KL8S_W8[8] = {
-     0.74167036435061295345,
-    -0.40910082580003159400,
-     0.19075471029623837995,
-    -0.57386247111608226666,
-     0.29906418130365592384,
-     0.33462491824529818378,
-     0.31529309239676659663,
-    -0.79688793935291635402
+/* Structure to hold a color value. */
+struct Color {
+    float r, g, b;
 };
 
-static __constant__ double KL8S_D8[8] = {
-     0.37083518217530647672,
-     0.16628476927529067972,
-    -0.10917305775189660702,
-    -0.19155388040992194336,
-    -0.13739914490621317141,
-     0.31684454977447705381,
-     0.32495900532103239020,
-    -0.24079742347807487870
-};
-
-__device__ __forceinline__ void kahan_add(
-    double *sum, double *comp, double delta
+/* __device__ function to trace a single ray and return its color.
+ * This is the refactored core of the old trace_geodesics kernel. */
+__device__ void trace_single_ray(
+    double ixf, double iyf, const RenderParams &p, const float *skymap,
+    Color &out_color
 ) {
-    double y = delta - *comp;
-    double t = *sum + y;
-    *comp = (t - *sum) - y;
-    *sum = t;
-}
-
-extern "C" __global__
-void trace_geodesics(const RenderParams *pp, unsigned char *output, const float *skymap) {
-    const RenderParams &p = *pp;
-    int ix = blockIdx.x * blockDim.x + threadIdx.x;
-    int iy = blockIdx.y * blockDim.y + threadIdx.y;
     int W = (int)p.width, H = (int)p.height;
-    if (ix >= W || iy >= H) return;
+    if (ixf < 0 || ixf >= W || iyf < 0 || iyf >= H) {
+        out_color = {0.0f, 0.0f, 0.0f};
+        return;
+    }
 
     double r, th, phi, pr, pth, b, rp;
     float alpha, beta;
-    initRay(ix, iy, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta);
+    initRay(ixf, iyf, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta);
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
@@ -1100,107 +1114,102 @@ void trace_geodesics(const RenderParams *pp, unsigned char *output, const float 
     int bg_mode = (int)p.bg_mode;
     int star_layers = (int)p.star_layers;
     int show_grid = (int)p.show_grid;
-    float acc_r = 0.0f, acc_g = 0.0f, acc_b = 0.0f, acc_a = 0.0f;
+    double acc_r = 0.0, acc_g = 0.0, acc_b = 0.0, acc_a = 0.0;
     int disk_crossings = 0;
     int max_crossings = (int)p.disk_max_crossings;
     float base_alpha = (float)p.disk_alpha;
     bool done = false;
 
-    double r_comp = 0.0, th_comp = 0.0, phi_comp = 0.0;
-    double pr_comp = 0.0, pth_comp = 0.0;
+    StateVector y = {r, th, phi, pr, pth};
+    double h = -p.step_size; // Initial step size (negative for backwards integration)
+    double h_min = h / 1000.0;
+    double h_max = -h / 1000.0; // h is negative
+    double tol = 1e-5;
 
-    double dtau = sundman_dtau(a, Q2, rp, p.step_size, p.esc_radius, STEPS);
-
-    double Phi = p.obs_dist / r;
-    double Phi_comp = 0.0;
-    double h_phi = dtau * p.obs_dist * p.obs_dist;
-
-    for (int i = 0; i < STEPS; i++) {
+    for (int i = 0; i < STEPS * 5; i++) {
         if (done) break;
 
-        double oldR = r, oldTh = th, oldPhi = phi;
-
-        double g_sun = phi_var_sundman_g(r, th, a);
-        double dPhi = phi_var_dphi_BL(r, th, pr, a, Q2, g_sun, h_phi);
-        kahan_add(&Phi, &Phi_comp, dPhi);
-        if (Phi < 0.01) Phi = 0.01;
-
-        double he = phi_var_physical_step(h_phi, Phi, r, th, pth, a, p.obs_dist);
-
-        double dr_, dth_, dphi_, dpr_, dpth_;
-
-        #define KL8S_SUBSTEP(idx) { \
-            geoRHS(r, th, pr, pth, a, b, Q2, \
-                   &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-            kahan_add(&r,   &r_comp,   he * KL8S_D8[idx] * dr_); \
-            kahan_add(&th,  &th_comp,  he * KL8S_D8[idx] * dth_); \
-            kahan_add(&phi, &phi_comp, he * KL8S_D8[idx] * dphi_); \
-            geoRHS(r, th, pr, pth, a, b, Q2, \
-                   &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-            kahan_add(&pr,  &pr_comp,  he * KL8S_W8[idx] * dpr_); \
-            kahan_add(&pth, &pth_comp, he * KL8S_W8[idx] * dpth_); \
+        StateVector y_old = y;
+        
+        bool step_accepted = false;
+        int attempts = 0;
+        while(!step_accepted && attempts < 5) {
+            step_accepted = rkf45_step(y, h, a, b, Q2, tol, h_min, h_max);
+            attempts++;
         }
 
-        KL8S_SUBSTEP(0)
-        KL8S_SUBSTEP(1)
-        KL8S_SUBSTEP(2)
-        KL8S_SUBSTEP(3)
-        KL8S_SUBSTEP(4)
-        KL8S_SUBSTEP(5)
-        KL8S_SUBSTEP(6)
-        KL8S_SUBSTEP(7)
-        KL8S_SUBSTEP(6)
-        KL8S_SUBSTEP(5)
-        KL8S_SUBSTEP(4)
-        KL8S_SUBSTEP(3)
-        KL8S_SUBSTEP(2)
-        KL8S_SUBSTEP(1)
-        KL8S_SUBSTEP(0)
-
-        #undef KL8S_SUBSTEP
-
-        {
-            double corr_eps = he * he / 24.0;
-            double f_pr, f_pth;
-            geoForce(r, th, pr, pth, a, b, Q2, &f_pr, &f_pth);
-            pr  += corr_eps * f_pr;
-            pth += corr_eps * f_pth;
-            double v_r, v_th, v_phi;
-            geoVelocity(r, th, pr, pth, a, b, Q2, &v_r, &v_th, &v_phi);
-            kahan_add(&r,   &r_comp,   corr_eps * v_r);
-            kahan_add(&th,  &th_comp,  corr_eps * v_th);
-            kahan_add(&phi, &phi_comp, corr_eps * v_phi);
+        if (!step_accepted) { // Could not find a good step size
+            done = true;
+            break;
         }
+        
+        projectHamiltonian(y.r, y.th, &y.pr, y.pth, a, b, Q2);
 
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
-        pr_comp = 0.0;
+        if (y.th < 0.005) { y.th = 0.005; y.pth = fabs(y.pth); }
+        if (y.th > PI - 0.005) { y.th = PI - 0.005; y.pth = -fabs(y.pth); }
 
-        g_sun = phi_var_sundman_g(r, th, a);
-        dPhi = phi_var_dphi_BL(r, th, pr, a, Q2, g_sun, h_phi);
-        kahan_add(&Phi, &Phi_comp, dPhi);
-        if (Phi < 0.01) Phi = 0.01;
-
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
-
-        if (acc_a < 0.99f) {
-            accumulate_volume_emission(r, th, he, a, (double)p.isco, p.disk_outer,
+        if (acc_a < 0.99) {
+            accumulate_volume_emission(y.r, y.th, fabs(h), a, (double)p.isco, p.disk_outer,
                                       &acc_r, &acc_g, &acc_b, &acc_a);
         }
 
-        if (r <= rp * 1.01) {
+        if (y.r <= rp * 1.01) {
+            blendColor_d(0.0, 0.0, 0.0, 1.0, &acc_r, &acc_g, &acc_b, &acc_a);
+            done = true; break;
+        }
+
+        if (show_disk && acc_a < 0.99) {
+            double cross = (y_old.th - PI * 0.5) * (y.th - PI * 0.5);
+            if (cross < 0.0 && disk_crossings < max_crossings) {
+                double f = fmin(fmax(fabs(y_old.th - PI * 0.5) /
+                           fmax(fabs(y.th - y_old.th), 1e-14), 0.0), 1.0);
+                double r_hit = y_old.r + f * (y.r - y_old.r);
+                float dr_f = (float)r_hit;
+                float dphi_f = (float)(y_old.phi + f * (y.phi - y_old.phi));
+
+                float g = compute_g_factor_extended(r_hit, a, Q2, b, (double)p.isco);
+
+                float dcr, dcg, dcb;
+                diskColor(dr_f, dphi_f, (float)a,
+                         (float)p.isco, (float)p.disk_outer, (float)p.disk_temp,
+                         g, (int)p.doppler_boost,
+                         &dcr, &dcg, &dcb);
+                double crossing_alpha = base_alpha;
+                blendColor_d((double)dcr, (double)dcg, (double)dcb, crossing_alpha, &acc_r, &acc_g, &acc_b, &acc_a);
+                disk_crossings++;
+            }
+        }
+
+        if (y.r > p.esc_radius) {
+            double frac = fmin(fmax((p.esc_radius - y_old.r) /
+                          fmax(y.r - y_old.r, 1e-14), 0.0), 1.0);
+            double fth = y_old.th + (y.th - y_old.th) * frac;
+            double fph = y_old.phi + (y.phi - y_old.phi) * frac;
+            float dx, dy, dz;
+            sphereDir(fth, fph, &dx, &dy, &dz);
+            float bgr, bgg, bgb;
+            background(dx, dy, dz, bg_mode, star_layers, show_grid,
+                       skymap, (int)p.sky_width, (int)p.sky_height,
+                       &bgr, &bgg, &bgb);
+            if (acc_a < 1.0) {
+                blendColor_d((double)bgr, (double)bgg, (double)bgb, 1.0, &acc_r, &acc_g, &acc_b, &acc_a);
+            }
+            done = true; break;
+        }
+
+        if (y.r <= rp * 1.01) {
             blendColor(0.0f, 0.0f, 0.0f, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);
             done = true; break;
         }
 
         if (show_disk && acc_a < 0.99f) {
-            double cross = (oldTh - PI * 0.5) * (th - PI * 0.5);
+            double cross = (y_old.th - PI * 0.5) * (y.th - PI * 0.5);
             if (cross < 0.0 && disk_crossings < max_crossings) {
-                double f = fmin(fmax(fabs(oldTh - PI * 0.5) /
-                           fmax(fabs(th - oldTh), 1e-14), 0.0), 1.0);
-                double r_hit = oldR + f * (r - oldR);
+                double f = fmin(fmax(fabs(y_old.th - PI * 0.5) /
+                           fmax(fabs(y.th - y_old.th), 1e-14), 0.0), 1.0);
+                double r_hit = y_old.r + f * (y.r - y_old.r);
                 float dr_f = (float)r_hit;
-                float dphi_f = (float)(oldPhi + f * (phi - oldPhi));
+                float dphi_f = (float)(y_old.phi + f * (y.phi - y_old.phi));
 
                 float g = compute_g_factor_extended(r_hit, a, Q2, b, (double)p.isco);
 
@@ -1215,11 +1224,11 @@ void trace_geodesics(const RenderParams *pp, unsigned char *output, const float 
             }
         }
 
-        if (r > p.esc_radius) {
-            double frac = fmin(fmax((p.esc_radius - oldR) /
-                          fmax(r - oldR, 1e-14), 0.0), 1.0);
-            double fth = oldTh + (th - oldTh) * frac;
-            double fph = oldPhi + (phi - oldPhi) * frac;
+        if (y.r > p.esc_radius) {
+            double frac = fmin(fmax((p.esc_radius - y_old.r) /
+                          fmax(y.r - y_old.r, 1e-14), 0.0), 1.0);
+            double fth = y_old.th + (y.th - y_old.th) * frac;
+            double fph = y_old.phi + (y.phi - y_old.phi) * frac;
             float dx, dy, dz;
             sphereDir(fth, fph, &dx, &dy, &dz);
             float bgr, bgg, bgb;
@@ -1232,16 +1241,87 @@ void trace_geodesics(const RenderParams *pp, unsigned char *output, const float 
             done = true; break;
         }
 
-        if (r < 0.5 || r != r || th != th) { done = true; break; }
+        if (y.r < 0.5 || y.r != y.r || y.th != y.th) { done = true; break; }
     }
 
-    float cr = acc_r, cg = acc_g, cb = acc_b;
-    float ux = 2.0f * (ix + 0.5f) / (float)W  - 1.0f;
-    float uy = 2.0f * (iy + 0.5f) / (float)H - 1.0f;
+    float cr = (float)acc_r, cg = (float)acc_g, cb = (float)acc_b;
+    float ux = 2.0f * (float)ixf / (float)W  - 1.0f;
+    float uy = 2.0f * (float)iyf / (float)H - 1.0f;
     postProcess(&cr, &cg, &cb, alpha, beta, p, ux, uy);
 
+    out_color.r = cr;
+    out_color.g = cg;
+    out_color.b = cb;
+}
+
+/* Helper to compute color variance */
+__device__ float color_variance(const Color c[4]) {
+    float mean_r = (c[0].r + c[1].r + c[2].r + c[3].r) * 0.25f;
+    float mean_g = (c[0].g + c[1].g + c[2].g + c[3].g) * 0.25f;
+    float mean_b = (c[0].b + c[1].b + c[2].b + c[3].b) * 0.25f;
+    float var_r = 0, var_g = 0, var_b = 0;
+    for (int i=0; i<4; ++i) {
+        var_r += (c[i].r - mean_r) * (c[i].r - mean_r);
+        var_g += (c[i].g - mean_g) * (c[i].g - mean_g);
+        var_b += (c[i].b - mean_b) * (c[i].b - mean_b);
+    }
+    return (var_r + var_g + var_b) / 12.0f;
+}
+
+extern "C" __global__
+void adaptive_render_kernel(const RenderParams *pp, unsigned char *output, const float *skymap) {
+    const RenderParams &p = *pp;
+    int ix = blockIdx.x * blockDim.x + threadIdx.x;
+    int iy = blockIdx.y * blockDim.y + threadIdx.y;
+    int W = (int)p.width, H = (int)p.height;
+    if (ix >= W || iy >= H) return;
+
+    const int MAX_SAMPLES = 64;
+    const float VARIANCE_THRESHOLD = 0.001f;
+
+    Color sample_colors[MAX_SAMPLES];
+    double sample_coords[MAX_SAMPLES][2];
+    int num_samples = 0;
+
+    // Initial 4 corner samples
+    sample_coords[0][0] = ix + 0.25; sample_coords[0][1] = iy + 0.25;
+    sample_coords[1][0] = ix + 0.75; sample_coords[1][1] = iy + 0.25;
+    sample_coords[2][0] = ix + 0.25; sample_coords[2][1] = iy + 0.75;
+    sample_coords[3][0] = ix + 0.75; sample_coords[3][1] = iy + 0.75;
+    num_samples = 4;
+
+    for (int i = 0; i < num_samples; ++i) {
+        trace_single_ray(sample_coords[i][0], sample_coords[i][1], p, skymap, sample_colors[i]);
+    }
+
+    float variance = color_variance(sample_colors);
+
+    if (variance > VARIANCE_THRESHOLD) {
+        // Simple stochastic sampling if variance is high
+        int current_samples = num_samples;
+        for (int i = 0; i < current_samples*3 && num_samples < MAX_SAMPLES; ++i) {
+             float rand_x = hash2((float)ix + (float)i*0.1f, (float)iy);
+             float rand_y = hash2((float)ix, (float)iy + (float)i*0.1f);
+             sample_coords[num_samples][0] = ix + rand_x;
+             sample_coords[num_samples][1] = iy + rand_y;
+             trace_single_ray(sample_coords[num_samples][0], sample_coords[num_samples][1], p, skymap, sample_colors[num_samples]);
+             num_samples++;
+        }
+    }
+
+    // Average all collected samples
+    float avg_r = 0, avg_g = 0, avg_b = 0;
+    for (int i = 0; i < num_samples; ++i) {
+        avg_r += sample_colors[i].r;
+        avg_g += sample_colors[i].g;
+        avg_b += sample_colors[i].b;
+    }
+    avg_r /= num_samples;
+    avg_g /= num_samples;
+    avg_b /= num_samples;
+
     int idx = (iy * W + ix) * 3;
-    output[idx + 0] = (unsigned char)(fminf(fmaxf(cr * 255.0f, 0.0f), 255.0f));
-    output[idx + 1] = (unsigned char)(fminf(fmaxf(cg * 255.0f, 0.0f), 255.0f));
-    output[idx + 2] = (unsigned char)(fminf(fmaxf(cb * 255.0f, 0.0f), 255.0f));
+    output[idx + 0] = (unsigned char)(fminf(fmaxf(avg_r * 255.0f, 0.0f), 255.0f));
+    output[idx + 1] = (unsigned char)(fminf(fmaxf(avg_g * 255.0f, 0.0f), 255.0f));
+    output[idx + 2] = (unsigned char)(fminf(fmaxf(avg_b * 255.0f, 0.0f), 255.0f));
 }
