@@ -2,12 +2,9 @@
 
 **GPU-accelerated ray tracing through curved spacetimes**
 
-Nulltracer is a CUDA-powered ray tracer that visualises black holes by tracing null geodesics through Kerr-Newman spacetime. It renders photon rings, gravitational lensing, accretion-disk Doppler effects, and frame-dragging with `float64` precision. The repository ships two front-ends:
+Nulltracer is a CUDA-powered ray tracer that visualises black holes by tracing null geodesics through Kerr-Newman spacetime. It renders photon rings, gravitational lensing, accretion-disk Doppler effects, and frame-dragging with `float64` precision. The repository offers a Python package (`nulltracer/`) exposing `render_frame()`, `shadow_boundary()`, `trace_ray()`, `extract_shadow_metrics()`, and related utilities for analysis, notebooks, and batch scripts.
 
-- a Python package (`nulltracer/`) exposing `render_frame()`, `shadow_boundary()`, `trace_ray()`, `extract_shadow_metrics()`, and related utilities for analysis, notebooks, and batch scripts;
-- a FastAPI backend + thin browser client (`web/`, plus the Dockerfile / deployment notes in `DEPLOYMENT.md`) for interactive parameter exploration.
-
-> **Hero renders.** This README does not currently embed hero/gallery figures — those are produced by executing `notebooks/nulltracer.ipynb` on a CUDA-capable host and exporting the figure cells. The notebook also features comparisons of numerical shadow boundaries to EHT parameters for M87* and Sgr A*. Once a host with a GPU has run the notebook, the `m87_spin_sweep.png`, `sgra_spin_sweep.png`, and `kerr_radii.png` artefacts written by the notebook can be copied into a `docs/images/` directory and referenced from here.
+![Gargantua and M87* hero images](assets/bh-hero-image.png)
 
 ## Physics & Numerical Methods
 
