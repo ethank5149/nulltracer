@@ -47,6 +47,7 @@ struct RenderParams {
     double disk_alpha;          /* base opacity per disk crossing (0.0–1.0) */
     double disk_max_crossings;  /* max disk crossings to accumulate (as double, cast to int) */
     double bloom_enabled;       /* 1.0 = output float32 linear for bloom, 0.0 = normal uint8 sRGB */
+    double debug_trace;         /* 1.0 = use simplified direct ray tracing for debugging */
 
     /* Skymap texture (equirectangular projection) */
     double sky_width;           /* skymap pixel width (0 = no skymap, use procedural) */
@@ -1101,7 +1102,7 @@ __device__ void accumulate_volume_emission(
 
 /* Structure to hold a color value. */
 struct Color {
-    float r, g, b;
+    double r, g, b;
 };
 
 /* __device__ function to trace a single ray and return its color.
@@ -1112,7 +1113,7 @@ __device__ void trace_single_ray(
 ) {
     int W = (int)p.width, H = (int)p.height;
     if (ixf < 0 || ixf >= W || iyf < 0 || iyf >= H) {
-        out_color = {0.0f, 0.0f, 0.0f};
+        out_color = {0.0, 0.0, 0.0};
         return;
     }
 
@@ -1122,7 +1123,8 @@ __device__ void trace_single_ray(
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
-    int STEPS = (int)p.steps * 4;
+    double r0 = p.obs_dist;
+    int STEPS = (int)p.steps;
     int show_disk = (int)p.show_disk;
     int bg_mode = (int)p.bg_mode;
     int star_layers = (int)p.star_layers;
@@ -1130,34 +1132,114 @@ __device__ void trace_single_ray(
     double acc_r = 0.0, acc_g = 0.0, acc_b = 0.0, acc_a = 0.0;
     int disk_crossings = 0;
     int max_crossings = (int)p.disk_max_crossings;
-    float base_alpha = (float)p.disk_alpha;
+    double base_alpha = p.disk_alpha;
     bool done = false;
 
-    StateVector y = {r, th, phi, pr, pth};
-    double h = -p.step_size; // Initial step size (negative for backwards integration)
-    double h_min = h / 1000.0;
-    double h_max = -h / 1000.0; // h is negative
-    double tol = 1e-5;
-
-    for (int i = 0; i < STEPS * 5; i++) {
-        if (done) break;
-
-        StateVector y_old = y;
-        
-        bool step_accepted = false;
-        int attempts = 0;
-        while(!step_accepted && attempts < 5) {
-            step_accepted = rkf45_step(y, h, a, b, Q2, tol, h_min, h_max);
-            attempts++;
+    if (p.debug_trace > 0.5) {
+        // Simplified direct trace for debugging
+        if (alpha*alpha + beta*beta < (rp/r0)*(rp/r0)) { // Ray hits black hole shadow
+            acc_r = 0.0; acc_g = 0.0; acc_b = 0.0;
+        } else if (abs(beta) < 0.05 && alpha > -2.0 && alpha < 2.0) { // Simple disk plane
+            acc_r = 1.0; acc_g = 0.8; acc_b = 0.4;
+        } else { // Background
+            float dx, dy, dz;
+            sphereDir(th, phi, &dx, &dy, &dz); // Using initial direction
+            float bgr, bgg, bgb;
+            background(dx, dy, dz, bg_mode, star_layers, show_grid,
+                       skymap, (int)p.sky_width, (int)p.sky_height,
+                       &bgr, &bgg, &bgb);
+            acc_r = bgr; acc_g = bgg; acc_b = bgb;
         }
+    } else {
+        // Full integration loop
+        StateVector y = {r, th, phi, pr, pth};
+        double h = -p.step_size; // Initial step size (negative for backwards integration)
+        double h_min = h / 1000.0;
+        double h_max = -h / 1000.0; // h is negative
+        double tol = 1e-5;
 
-        if (!step_accepted) { // Could not find a good step size
-            done = true;
-            break;
+        for (int i = 0; i < STEPS * 5; i++) {
+            if (done) break;
+
+            StateVector y_old = y;
+            
+            bool step_accepted = false;
+            int attempts = 0;
+            while(!step_accepted && attempts < 5) {
+                step_accepted = rkf45_step(y, h, a, b, Q2, tol, h_min, h_max);
+                attempts++;
+            }
+
+            if (!step_accepted) { // Could not find a good step size
+                done = true;
+                break;
+            }
+            
+            projectHamiltonian(y.r, y.th, &y.pr, y.pth, a, b, Q2);
+
+            if (y.th < 0.005) { y.th = 0.005; y.pth = fabs(y.pth); }
+            if (y.th > PI - 0.005) { y.th = PI - 0.005; y.pth = -fabs(y.pth); }
+
+            if (acc_a < 0.99) {
+                accumulate_volume_emission(y.r, y.th, fabs(h), a, (double)p.isco, p.disk_outer,
+                                          &acc_r, &acc_g, &acc_b, &acc_a);
+            }
+
+            if (y.r <= rp * 1.01) {
+                blendColor_d(0.0, 0.0, 0.0, 1.0, &acc_r, &acc_g, &acc_b, &acc_a);
+                done = true; break;
+            }
+
+            if (show_disk && acc_a < 0.99) {
+                double cross = (y_old.th - PI * 0.5) * (y.th - PI * 0.5);
+                if (cross < 0.0 && disk_crossings < max_crossings) {
+                    double f = fmin(fmax(fabs(y_old.th - PI * 0.5) /
+                               fmax(fabs(y.th - y_old.th), 1e-14), 0.0), 1.0);
+                    double r_hit = y_old.r + f * (y.r - y_old.r);
+                    float dr_f = (float)r_hit;
+                    float dphi_f = (float)(y_old.phi + f * (y.phi - y_old.phi));
+
+                    float g = compute_g_factor_extended(r_hit, a, Q2, b, (double)p.isco);
+
+                    float dcr, dcg, dcb;
+                    diskColor(dr_f, dphi_f, (float)a,
+                             (float)p.isco, (float)p.disk_outer, (float)p.disk_temp,
+                             g, (int)p.doppler_boost,
+                             &dcr, &dcg, &dcb);
+                    double crossing_alpha = base_alpha;
+                    blendColor_d((double)dcr, (double)dcg, (double)dcb, crossing_alpha, &acc_r, &acc_g, &acc_b, &acc_a);
+                    disk_crossings++;
+                }
+            }
+
+            if (y.r > p.esc_radius) {
+                double frac = fmin(fmax((p.esc_radius - y_old.r) /
+                              fmax(y.r - y_old.r, 1e-14), 0.0), 1.0);
+                double fth = y_old.th + (y.th - y_old.th) * frac;
+                double fph = y_old.phi + (y.phi - y_old.phi) * frac;
+                float dx, dy, dz;
+                sphereDir(fth, fph, &dx, &dy, &dz);
+                float bgr, bgg, bgb;
+                background(dx, dy, dz, bg_mode, star_layers, show_grid,
+                           skymap, (int)p.sky_width, (int)p.sky_height,
+                           &bgr, &bgg, &bgb);
+                if (acc_a < 1.0) {
+                    blendColor_d((double)bgr, (double)bgg, (double)bgb, 1.0, &acc_r, &acc_g, &acc_b, &acc_a);
+                }
+                done = true; break;
+            }
+
+            if (y.r < 0.5 || y.r != y.r || y.th != y.th) { done = true; break; }
         }
-        
-        projectHamiltonian(y.r, y.th, &y.pr, y.pth, a, b, Q2);
+    }
 
+    out_color.r = acc_r;
+    out_color.g = acc_g;
+    out_color.b = acc_b;
+}
+
+/* Helper to compute color variance */
+__device__ double color_variance(const Color c[4]) {
         if (y.th < 0.005) { y.th = 0.005; y.pth = fabs(y.pth); }
         if (y.th > PI - 0.005) { y.th = PI - 0.005; y.pth = -fabs(y.pth); }
 
@@ -1257,28 +1339,23 @@ __device__ void trace_single_ray(
         if (y.r < 0.5 || y.r != y.r || y.th != y.th) { done = true; break; }
     }
 
-    float cr = (float)acc_r, cg = (float)acc_g, cb = (float)acc_b;
-    float ux = 2.0f * (float)ixf / (float)W  - 1.0f;
-    float uy = 2.0f * (float)iyf / (float)H - 1.0f;
-    postProcess(&cr, &cg, &cb, alpha, beta, p, ux, uy);
-
-    out_color.r = cr;
-    out_color.g = cg;
-    out_color.b = cb;
+    out_color.r = acc_r;
+    out_color.g = acc_g;
+    out_color.b = acc_b;
 }
 
 /* Helper to compute color variance */
-__device__ float color_variance(const Color c[4]) {
-    float mean_r = (c[0].r + c[1].r + c[2].r + c[3].r) * 0.25f;
-    float mean_g = (c[0].g + c[1].g + c[2].g + c[3].g) * 0.25f;
-    float mean_b = (c[0].b + c[1].b + c[2].b + c[3].b) * 0.25f;
-    float var_r = 0, var_g = 0, var_b = 0;
+__device__ double color_variance(const Color c[4]) {
+    double mean_r = (c[0].r + c[1].r + c[2].r + c[3].r) * 0.25;
+    double mean_g = (c[0].g + c[1].g + c[2].g + c[3].g) * 0.25;
+    double mean_b = (c[0].b + c[1].b + c[2].b + c[3].b) * 0.25;
+    double var_r = 0, var_g = 0, var_b = 0;
     for (int i=0; i<4; ++i) {
         var_r += (c[i].r - mean_r) * (c[i].r - mean_r);
         var_g += (c[i].g - mean_g) * (c[i].g - mean_g);
         var_b += (c[i].b - mean_b) * (c[i].b - mean_b);
     }
-    return (var_r + var_g + var_b) / 12.0f;
+    return (var_r + var_g + var_b) / 12.0;
 }
 
 extern "C" __global__
@@ -1290,7 +1367,7 @@ void adaptive_render_kernel(const RenderParams *pp, unsigned char *output, const
     if (ix >= W || iy >= H) return;
 
     const int MAX_SAMPLES = 64;
-    const float VARIANCE_THRESHOLD = 0.001f;
+    const double VARIANCE_THRESHOLD = 0.0001;
 
     Color sample_colors[MAX_SAMPLES];
     double sample_coords[MAX_SAMPLES][2];
@@ -1307,14 +1384,13 @@ void adaptive_render_kernel(const RenderParams *pp, unsigned char *output, const
         trace_single_ray(sample_coords[i][0], sample_coords[i][1], p, skymap, sample_colors[i]);
     }
 
-    float variance = color_variance(sample_colors);
+    double variance = color_variance(sample_colors);
 
     if (variance > VARIANCE_THRESHOLD) {
         // Simple stochastic sampling if variance is high
-        int current_samples = num_samples;
-        for (int i = 0; i < current_samples*3 && num_samples < MAX_SAMPLES; ++i) {
-             float rand_x = hash2((float)ix + (float)i*0.1f, (float)iy);
-             float rand_y = hash2((float)ix, (float)iy + (float)i*0.1f);
+        for (int i = 0; i < (MAX_SAMPLES - 4); ++i) {
+             float rand_x = hash2((float)ix + (float)i*0.137f, (float)iy + (float)i*0.211f);
+             float rand_y = hash2((float)ix + (float)i*0.353f, (float)iy + (float)i*0.499f);
              sample_coords[num_samples][0] = ix + rand_x;
              sample_coords[num_samples][1] = iy + rand_y;
              trace_single_ray(sample_coords[num_samples][0], sample_coords[num_samples][1], p, skymap, sample_colors[num_samples]);
@@ -1354,8 +1430,18 @@ void adaptive_render_kernel(const RenderParams *pp, unsigned char *output, const
         avg_b /= num_samples;
     }
 
+    float cr = (float)avg_r;
+    float cg = (float)avg_g;
+    float cb = (float)avg_b;
+
+    float ux = 2.0f * (ix + 0.5f) / (float)W - 1.0f;
+    float uy = 2.0f * (iy + 0.5f) / (float)H - 1.0f;
+    
+    // The alpha/beta parameters are not used in postProcess
+    postProcess(&cr, &cg, &cb, 0.0f, 0.0f, p, ux, uy);
+    
     int idx = (iy * W + ix) * 3;
-    output[idx + 0] = (unsigned char)(fminf(fmaxf((float)avg_r * 255.0f, 0.0f), 255.0f));
-    output[idx + 1] = (unsigned char)(fminf(fmaxf((float)avg_g * 255.0f, 0.0f), 255.0f));
-    output[idx + 2] = (unsigned char)(fminf(fmaxf((float)avg_b * 255.0f, 0.0f), 255.0f));
+    output[idx + 0] = (unsigned char)(fminf(fmaxf(cr * 255.0f, 0.0f), 255.0f));
+    output[idx + 1] = (unsigned char)(fminf(fmaxf(cg * 255.0f, 0.0f), 255.0f));
+    output[idx + 2] = (unsigned char)(fminf(fmaxf(cb * 255.0f, 0.0f), 255.0f));
 }

@@ -89,6 +89,7 @@ class RenderParams(ctypes.Structure):
         ("disk_alpha",    ctypes.c_double),
         ("disk_max_crossings", ctypes.c_double),
         ("bloom_enabled", ctypes.c_double),
+        ("debug_trace", ctypes.c_double),
         ("sky_width",     ctypes.c_double),
         ("sky_height",    ctypes.c_double),
     ]
@@ -315,6 +316,7 @@ class CudaRenderer:
             disk_alpha=float(params.get("disk_alpha", 0.95)),
             disk_max_crossings=float(params.get("disk_max_crossings", 5)),
             bloom_enabled=1.0 if params.get("bloom_enabled", False) else 0.0,
+            debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
             sky_width=0.0,
             sky_height=0.0,
         )
@@ -428,6 +430,7 @@ class CudaRenderer:
             disk_alpha=float(params.get("disk_alpha", 0.95)),
             disk_max_crossings=float(params.get("disk_max_crossings", 5)),
             bloom_enabled=1.0 if params.get("bloom_enabled", False) else 0.0,
+            debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
             sky_width=0.0,
             sky_height=0.0,
         )
@@ -648,6 +651,7 @@ class CudaRenderer:
             disk_alpha=float(params.get("disk_alpha", 0.95)),
             disk_max_crossings=float(params.get("disk_max_crossings", 5)),
             bloom_enabled=0.0,  # Not used for single-ray tracing
+            debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
             sky_width=0.0,
             sky_height=0.0,
         )
