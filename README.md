@@ -7,7 +7,7 @@ Nulltracer is a CUDA-powered ray tracer that visualises black holes by tracing n
 - a Python package (`nulltracer/`) exposing `render_frame()`, `shadow_boundary()`, `trace_ray()`, `extract_shadow_metrics()`, and related utilities for analysis, notebooks, and batch scripts;
 - a FastAPI backend + thin browser client (`web/`, plus the Dockerfile / deployment notes in `DEPLOYMENT.md`) for interactive parameter exploration.
 
-> **Hero renders.** This README does not currently embed hero/gallery figures — those are produced by executing `notebooks/nulltracer.ipynb` on a CUDA-capable host and exporting the figure cells. Once a host with a GPU has run the notebook, the `m87_spin_sweep.png`, `sgra_spin_sweep.png`, and `kerr_radii.png` artefacts written by the notebook can be copied into a `docs/images/` directory and referenced from here.
+> **Hero renders.** This README does not currently embed hero/gallery figures — those are produced by executing `notebooks/nulltracer.ipynb` on a CUDA-capable host and exporting the figure cells. The notebook also features comparisons of numerical shadow boundaries to EHT parameters for M87* and Sgr A*. Once a host with a GPU has run the notebook, the `m87_spin_sweep.png`, `sgra_spin_sweep.png`, and `kerr_radii.png` artefacts written by the notebook can be copied into a `docs/images/` directory and referenced from here.
 
 ## Physics & Numerical Methods
 
@@ -42,7 +42,15 @@ The Sundman time transformation concentrates steps near the black hole, which co
 
 ### Accretion-disk model
 
-The disk follows a Novikov-Thorne temperature profile with $T \propto r^{-3/4}$ outside ISCO and a plunging-region continuation inside. Relativistic Doppler boosting applies either $g^3$ (optically thin) or $g^4$ (optically thick) bolometric factors. Multiple equatorial crossings are accumulated via alpha-compositing (set `disk_max_crossings > 1` to build up photon-ring sub-images). The output is transformed to sRGB for standard displays.
+The disk follows a Novikov-Thorne temperature profile with $T \propto r^{-3/4}$ outside ISCO and a plunging-region continuation inside. Relativistic Doppler boosting applies either $g^3$ (optically thin) or $g^4$ (optically thick) bolometric factors. Multiple equatorial crossings are accumulated via alpha-compositing (set `disk_max_crossings > 1` to build up photon-ring sub-images). 
+
+Beyond the thin-disk model, the kernel supports volumetric emitters:
+- **Corona** — hot electron scattering layer above the disk with scale height $h = 0.3\,r_{\rm cyl}$.
+- **Relativistic jet** — collimated outflow along the spin axis.
+
+### Post-processing
+
+An Airy-disk bloom (`nulltracer.bloom.apply_bloom`) can be applied to convolve the linear-light image with the diffraction pattern of a circular aperture, adding a physically motivated halo around bright features. The output is finally transformed to sRGB for standard displays.
 
 ### Numerical precision
 
@@ -58,6 +66,7 @@ pip install -e ".[analysis,notebook]"
 
 ```python
 import nulltracer as nt
+import numpy as np
 
 # Render an image — returns (H, W, 3) uint8 numpy array + RenderInfo dataclass
 img, info = nt.render_frame(spin=0.94, inclination_deg=30)
@@ -66,7 +75,7 @@ img, info = nt.render_frame(spin=0.94, inclination_deg=30)
 nt.compile_all()
 
 # Analytic shadow boundary (Kerr or Kerr-Newman)
-alpha, beta_plus, beta_minus = nt.shadow_boundary(a=0.6, theta_obs=0.3, Q=0.0)
+alpha, beta_plus, beta_minus = nt.shadow_boundary(a=0.6, theta_obs=np.radians(60.0), Q=0.0)
 ```
 
 See `notebooks/nulltracer.ipynb` for the full EHT-validation walkthrough.
@@ -98,6 +107,12 @@ Pure-Python tests (ISCO, shadow-boundary analytics, shadow-extraction primitives
 ```python
 # Full visual pipeline → (H, W, 3) uint8 sRGB image + RenderInfo
 img, info = nt.render_frame(spin, inclination_deg, **kwargs)
+
+# Or use the dict-based CudaRenderer directly (used by the server and notebook)
+renderer = nt.CudaRenderer()
+renderer.initialize()
+timed = renderer.render_frame_timed({'spin': 0.94, 'inclination': 30, 'width': 512, 'height': 512})
+# timed['raw_rgb'], timed['kernel_ms'], etc.
 
 # Shadow classification → boolean (H, W) mask + ClassifyInfo
 mask, info = nt.classify_shadow(spin, inclination_deg, **kwargs)
@@ -148,6 +163,8 @@ POST /render
 Response: binary JPEG/WebP image with appropriate `Content-Type`.
 
 The `inclination` key also accepts the shorthand alias `incl`. If `steps` is omitted, the server calls `auto_steps(obs_dist, step_size, spin, charge, method)` to size the integration budget — important for large observer distances (e.g. `obs_dist=500` at `step_size=0.15` needs ≫ 200 steps to reach the black hole).
+
+*Note on units:* The `fov` parameter (historically labeled `fov_deg` in `extract_shadow_metrics`) is not an angle; it specifies the screen half-width in units of $M$ (gravitational radii), setting the impact-parameter window $u_x \in [-1, 1] \mapsto \alpha \in [-\text{fov}, \text{fov}] \cdot M$.
 
 ## Controls (web client)
 
