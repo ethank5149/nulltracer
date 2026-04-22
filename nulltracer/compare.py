@@ -204,7 +204,9 @@ def compare_integrators(
         axes = [axes]
 
     for ax, m in zip(axes, methods):
-        params = {'spin': spin, 'incl': inclination_deg, 'width': width, 'height': height, 'fov': fov, 'obs_dist': obs_dist, 'step_size': step_size, 'method': m, **render_kwargs}
+        params = {'spin': spin, 'inclination': inclination_deg, 'width': width,
+                  'height': height, 'fov': fov, 'obs_dist': obs_dist,
+                  'step_size': step_size, 'method': m, **render_kwargs}
         timed = renderer.render_frame_timed(params)
         import numpy as np
         img = np.frombuffer(timed['raw_rgb'], dtype=np.uint8).reshape((height, width, 3))

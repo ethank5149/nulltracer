@@ -28,6 +28,40 @@ def _safe_float(v: float) -> float:
         return None
     return v
 
+
+def _resolve_inclination(params: dict) -> float:
+    """Return inclination in **degrees** from a params dict.
+
+    Accepts either ``inclination`` (canonical, documented) or the shorthand
+    alias ``incl`` that the notebook/UI uses. Defaults to 80.0 if neither
+    is provided. Fixes the historical silent bug where dict-based renders
+    always ran at 80° regardless of the caller's ``incl`` setting.
+    """
+    if "inclination" in params:
+        return float(params["inclination"])
+    if "incl" in params:
+        return float(params["incl"])
+    return 80.0
+
+
+def _resolve_steps(params: dict, *, spin: float, charge: float, method: str,
+                   obs_dist: float, step_size: float) -> int:
+    """Return the integration step budget.
+
+    Uses an explicit ``steps`` / ``max_steps`` value if supplied, otherwise
+    calls :func:`nulltracer.render.auto_steps` — matching the behaviour of
+    the free ``nulltracer.render_frame`` entry point. Without this, dict-based
+    renders at large ``obs_dist`` would terminate before reaching the black
+    hole (the default of 200 steps × 0.15 step_size = 30 M of affine length).
+    """
+    if "steps" in params:
+        return int(params["steps"])
+    if "max_steps" in params and params["max_steps"] is not None:
+        return int(params["max_steps"])
+    # Lazy import to avoid circular dependency (render.py imports from renderer.py via __init__).
+    from .render import auto_steps
+    return auto_steps(obs_dist, step_size, spin=spin, charge=charge, method=method)
+
 # Path to kernel source files
 _KERNEL_DIR = Path(__file__).parent / "kernels"
 _INTEGRATOR_DIR = _KERNEL_DIR / "integrators"
@@ -250,10 +284,12 @@ class CudaRenderer:
         """Render a single frame and return raw RGB pixel data.
 
         Args:
-            params: dict with all render parameters including:
-                spin, charge, inclination (degrees), fov, width, height,
-                method, steps, step_size, obs_dist, bg_mode, show_disk,
-                show_grid, disk_temp, star_layers, phi0
+            params: dict with all render parameters. Recognised keys:
+                spin, charge, inclination (degrees; also accepts the
+                shorthand ``incl``), fov, width, height, method, steps
+                (auto-estimated if omitted), step_size, obs_dist,
+                bg_mode, show_disk, show_grid (default False),
+                disk_temp, star_layers, phi0.
 
         Returns:
             Raw RGB bytes (width * height * 3), top-to-bottom row order.
@@ -275,19 +311,25 @@ class CudaRenderer:
 
         # Build RenderParams struct
         obs_dist = float(params.get("obs_dist", 40))
+        step_size = float(params.get("step_size", 0.30))
+        inclination_deg = _resolve_inclination(params)
+        steps = _resolve_steps(
+            params, spin=spin, charge=charge, method=method,
+            obs_dist=obs_dist, step_size=step_size,
+        )
         logger.info(
             "CUDA render params: %dx%d method=%s spin=%.3f charge=%.3f incl=%.1f° "
             "fov=%.1f steps=%d obs_dist=%.0f step_size=%.2f bg_mode=%d "
             "show_disk=%s show_grid=%s disk_temp=%.2f star_layers=%d isco=%.4f",
             width, height, method, spin, charge,
-            float(params.get("inclination", 80.0)),
+            inclination_deg,
             float(params.get("fov", 8.0)),
-            int(params.get("steps", 200)),
+            steps,
             obs_dist,
-            float(params.get("step_size", 0.30)),
+            step_size,
             int(params.get("bg_mode", 1)),
             params.get("show_disk", True),
-            params.get("show_grid", True),
+            params.get("show_grid", False),
             float(params.get("disk_temp", 1.0)),
             int(params.get("star_layers", 3)),
             float(isco_radius),
@@ -297,19 +339,19 @@ class CudaRenderer:
             height=height,
             spin=float(spin),
             charge=float(charge),
-            incl=math.radians(float(params.get("inclination", 80.0))),
+            incl=math.radians(inclination_deg),
             fov=float(params.get("fov", 8.0)),
             phi0=float(params.get("phi0", 0.0)),
             isco=float(isco_radius),
-            steps=int(params.get("steps", 200)),
+            steps=steps,
             obs_dist=obs_dist,
             esc_radius=obs_dist + 12.0,
             disk_outer=50.0,
-            step_size=float(params.get("step_size", 0.30)),
+            step_size=step_size,
             bg_mode=int(params.get("bg_mode", 1)),
             star_layers=int(params.get("star_layers", 3)),
             show_disk=1 if params.get("show_disk", True) else 0,
-            show_grid=1 if params.get("show_grid", True) else 0,
+            show_grid=1 if params.get("show_grid", False) else 0,
             disk_temp=float(params.get("disk_temp", 1.0)),
             doppler_boost=float(params.get("doppler_boost", 2.0)),
             srgb_output=1.0 if params.get("srgb_output", True) else 0.0,
@@ -407,24 +449,30 @@ class CudaRenderer:
 
         # Build RenderParams struct
         obs_dist = float(params.get("obs_dist", 40))
+        step_size = float(params.get("step_size", 0.30))
+        inclination_deg = _resolve_inclination(params)
+        steps = _resolve_steps(
+            params, spin=spin, charge=charge, method=method,
+            obs_dist=obs_dist, step_size=step_size,
+        )
         rp = RenderParams(
             width=width,
             height=height,
             spin=float(spin),
             charge=float(charge),
-            incl=math.radians(float(params.get("inclination", 80.0))),
+            incl=math.radians(inclination_deg),
             fov=float(params.get("fov", 8.0)),
             phi0=float(params.get("phi0", 0.0)),
             isco=float(isco_radius),
-            steps=int(params.get("steps", 200)),
+            steps=steps,
             obs_dist=obs_dist,
             esc_radius=obs_dist + 12.0,
             disk_outer=50.0,
-            step_size=float(params.get("step_size", 0.30)),
+            step_size=step_size,
             bg_mode=int(params.get("bg_mode", 1)),
             star_layers=int(params.get("star_layers", 3)),
             show_disk=1 if params.get("show_disk", True) else 0,
-            show_grid=1 if params.get("show_grid", True) else 0,
+            show_grid=1 if params.get("show_grid", False) else 0,
             disk_temp=float(params.get("disk_temp", 1.0)),
             doppler_boost=float(params.get("doppler_boost", 2.0)),
             srgb_output=1.0 if params.get("srgb_output", True) else 0.0,
@@ -626,23 +674,29 @@ class CudaRenderer:
 
         # Build RenderParams struct
         obs_dist = float(params.get("obs_dist", 40))
+        step_size = float(params.get("step_size", 0.30))
         width = params.get("width", 320)
         height = params.get("height", 180)
+        inclination_deg = _resolve_inclination(params)
+        steps = _resolve_steps(
+            params, spin=spin, charge=charge, method=method,
+            obs_dist=obs_dist, step_size=step_size,
+        )
 
         rp = RenderParams(
             width=width,
             height=height,
             spin=float(spin),
             charge=float(charge),
-            incl=math.radians(float(params.get("inclination", 80.0))),
+            incl=math.radians(inclination_deg),
             fov=float(params.get("fov", 8.0)),
             phi0=float(params.get("phi0", 0.0)),
             isco=float(isco_radius),
-            steps=int(params.get("steps", 200)),
+            steps=steps,
             obs_dist=obs_dist,
             esc_radius=obs_dist + 12.0,
             disk_outer=50.0,
-            step_size=float(params.get("step_size", 0.30)),
+            step_size=step_size,
             bg_mode=0,  # Not used for ray tracing
             star_layers=1,  # Not used for ray tracing
             show_disk=1,  # Always detect disk crossings
