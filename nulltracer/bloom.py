@@ -21,8 +21,8 @@ try:
     CUPY_AVAILABLE = True
 except ImportError:
     from scipy.signal import fftconvolve
+    from scipy.ndimage import zoom as cp_zoom
     from scipy.special import j1
-    import cv2
     CUPY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -164,13 +164,13 @@ def apply_bloom(image: np.ndarray, fov: float = 8.0,
     else:
         # CPU fallback
         bright_pixels_cpu = bright_pixels if isinstance(bright_pixels, np.ndarray) else bright_pixels.get()
-        down_bright = cv2.resize(bright_pixels_cpu, (down_w, down_h), interpolation=cv2.INTER_AREA)
+        down_bright = cp_zoom(bright_pixels_cpu, (down_h/h, down_w/w, 1), order=1)
         down_convolved = np.zeros_like(down_bright)
         for c in range(3):
             down_convolved[:, :, c] = fftconvolve(
                 down_bright[:, :, c], kernel[:, :, c], mode='same'
             )
-        bloom_img = xp.asarray(cv2.resize(down_convolved, (w, h), interpolation=cv2.INTER_LINEAR))
+        bloom_img = xp.asarray(cp_zoom(down_convolved, (h/down_h, w/down_w, 1), order=1))
 
     bloom_weight = 0.4 * np.log1p(max_intensity)
     result = linear + bloom_img * bloom_weight
