@@ -413,15 +413,19 @@ __device__ void postProcess(float *cr, float *cg, float *cb,
                             float alpha, float beta,
                             const RenderParams &p,
                             float ux, float uy) {
-    /* Photon ring glow */
-    float spin = (float)p.spin;
-    float imp = sqrtf(alpha * alpha + beta * beta);
-    float rc = 5.2f - 1.0f * spin;
-    float d = (imp - rc) / 0.3f;
-    float glow = expf(-d * d) * 0.06f;
-    *cr += 0.1f * glow;
-    *cg += 0.07f * glow;
-    *cb += 0.04f * glow;
+    /* No fake postprocess "photon-ring glow" here.
+     *
+     * Historical note: an earlier revision of this kernel added an
+     * isotropic screen-space Gaussian centred at impact parameter
+     * ≈ 5.2 − spin to every pixel, to hint at the critical null-orbit
+     * ring. That was a cosmetic cheat, and it masked the true Doppler
+     * asymmetry from the disk integrator — at a=0.94, θ=30° the
+     * approaching/receding intensity ratio is ~7× (g^4), but the fake
+     * glow was added equally on both sides and washed that out.
+     *
+     * All features you see in the output now come from actual geodesic
+     * integration (disk crossings, volumetric corona/jet emission),
+     * which is what a "validation against EHT" notebook requires. */
 
     /* Vignette */
     float vig = 1.0f - 0.3f * (ux * ux + uy * uy);
@@ -1109,14 +1113,18 @@ __device__ void transformBLtoKS(
  */
 
 __device__ void accumulate_volume_emission(
-    double r, double th, double he, double a,
+    double r, double th, double he, double a, double Q2,
     double r_isco, double disk_outer,
     float *acc_r, float *acc_g, float *acc_b, float *acc_a
 ) {
     double cth = cos(th), sth = sin(th);
     double r_cyl = r * fabs(sth);          /* cylindrical radius */
     double z = r * cth;                     /* height above equator */
-    double r_horizon = 1.0 + sqrt(fmax(1.0 - a * a, 0.0));
+    /* Kerr-Newman horizon: r_+ = 1 + sqrt(1 - a² - Q²).
+     * Previously used sqrt(1 - a²), which over-estimated r_+ for Q > 0
+     * and wrongly suppressed volumetric emission inside the annulus
+     * between the Kerr and K-N horizons. */
+    double r_horizon = 1.0 + sqrt(fmax(1.0 - a * a - Q2, 0.0));
 
     /* ── Hot corona (disk atmosphere) ─────────────────────── */
     /* Optically thin thermal bremsstrahlung from the hot corona.

@@ -326,7 +326,7 @@ void trace_kahanli8s(const RenderParams *pp, unsigned char *output, const float 
 
         /* Volumetric emission: hot corona + relativistic jet */
         if (acc_a < 0.99f) {
-            accumulate_volume_emission(r, th, he, a, (double)p.isco, p.disk_outer,
+            accumulate_volume_emission(r, th, he, a, Q2, (double)p.isco, p.disk_outer,
                                        &acc_r, &acc_g, &acc_b, &acc_a);
         }
 
@@ -351,7 +351,7 @@ void trace_kahanli8s(const RenderParams *pp, unsigned char *output, const float 
                 float g = compute_g_factor_extended(r_hit, a, Q2, b, (double)p.isco);
 
                 float dcr, dcg, dcb;
-                diskColor(dr_f, dphi_f, (float)a,
+                diskColor(dr_f, dphi_f, (float)a, (float)Q2,
                          (float)p.isco, (float)p.disk_outer, (float)p.disk_temp,
                          g, (int)p.doppler_boost,
                          &dcr, &dcg, &dcb);

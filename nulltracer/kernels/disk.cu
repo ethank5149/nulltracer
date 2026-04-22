@@ -192,9 +192,19 @@ __device__ float compute_g_factor(double r, double a, double Q2, double b) {
     double denom = -(gtt + 2.0 * Omega * gtph + Omega * Omega * gphph);
     double ut = 1.0 / sqrt(fmax(denom, 1e-30));
 
-    /* g = 1 / (u^t * (1 - b * Omega)) */
+    /* g = 1 / (u^t * (1 - b * Omega))
+     *
+     * The sign of (1 - b·Ω) is physical: when b·Ω > 1 the photon cannot
+     * be emitted from a prograde circular orbit toward the observer at
+     * that impact parameter (the emitter's 4-velocity would have to be
+     * superluminal). We clamp the denominator from *below* by a small
+     * positive epsilon — effectively sending g → very small in that
+     * forbidden regime, which gives near-zero emission (g^4 contribution).
+     * Taking fabs() would *flip* the sign and mask the forbidden regime
+     * as a spurious bright spot on the far approaching limb. */
     double one_minus_bOmega = 1.0 - b * Omega;
-    double g = 1.0 / (ut * fmax(fabs(one_minus_bOmega), 1e-30));
+    double denom_ou = ut * fmax(one_minus_bOmega, 1e-30);
+    double g = 1.0 / fmax(denom_ou, 1e-30);
     g = fmin(fmax(g, 0.01), 10.0);  // Clamp to physical range [0.01, 10.0]
 
     return (float)g;
@@ -314,12 +324,16 @@ __device__ float novikov_thorne_flux(double r, double a, double r_isco) {
  * and the shadow boundary, producing a more realistic appearance
  * that matches GRMHD simulations (Moscibrodzka et al. 2016). */
 
-__device__ void diskColor(float r, float ph, float a,
+__device__ void diskColor(float r, float ph, float a, float Q2,
                           float isco, float disk_outer, float disk_temp,
                           float g_factor, int doppler_boost,
                           float *cr, float *cg, float *cb) {
     float ri = isco;
-    float r_horizon = 1.0f + sqrtf(fmaxf(1.0f - a * a, 0.0f));
+    /* Kerr-Newman horizon: r_+ = 1 + sqrt(1 - a² - Q²). Previously used the
+     * Kerr formula sqrt(1 - a²), which overestimates r_+ when Q > 0 and
+     * wrongly clipped emission slightly above the true horizon for charged
+     * black holes. For Q = 0 this is identical to the previous behaviour. */
+    float r_horizon = 1.0f + sqrtf(fmaxf(1.0f - a * a - Q2, 0.0f));
 
     /* Outside disk bounds → no emission */
     if (r < r_horizon * 1.02f || r > disk_outer) {

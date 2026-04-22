@@ -135,6 +135,8 @@ def render_frame(
     srgb_output: bool = True,
     disk_alpha: float = 0.95,
     disk_max_crossings: int = 5,
+    disk_outer: float = 50.0,
+    aa_samples: int = 1,
     bloom_enabled: bool = False,
     bloom_radius: float = 1.0,
 ) -> tuple[np.ndarray, RenderInfo]:
@@ -180,6 +182,16 @@ def render_frame(
         Base opacity per disk crossing.
     disk_max_crossings : int
         Maximum disk crossings to accumulate.
+    disk_outer : float
+        Outer edge of the disk in units of M (default 50.0). For Novikov-Thorne
+        the emission falls off as ~1/r, so most of the bright region sits inside
+        r ≲ 5-10 M; a smaller ``disk_outer`` crops the invisible outer halo and
+        can produce cleaner hero images.
+    aa_samples : int
+        Number of stochastic super-samples per pixel (default 1). Each sample
+        jitters within the pixel and averages the result. 4-8 samples remove
+        the visible staircase on lensed arcs at the cost of a proportional
+        linear slow-down.
     bloom_enabled : bool
         Apply Airy-disk bloom post-processing.
     bloom_radius : float
@@ -216,7 +228,7 @@ def render_frame(
         steps=float(max_steps),
         obs_dist=float(obs_dist),
         esc_radius=float(obs_dist) + 12.0,
-        disk_outer=50.0,
+        disk_outer=float(disk_outer),
         step_size=float(step_size),
         bg_mode=float(actual_bg),
         star_layers=float(star_layers),
@@ -228,6 +240,7 @@ def render_frame(
         disk_alpha=float(disk_alpha),
         disk_max_crossings=float(disk_max_crossings),
         bloom_enabled=1.0 if bloom_enabled else 0.0,
+        aa_samples=float(aa_samples),
         sky_width=float(sky_w),
         sky_height=float(sky_h),
     )
