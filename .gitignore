@@ -18,6 +18,7 @@ venv/
 .env
 
 reference/
+output/
 
 # IDE
 .idea/
