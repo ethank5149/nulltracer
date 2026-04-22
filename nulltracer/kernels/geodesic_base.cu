@@ -173,13 +173,15 @@ __device__ void initRay(
     double thObs = p.incl;
     double sO = sin(thObs), cO = cos(thObs);
 
-    double b = -alpha * sO;
+    double sin_i = sO;
+    double cos_i = cO;
+
+    double Lz = -alpha * sin_i;
 
     *r   = p.obs_dist;
     *th  = thObs;
     *phi = p.phi0;
 
-    /* Compute initial p_r from the null condition H = 0 */
     double sth = sin(thObs), cth = cos(thObs);
     double s2 = sth * sth + S2_EPS;
     double c2 = cth * cth;
@@ -196,15 +198,19 @@ __device__ void initRay(
     double gthi = 1.0 / sig;
     double w_init = 2.0 * r0 - Q2;
 
-    *pth = -beta;
-    double rest = -A_ * iSD + 2.0 * a * b * w_init * iSD
-                  + gthi * beta * beta + (sig - w_init) * iSD * is2 * b * b;
+    double Q = beta * beta + c2 * (a2 - Lz * Lz / s2);
+    double pth2 = fmax(Q - c2 * (a2 - Lz * Lz / s2), 0.0);
+    *pth = sqrt(pth2);
+    if (beta < 0.0) *pth = -*pth;
+
+    double rest = -A_ * iSD + 2.0 * a * Lz * w_init * iSD
+                  + gthi * (*pth) * (*pth) + (sig - w_init) * iSD * is2 * Lz * Lz;
     double pr2 = -rest / grr;
     *pr = (pr2 > 0.0) ? -sqrt(pr2) : 0.0;
 
     /* Event horizon radius */
     *rp_out = 1.0 + sqrt(fmax(1.0 - a2 - Q2, 0.0));
-    *b_out = b;
+    *b_out = Lz;
 
     *alpha_out = (float)alpha;
     *beta_out  = (float)beta;
