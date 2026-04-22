@@ -62,6 +62,7 @@ struct RenderParams {
     double disk_alpha;          /* base opacity per disk crossing (0.0–1.0) */
     double disk_max_crossings;  /* max disk crossings to accumulate (as double, cast to int) */
     double bloom_enabled;       /* 1.0 = output float32 linear for bloom, 0.0 = normal uint8 sRGB */
+    double aa_samples;          /* stochastic multi-sample anti-aliasing count */
 
     /* Skymap texture (equirectangular projection) */
     double sky_width;           /* skymap pixel width (0 = no skymap, use procedural) */
@@ -216,6 +217,56 @@ __device__ void initRay(
     *beta_out  = (float)beta;
 }
 
+__device__ void initRayJittered(
+    int ix, int iy, float jitter_x, float jitter_y, const RenderParams &p,
+    double *r, double *th, double *phi,
+    double *pr, double *pth,
+    double *b_out, double *rp_out,
+    float *alpha_out, float *beta_out
+) {
+    double asp = p.width / p.height;
+    double ux = (2.0 * (ix + 0.5 + jitter_x) / p.width  - 1.0);
+    double uy = (2.0 * (iy + 0.5 + jitter_y) / p.height - 1.0);
+    double alpha = ux * p.fov * asp;
+    double beta  = uy * p.fov;
+    double a = p.spin;
+    double a2 = a * a;
+    double Q2 = p.charge * p.charge;
+    double thObs = p.incl;
+    double sO = sin(thObs), cO = cos(thObs);
+    double Lz = -alpha * sO;
+    *r   = p.obs_dist;
+    *th  = thObs;
+    *phi = p.phi0;
+    double sth = sin(thObs), cth = cos(thObs);
+    double s2 = sth * sth + S2_EPS;
+    double c2 = cth * cth;
+    double r0 = p.obs_dist;
+    double r02 = r0 * r0;
+    double sig = r02 + a2 * c2;
+    double del = r02 - 2.0 * r0 + a2 + Q2;
+    double sdel = fmax(del, 1e-14);
+    double rpa2 = r02 + a2;
+    double A_ = rpa2 * rpa2 - sdel * a2 * s2;
+    double iSD = 1.0 / (sig * sdel);
+    double is2 = 1.0 / s2;
+    double grr = sdel / sig;
+    double gthi = 1.0 / sig;
+    double w_init = 2.0 * r0 - Q2;
+    double Q = beta * beta + c2 * (a2 - Lz * Lz / s2);
+    double pth2 = fmax(Q - c2 * (a2 - Lz * Lz / s2), 0.0);
+    *pth = sqrt(pth2);
+    if (beta < 0.0) *pth = -*pth;
+    double rest = -A_ * iSD + 2.0 * a * Lz * w_init * iSD
+                  + gthi * (*pth) * (*pth) + (sig - w_init) * iSD * is2 * Lz * Lz;
+    double pr2 = -rest / grr;
+    *pr = (pr2 > 0.0) ? -sqrt(pr2) : 0.0;
+    *rp_out = 1.0 + sqrt(fmax(1.0 - a2 - Q2, 0.0));
+    *b_out = Lz;
+    *alpha_out = (float)alpha;
+    *beta_out  = (float)beta;
+}
+
 
 /* ── Hash function (for procedural backgrounds) ───────────── */
 
@@ -227,22 +278,18 @@ __device__ void initRay(
  *   }
  */
 __device__ float hash2(float inx, float iny) {
-    /* p = fract(p * vec2(443.8, 441.4)) */
-    float px = inx * 443.8f;
-    px = px - floorf(px);
-    float py = iny * 441.4f;
-    py = py - floorf(py);
+    /* Upgrade to float64 internally to prevent mantissa exhaustion at large r */
+    double px = (double)inx * 443.8;
+    px = px - floor(px);
+    double py = (double)iny * 441.4;
+    py = py - floor(py);
 
-    /* dot(p, p + 19.19) = p.x*(p.x+19.19) + p.y*(p.y+19.19) */
-    float d = px * (px + 19.19f) + py * (py + 19.19f);
-
-    /* p += dot(p, p+19.19)  — adds scalar to both components */
+    double d = px * (px + 19.19) + py * (py + 19.19);
     px += d;
     py += d;
 
-    /* return fract(p.x * p.y) */
-    float prod = px * py;
-    return prod - floorf(prod);
+    double prod = px * py;
+    return (float)(prod - floor(prod));
 }
 
 
