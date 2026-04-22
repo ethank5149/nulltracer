@@ -187,14 +187,16 @@ def compare_integrators(
         ``fig`` is a matplotlib Figure.
     """
     import matplotlib.pyplot as plt
-    from ._kernel_utils import KernelCache
-    from .render import compile_all, render_frame
+    from .renderer import CudaRenderer
+    
 
-    kc = KernelCache()
+    renderer = CudaRenderer()
+    renderer.initialize()
     if methods is None:
-        methods = kc.available_methods
-
-    compile_all(verbose=False)
+        methods = renderer.available_methods()
+    
+    # ensure all kernels are compiled
+    renderer.precompile_all()
 
     results = []
     fig, axes = plt.subplots(1, len(methods), figsize=(5 * len(methods), 5))
@@ -202,20 +204,17 @@ def compare_integrators(
         axes = [axes]
 
     for ax, m in zip(axes, methods):
-        img, info = render_frame(
-            spin,
-            inclination_deg,
-            width=width,
-            height=height,
-            fov=fov,
-            obs_dist=obs_dist,
-            step_size=step_size,
-            method=m,
-            **render_kwargs,
-        )
+        params = {'spin': spin, 'incl': inclination_deg, 'width': width, 'height': height, 'fov': fov, 'obs_dist': obs_dist, 'step_size': step_size, 'method': m, **render_kwargs}
+        timed = renderer.render_frame_timed(params)
+        import numpy as np
+        img = np.frombuffer(timed['raw_rgb'], dtype=np.uint8).reshape((height, width, 3))
+        class FakeInfo:
+            render_ms = timed['kernel_ms']
+            max_steps = 0 # Cannot get max_steps out of timed easily, so assume 0
+        info = FakeInfo()
         ax.imshow(img)
         ax.axis("off")
-        label = kc.METHOD_LABELS.get(m, m)
+        label = m
         ax.set_title(
             f"{label}\n{info.render_ms:.0f} ms, {info.max_steps} steps",
             fontsize=10,
