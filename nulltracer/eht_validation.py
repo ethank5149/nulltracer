@@ -89,17 +89,27 @@ def extract_shadow_metrics(
     Args:
         image: 2D or 3D numpy array (rendered frame).
                If 3D (RGB), converts to grayscale.
-        fov_deg: field of view in degrees (used for angular scale)
+        fov_deg: screen half-width in units of M (note: historically
+                 named `fov_deg`, but the kernel treats this as an
+                 impact-parameter half-extent, not an angle).
         threshold: shadow boundary threshold (fraction of max intensity)
 
     Returns:
         dict with keys:
-            'diameter_px': shadow diameter in pixels
-            'diameter_M': shadow diameter in units of M (gravitational radii)
+            'diameter_px': shadow diameter in pixels (2 × circle-fit radius)
+            'diameter_M':  shadow diameter in units of M (circle fit).
+                           Best for comparing against analytic critical
+                           impact parameters like 2·3√3 M.
+            'ring_diameter_M': ellipse-fit major-axis diameter in M.
+                           This is the **EHT observable** — the M87* and
+                           Sgr A* papers quote the bright ring's major
+                           axis, not a circle-averaged diameter.
             'circularity': ΔC = 1 - b/a (0 = perfect circle)
             'center_x', 'center_y': shadow center in pixels
             'asymmetry': brightness asymmetry (ratio of left/right flux)
-            'circle_fit_rms': residual of circle fit
+            'circle_fit_rms', 'ellipse_fit_rms': residuals
+            'semi_major', 'semi_minor': ellipse axes in pixels
+            'n_contour_points': number of extracted boundary pixels
     """
     if image.ndim == 3:
         gray = np.mean(image, axis=2)
@@ -114,28 +124,31 @@ def extract_shadow_metrics(
         return {"error": "Too few contour points", "n_points": len(contour)}
 
     cx, cy, radius, circle_rms = fit_circle(contour)
-    _, _, a, b, angle, ellipse_rms = fit_ellipse(contour)
+    _, _, a_ell, b_ell, angle, ellipse_rms = fit_ellipse(contour)
 
     height, width = gray.shape
-    px_per_M = width / (2.0 * fov_deg)  # approximate
+    px_per_M = width / (2.0 * fov_deg)  # kernel maps ux∈[-1,1] to α∈[-fov,+fov]·M
 
-    circularity = 1.0 - min(a, b) / max(a, b)
+    semi_major_px = max(a_ell, b_ell)
+    semi_minor_px = min(a_ell, b_ell)
+    circularity = 1.0 - semi_minor_px / semi_major_px
 
     # Brightness asymmetry: ratio of total flux left vs right of center
     left_flux = gray[:, : int(cx)].sum()
-    right_flux = gray[:, int(cx) :].sum()
+    right_flux = gray[:, int(cx):].sum()
     asymmetry = left_flux / (right_flux + 1e-12)
 
     return {
         "diameter_px": 2.0 * radius,
         "diameter_M": 2.0 * radius / px_per_M if px_per_M > 0 else None,
+        "ring_diameter_M": 2.0 * semi_major_px / px_per_M if px_per_M > 0 else None,
         "circularity": circularity,
         "center_x": cx,
         "center_y": cy,
         "asymmetry": asymmetry,
         "circle_fit_rms": circle_rms,
         "ellipse_fit_rms": ellipse_rms,
-        "semi_major": max(a, b),
-        "semi_minor": min(a, b),
+        "semi_major": semi_major_px,
+        "semi_minor": semi_minor_px,
         "n_contour_points": len(contour),
     }

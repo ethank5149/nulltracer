@@ -107,7 +107,6 @@ __all__ = [
     "CudaRenderer",
     "RenderParams",
     "render_frame",
-    "render_classify",
     "trace_ray",
     "classify_shadow",
     "compile_all",

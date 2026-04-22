@@ -33,16 +33,42 @@ __all__ = [
 def shadow_boundary(
     a: float,
     theta_obs: float,
+    Q: float = 0.0,
     N: int = 1000,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Bardeen (1973) analytic shadow boundary for a Kerr black hole.
+    """Analytic shadow boundary for a Kerr or Kerr-Newman black hole.
+
+    Derived from the spherical photon-orbit conditions :math:`R(r) = 0`,
+    :math:`R'(r) = 0` for null geodesics in the Kerr-Newman spacetime
+    (Boyer-Lindquist coordinates, geometric units :math:`M = 1`). The
+    critical impact parameters are
+
+    .. math::
+
+        \\xi_c(r) &= -\\frac{r^3 - 3r^2 + a^2 r + a^2 + 2 r Q^2}{a(r - 1)}, \\\\
+        \\eta_c(r) &= \\frac{r^2\\bigl[4 a^2 \\Delta - (r^2 - 3 r + 2 a^2 + 2 Q^2)^2\\bigr]}{a^2 (r - 1)^2},
+
+    where :math:`\\Delta = r^2 - 2 r + a^2 + Q^2`. The photon-orbit radii
+    (endpoints of the spherical orbit range) are the real roots of
+
+    .. math::
+
+        r^4 - 6 r^3 + (9 + 4 Q^2) r^2 - 4(a^2 + 3 Q^2) r + 4 Q^2 (a^2 + Q^2) = 0
+
+    lying outside the outer horizon :math:`r_+ = 1 + \\sqrt{1 - a^2 - Q^2}`.
+    For :math:`Q = 0` this reduces to Bardeen's (1973) Kerr result. For
+    :math:`a = 0` (Reissner-Nordström) the shadow is a circle of radius
+    :math:`r_{\\rm ph}^2/\\sqrt{r_{\\rm ph}^2 - 2 r_{\\rm ph} + Q^2}` where
+    :math:`r_{\\rm ph} = (3 + \\sqrt{9 - 8 Q^2})/2`.
 
     Parameters
     ----------
     a : float
-        Dimensionless spin.
+        Dimensionless spin, :math:`0 \\le a^2 + Q^2 < 1`.
     theta_obs : float
         Observer inclination in **radians**.
+    Q : float
+        Dimensionless electric charge (Kerr-Newman). Default 0 (Kerr).
     N : int
         Number of points along the contour.
 
@@ -50,28 +76,68 @@ def shadow_boundary(
     -------
     (alpha, beta_plus, beta_minus)
         Impact-parameter coordinates of the shadow edge (upper and lower halves),
-        in units of M.
+        in units of :math:`M`.
+
+    Notes
+    -----
+    Requires :math:`a^2 + Q^2 \\le 1` (cosmic-censorship bound). For
+    values close to the extremal boundary the quartic roots may approach
+    the horizon; the caller should sanity-check the returned contour.
     """
+    if a**2 + Q**2 > 1.0:
+        raise ValueError(
+            f"Hyperextremal configuration: a² + Q² = {a**2 + Q**2:.4f} > 1 "
+            f"(a={a}, Q={Q}). No horizon exists."
+        )
+
     sO = np.sin(theta_obs)
     cO = np.cos(theta_obs)
 
+    # ── Schwarzschild / Reissner-Nordström (spherically symmetric) ──
     if a < 1e-5:
-        r_shadow = 3.0 * np.sqrt(3.0)
+        if Q < 1e-12:
+            r_shadow = 3.0 * np.sqrt(3.0)              # Schwarzschild
+        else:
+            # RN photon sphere r_ph = (3 + √(9-8Q²))/2 requires Q² ≤ 9/8;
+            # for physical 0 ≤ Q² < 1 this is always satisfied.
+            r_ph = 0.5 * (3.0 + np.sqrt(9.0 - 8.0 * Q**2))
+            r_shadow = r_ph**2 / np.sqrt(r_ph**2 - 2.0 * r_ph + Q**2)
         phi = np.linspace(0.0, 2.0 * np.pi, N)
         alpha = r_shadow * np.cos(phi)
         beta = r_shadow * np.sin(phi)
         return alpha, beta, -beta
 
-    r_min = 2.0 * (1.0 + np.cos(2.0 / 3.0 * np.arccos(-a)))
-    r_max = 2.0 * (1.0 + np.cos(2.0 / 3.0 * np.arccos(a)))
+    # ── Kerr / Kerr-Newman: parameterise spherical photon orbits ──
+    # Photon-orbit radii are real roots of the quartic outside r_+.
+    coeffs = [
+        1.0,
+        -6.0,
+        9.0 + 4.0 * Q**2,
+        -4.0 * (a**2 + 3.0 * Q**2),
+        4.0 * Q**2 * (a**2 + Q**2),
+    ]
+    r_plus = 1.0 + np.sqrt(max(0.0, 1.0 - a**2 - Q**2))
+    roots = np.roots(coeffs)
+    real_roots = np.sort([
+        r.real for r in roots
+        if abs(r.imag) < 1e-8 and r.real > r_plus + 1e-10
+    ])
+    if len(real_roots) < 2:
+        raise RuntimeError(
+            f"shadow_boundary: could not locate two photon-orbit radii "
+            f"outside r_+ = {r_plus:.4f} for a={a}, Q={Q}. "
+            f"Real roots > r_+: {real_roots}"
+        )
+    r_min, r_max = real_roots[0], real_roots[-1]
+
     r = np.linspace(r_min + 1e-6, r_max - 1e-6, N)
 
-    xi = -(r**3 - 3.0 * r**2 + a**2 * r + a**2) / (a * (r - 1.0) + 1e-30)
+    denom = a * (r - 1.0)
+    xi = -(r**3 - 3.0 * r**2 + a**2 * r + a**2 + 2.0 * r * Q**2) / denom
+    Delta = r**2 - 2.0 * r + a**2 + Q**2
     eta = (
-        -(r**3)
-        * (r**3 - 6.0 * r**2 + 9.0 * r - 4.0 * a**2)
-        / (a**2 * (r - 1.0) ** 2 + 1e-30)
-    )
+        r**2 * (4.0 * a**2 * Delta - (r**2 - 3.0 * r + 2.0 * a**2 + 2.0 * Q**2) ** 2)
+    ) / (a**2 * (r - 1.0) ** 2)
 
     alpha = -xi / sO
     beta_sq = eta + a**2 * cO**2 - (xi**2) * (cO**2 / (sO**2))

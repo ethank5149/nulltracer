@@ -151,7 +151,9 @@ def render_frame(
     width, height : int
         Output resolution in pixels.
     fov : float
-        Field of view in degrees.
+        Screen half-width in units of M (gravitational radii). Matches the
+        CUDA kernel, which maps pixel column ``ux ∈ [-1, +1]`` to impact
+        parameter ``α = ux · fov · aspect``. NOT an angle, despite the name.
     obs_dist : float
         Observer distance in gravitational radii (M).
     max_steps : int, optional
@@ -298,7 +300,9 @@ def classify_shadow(
     width, height : int
         Classification grid resolution.
     fov : float
-        Field of view in degrees.
+        Screen half-width in units of M (gravitational radii). Matches the
+        CUDA kernel, which maps pixel column ``ux ∈ [-1, +1]`` to impact
+        parameter ``α = ux · fov · aspect``. NOT an angle, despite the name.
     obs_dist : float
         Observer distance in M.
     max_steps : int, optional
