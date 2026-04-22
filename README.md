@@ -15,16 +15,9 @@ Nulltracer is a CUDA-powered ray tracer that visualises black holes by tracing n
 
 Nulltracer solves null geodesics in the Kerr-Newman spacetime, which describes the curved spacetime around a rotating, electrically charged black hole. In Boyer-Lindquist coordinates $(t, r, \theta, \phi)$, geometric units $M = 1$,
 
-$$
-\begin{aligned}
-ds^2 = &- \left(1 - \frac{2r - Q^2}{\Sigma}\right) dt^2
-- \frac{2a(2r - Q^2)\sin^2\theta}{\Sigma}\,dt\,d\phi \\
-&+ \frac{\Sigma}{\Delta}\,dr^2 + \Sigma\,d\theta^2
-+ \sin^2\theta \left( r^2 + a^2 + \frac{a^2(2r - Q^2)\sin^2\theta}{\Sigma} \right) d\phi^2,
-\end{aligned}
-$$
+$$ds^2 = - \left(1 - \frac{\beta}{\Sigma}\right) dt^2 - \frac{2a\beta\sin^2\theta}{\Sigma}\,dt\,d\phi + \frac{\Sigma}{\Delta}\,dr^2 + \Sigma\,d\theta^2 + \sin^2\theta \left(r^2+a^2+\frac{a^2\beta\sin^2\theta}{\Sigma} \right) d\phi^2,$$
 
-where $\Sigma = r^2 + a^2 \cos^2\theta$ and $\Delta = r^2 - 2r + a^2 + Q^2$. Geodesics are integrated in Hamiltonian form using conserved energy $E$, angular momentum $L_z$, and the Carter constant $\mathcal{Q}$.
+where $\beta=2r-Q^2$, $\Sigma = r^2 + a^2 \cos^2\theta$, and $\Delta = r^2 - 2r + a^2 + Q^2$. Geodesics are integrated in Hamiltonian form using conserved energy $E$, angular momentum $L_z$, and the Carter constant $\mathcal{Q}$.
 
 ### Integration methods
 
