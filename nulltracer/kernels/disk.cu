@@ -1,9 +1,9 @@
 /* ============================================================
- *  DISK — Accretion disk emission and color (float32)
+ *  DISK ??? Accretion disk emission and color (float32)
  *
  *  Page-Thorne (1974) thin disk model with:
  *    - Novikov-Thorne radial flux F(r) with zero-torque ISCO BC
- *    - CIE 1931 Planck spectrum → linear sRGB via 256-entry LUT
+ *    - CIE 1931 Planck spectrum ??? linear sRGB via 256-entry LUT
  *    - Full GR redshift g-factor for Kerr-Newman metric
  *
  *  Requires geodesic_base.cu to be included first.
@@ -13,14 +13,14 @@
 #define DISK_CU
 
 
-/* ── Planck spectrum → linear sRGB lookup table ───────────── */
+/* -- Planck spectrum ??? linear sRGB lookup table ------------- */
 
 /* 256 entries covering 1000K to 40000K.
  * Generated from CIE 1931 2-degree standard observer color
  * matching functions integrated against the Planck distribution,
  * then converted to linear sRGB via the D65 color matrix.
  * Normalized so max(R,G,B) = 1.0 at each temperature
- * (chromaticity only — intensity is handled separately). */
+ * (chromaticity only ??? intensity is handled separately). */
 
 #define PLANCK_LUT_SIZE 256
 #define PLANCK_T_MIN 1000.0f
@@ -132,7 +132,7 @@ __constant__ float planck_lut_b[PLANCK_LUT_SIZE] = {
 };
 
 
-/* ── Planck spectrum color lookup with linear interpolation ── */
+/* -- Planck spectrum color lookup with linear interpolation -- */
 
 __device__ void blackbody(float T, float *out_r, float *out_g, float *out_b) {
     /* Clamp temperature to LUT range */
@@ -153,9 +153,9 @@ __device__ void blackbody(float T, float *out_r, float *out_g, float *out_b) {
 }
 
 
-/* ── Gravitational redshift / g-factor (float64) ──────────── */
+/* -- Gravitational redshift / g-factor (float64) ------------ */
 
-/* Compute the gravitational redshift factor g = ν_obs / ν_emit
+/* Compute the gravitational redshift factor g = ??_obs / ??_emit
  * for a photon emitted from a circular Keplerian orbit in the
  * equatorial plane of a Kerr-Newman black hole.
  *
@@ -163,10 +163,10 @@ __device__ void blackbody(float T, float *out_r, float *out_g, float *out_b) {
  * near the ISCO and horizon.  Returns float for use in color pipeline.
  *
  * Parameters:
- *   r   — radial coordinate of emission point (double)
- *   a   — dimensionless spin parameter (double)
- *   Q2  — charge squared, Q^2 (double)
- *   b   — photon impact parameter = -α sin(θ_obs) (double)
+ *   r   ??? radial coordinate of emission point (double)
+ *   a   ??? dimensionless spin parameter (double)
+ *   Q2  ??? charge squared, Q^2 (double)
+ *   b   ??? photon impact parameter = -?? sin(??_obs) (double)
  */
 __device__ float compute_g_factor(double r, double a, double Q2, double b) {
     /* All computation in float64 */
@@ -194,11 +194,11 @@ __device__ float compute_g_factor(double r, double a, double Q2, double b) {
 
     /* g = 1 / (u^t * (1 - b * Omega))
      *
-     * The sign of (1 - b·Ω) is physical: when b·Ω > 1 the photon cannot
+     * The sign of (1 - b????) is physical: when b???? > 1 the photon cannot
      * be emitted from a prograde circular orbit toward the observer at
      * that impact parameter (the emitter's 4-velocity would have to be
      * superluminal). We clamp the denominator from *below* by a small
-     * positive epsilon — effectively sending g → very small in that
+     * positive epsilon ??? effectively sending g ??? very small in that
      * forbidden regime, which gives near-zero emission (g^4 contribution).
      * Taking fabs() would *flip* the sign and mask the forbidden regime
      * as a spurious bright spot on the far approaching limb. */
@@ -211,7 +211,7 @@ __device__ float compute_g_factor(double r, double a, double Q2, double b) {
 }
 
 
-/* ── Extended g-factor with plunging region support ────────── */
+/* -- Extended g-factor with plunging region support ---------- */
 
 /* Inside the ISCO, no stable circular orbits exist. Gas follows
  * plunging geodesics with approximately the ISCO angular momentum.
@@ -220,7 +220,7 @@ __device__ float compute_g_factor(double r, double a, double Q2, double b) {
  * and produces physically reasonable (if approximate) Doppler shifts
  * for the plunging region.
  *
- * Reference: Cunningham (1975), ApJ 202, 788 — plunging region spectra */
+ * Reference: Cunningham (1975), ApJ 202, 788 ??? plunging region spectra */
 
 __device__ float compute_g_factor_extended(double r, double a, double Q2,
                                            double b, double r_isco) {
@@ -242,10 +242,10 @@ __device__ float compute_g_factor_extended(double r, double a, double Q2,
  * accretion disk around a Kerr black hole with spin parameter a.
  *
  * Uses the Novikov-Thorne form:
- *   F(r) ∝ 1/(r² (r^{3/2} - a)) × [integral correction terms]
+ *   F(r) ??? 1/(r?? (r^{3/2} - a)) ?? [integral correction terms]
  *
  * The integral is evaluated analytically using the three roots
- * of x³ - 3x + 2a = 0 (where x = √r in M=1 units).
+ * of x?? - 3x + 2a = 0 (where x = ???r in M=1 units).
  *
  * Returns the normalized flux (peak = 1.0).
  *
@@ -313,11 +313,11 @@ __device__ float novikov_thorne_flux(double r, double a, double r_isco) {
 }
 
 
-/* ── Accretion disk color with plunging region ─────────────── */
+/* -- Accretion disk color with plunging region --------------- */
 
 /* Extended disk model:
  *   r > ISCO:    Standard Novikov-Thorne (Page & Thorne 1974)
- *   ISCO > r > horizon: Plunging region — gas on infall geodesics
+ *   ISCO > r > horizon: Plunging region ??? gas on infall geodesics
  *                 with decaying emission (Cunningham 1975)
  *
  * The plunging region fills the visual gap between the ISCO
@@ -329,13 +329,13 @@ __device__ void diskColor(float r, float ph, float a, float Q2,
                           float g_factor, int doppler_boost,
                           float *cr, float *cg, float *cb) {
     float ri = isco;
-    /* Kerr-Newman horizon: r_+ = 1 + sqrt(1 - a² - Q²). Previously used the
-     * Kerr formula sqrt(1 - a²), which overestimates r_+ when Q > 0 and
+    /* Kerr-Newman horizon: r_+ = 1 + sqrt(1 - a?? - Q??). Previously used the
+     * Kerr formula sqrt(1 - a??), which overestimates r_+ when Q > 0 and
      * wrongly clipped emission slightly above the true horizon for charged
      * black holes. For Q = 0 this is identical to the previous behaviour. */
     float r_horizon = 1.0f + sqrtf(fmaxf(1.0f - a * a - Q2, 0.0f));
 
-    /* Outside disk bounds → no emission */
+    /* Outside disk bounds ??? no emission */
     if (r < r_horizon * 1.02f || r > disk_outer) {
         *cr = 0.0f; *cg = 0.0f; *cb = 0.0f;
         return;
@@ -360,7 +360,7 @@ __device__ void diskColor(float r, float ph, float a, float Q2,
     } else {
         /* Plunging region: flux decays from ISCO value toward horizon.
          * Gas retains roughly the ISCO angular momentum but loses
-         * energy as it spirals inward. Emission ∝ x² gives a
+         * energy as it spirals inward. Emission ??? x?? gives a
          * smooth fade that avoids a hard edge at the ISCO. */
         float F_isco = novikov_thorne_flux((double)ri, (double)a, (double)ri);
         float x = (r - r_horizon) / fmaxf(ri - r_horizon, 1e-6f);
@@ -368,7 +368,7 @@ __device__ void diskColor(float r, float ph, float a, float Q2,
         F_norm = fminf(F_isco / F_max, 1.0f) * x * x;
     }
 
-    /* --- Temperature from flux: T ∝ F^{1/4} --- */
+    /* --- Temperature from flux: T ??? F^{1/4} --- */
     float T_base = 8000.0f * disk_temp;
     float T_emit = T_base * powf(fmaxf(F_norm, 0.0f), 0.25f);
 

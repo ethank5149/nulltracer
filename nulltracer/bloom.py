@@ -7,7 +7,7 @@ This implementation is GPU-accelerated using CuPy.
 The Airy disk function is (2 * J1(x) / x)^2 where J1 is the Bessel function
 of the first kind. It's spectrally dependent: red light diffracts more than
 blue (scale factors [1.0, 0.86, 0.61]). The diffraction radius comes from
-1.22 × 650nm / (4mm pupil) scaled by FOV and resolution.
+1.22 ?? 650nm / (4mm pupil) scaled by FOV and resolution.
 """
 
 import numpy as np
@@ -32,7 +32,7 @@ def airy_disk(x: np.ndarray) -> np.ndarray:
     """Compute the Airy disk intensity pattern.
 
     The Airy pattern is (2*J1(x)/x)^2, with the singularity at x=0
-    handled by L'Hôpital's rule (limit = 1.0).
+    handled by L'H??pital's rule (limit = 1.0).
     """
     result = np.ones_like(x)
     mask = x != 0

@@ -1,0 +1,3 @@
+# Core runtime dependencies
+numpy>=1.24
+cupy-cuda12x>=13.0

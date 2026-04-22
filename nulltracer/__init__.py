@@ -1,5 +1,5 @@
 """
-Nulltracer — GPU-accelerated ray tracing through Kerr-Newman spacetime.
+Nulltracer ??? GPU-accelerated ray tracing through Kerr-Newman spacetime.
 
 Usage:
     from nulltracer import render_frame, isco_kerr

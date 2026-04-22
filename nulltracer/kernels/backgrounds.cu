@@ -1,9 +1,9 @@
 /* ============================================================
- *  BACKGROUNDS — Procedural background rendering (float32)
+ *  BACKGROUNDS ??? Procedural background rendering (float32)
  *
  *  Originally ported from GLSL background rendering functions.
  *  All functions take a Cartesian direction vector (dx, dy, dz)
- *  and never use θ or φ directly — pole-safe by construction.
+ *  and never use ?? or ?? directly ??? pole-safe by construction.
  *
  *  Requires geodesic_base.cu to be included first (for hash,
  *  cubeMap, cubeChecker, cubeGrid, faceColor, smoothstepf).
@@ -13,7 +13,7 @@
 #define BACKGROUNDS_CU
 
 
-/* ── Star field background ────────────────────────────────── */
+/* -- Star field background ---------------------------------- */
 
 __device__ void bgStars(float dx, float dy, float dz,
                         int star_layers,
@@ -23,14 +23,14 @@ __device__ void bgStars(float dx, float dy, float dz,
     float fuv_x = uv_x * 0.5f + 0.5f;
     float fuv_y = uv_y * 0.5f + 0.5f;
 
-    /* Milky Way band: bright near equator (dz ≈ 0) */
+    /* Milky Way band: bright near equator (dz ??? 0) */
     float mw = expf(-8.0f * dz * dz);
 
     /* Base nebula color */
     *cr = 0.007f;  *cg = 0.008f;  *cb = 0.018f;
     *cr += 0.018f * mw;  *cg += 0.014f * mw;  *cb += 0.028f * mw;
 
-    /* Nebula noise — cube-face-local */
+    /* Nebula noise ??? cube-face-local */
     float ns1x = floorf(fuv_x * 5.0f + face * 7.0f);
     float ns1y = floorf(fuv_y * 5.0f + face * 7.0f);
     float h1 = hash2(ns1x, ns1y);
@@ -45,7 +45,7 @@ __device__ void bgStars(float dx, float dy, float dz,
     *cg += 0.012f * h2 * 0.25f;
     *cb += 0.022f * h2 * 0.25f;
 
-    /* Stars — cube-face-local cells */
+    /* Stars ??? cube-face-local cells */
     for (int L = 0; L < star_layers; L++) {
         float sc = 10.0f + (float)L * 14.0f;
         float cellx = floorf(fuv_x * sc);
@@ -75,7 +75,7 @@ __device__ void bgStars(float dx, float dy, float dz,
 }
 
 
-/* ── Checker background ───────────────────────────────────── */
+/* -- Checker background ------------------------------------- */
 
 __device__ void bgChecker(float dx, float dy, float dz,
                           float *cr, float *cg, float *cb) {
@@ -111,7 +111,7 @@ __device__ void bgChecker(float dx, float dy, float dz,
     *cg += 0.05f * edgeFade;
     *cb += 0.04f * edgeFade;
 
-    /* Equator highlight (dz ≈ 0) */
+    /* Equator highlight (dz ??? 0) */
     float eqFade = 1.0f - smoothstepf(0.0f, 0.04f, fabsf(dz));
     *cr += 0.22f * eqFade;
     *cg += 0.14f * eqFade;
@@ -119,11 +119,11 @@ __device__ void bgChecker(float dx, float dy, float dz,
 }
 
 
-/* ── Color-map background ─────────────────────────────────── */
+/* -- Color-map background ----------------------------------- */
 
 __device__ void bgColorMap(float dx, float dy, float dz,
                            float *cr, float *cg, float *cb) {
-    /* Direct axis → channel mapping. Inherently pole-safe. */
+    /* Direct axis ??? channel mapping. Inherently pole-safe. */
     *cr = 0.08f + 0.35f * (dx * 0.5f + 0.5f);
     *cg = 0.08f + 0.35f * (dy * 0.5f + 0.5f);
     *cb = 0.08f + 0.35f * fmaxf(-dz, 0.0f);
@@ -152,12 +152,12 @@ __device__ void bgColorMap(float dx, float dy, float dz,
 }
 
 
-/* ── Skymap texture background (equirectangular) ──────────── */
+/* -- Skymap texture background (equirectangular) ------------ */
 
 /* Samples from an equirectangular float32 RGB texture using the
  * escaped ray's spherical direction. The texture is stored as
  * packed float RGB (3 floats per pixel, linear light), row-major,
- * with the first row at the top (θ=0, north pole).
+ * with the first row at the top (??=0, north pole).
  *
  * The Python side normalizes all input formats (JPEG, PNG, EXR)
  * to float32 linear light before uploading to GPU, so this
@@ -169,16 +169,16 @@ __device__ void bgSkymap(float dx, float dy, float dz,
                          const float *skymap,
                          int sky_w, int sky_h,
                          float *cr, float *cg, float *cb) {
-    /* Direction → spherical coordinates */
-    double th = acos(fmax(fmin((double)dz, 1.0), -1.0));  /* [0, π] */
-    double ph = atan2((double)dy, (double)dx);             /* [-π, π] */
-    if (ph < 0.0) ph += TAU;                               /* [0, 2π] */
+    /* Direction ??? spherical coordinates */
+    double th = acos(fmax(fmin((double)dz, 1.0), -1.0));  /* [0, ??] */
+    double ph = atan2((double)dy, (double)dx);             /* [-??, ??] */
+    if (ph < 0.0) ph += TAU;                               /* [0, 2??] */
 
-    /* Spherical → equirectangular UV */
+    /* Spherical ??? equirectangular UV */
     float u = (float)(ph / TAU);           /* [0, 1] */
     float v = (float)(th / PI);            /* [0, 1] */
 
-    /* UV → fractional pixel coordinates */
+    /* UV ??? fractional pixel coordinates */
     float fx = u * (float)(sky_w - 1);
     float fy = v * (float)(sky_h - 1);
 
@@ -209,7 +209,7 @@ __device__ void bgSkymap(float dx, float dy, float dz,
 }
 
 
-/* ── Background dispatcher ────────────────────────────────── */
+/* -- Background dispatcher ---------------------------------- */
 
 __device__ void background(float dx, float dy, float dz,
                            int bg_mode, int star_layers, int show_grid,

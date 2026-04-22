@@ -1,5 +1,5 @@
 /* ============================================================
- *  GEODESIC BASE — Kerr-Newman metric functions (float64)
+ *  GEODESIC BASE ??? Kerr-Newman metric functions (float64)
  *
  *  This file is #include'd by each integrator kernel.
  *  It provides:
@@ -15,18 +15,18 @@
 #ifndef GEODESIC_BASE_CU
 #define GEODESIC_BASE_CU
 
-/* ── Constants ─────────────────────────────────────────────── */
+/* -- Constants ----------------------------------------------- */
 
 #define PI  3.14159265358979323846
 #define TAU 6.28318530717958647693
 
-/* Smooth regularization epsilon for sin²θ.
- * Prevents dφ/dλ divergence at poles.
- * Physics error confined to θ < arcsin(√ε) ≈ 1.1° from poles. */
+/* Smooth regularization epsilon for sin????.
+ * Prevents d??/d?? divergence at poles.
+ * Physics error confined to ?? < arcsin(?????) ??? 1.1?? from poles. */
 #define S2_EPS 0.0004
 
 
-/* ── Parameter struct passed to kernel ─────────────────────── */
+/* -- Parameter struct passed to kernel ----------------------- */
 
 /* All fields are double to guarantee identical layout between
  * Python ctypes and CUDA compiler (no alignment padding issues).
@@ -59,7 +59,7 @@ struct RenderParams {
     double disk_temp;   /* disk temperature multiplier */
     double doppler_boost; /* 0=off, 1=g^3 (thin), 2=g^4 (thick) */
     double srgb_output;   /* >0.5 = apply IEC 61966-2-1 sRGB transfer */
-    double disk_alpha;          /* base opacity per disk crossing (0.0–1.0) */
+    double disk_alpha;          /* base opacity per disk crossing (0.0???1.0) */
     double disk_max_crossings;  /* max disk crossings to accumulate (as double, cast to int) */
     double bloom_enabled;       /* 1.0 = output float32 linear for bloom, 0.0 = normal uint8 sRGB */
     double aa_samples;          /* stochastic multi-sample anti-aliasing count */
@@ -70,12 +70,12 @@ struct RenderParams {
 };
 
 
-/* ── Kerr-Newman geodesic RHS (double precision) ──────────── */
+/* -- Kerr-Newman geodesic RHS (double precision) ------------ */
 
 /* Computes the right-hand side of the geodesic equations:
- *   dr/dλ, dθ/dλ, dφ/dλ, dp_r/dλ, dp_θ/dλ
+ *   dr/d??, d??/d??, d??/d??, dp_r/d??, dp_??/d??
  *
- * Uses smooth sin²θ + ε regularization for pole safety.
+ * Uses smooth sin???? + ?? regularization for pole safety.
  * All intermediate quantities in float64 for maximum accuracy.
  */
 __device__ void geoRHS(
@@ -109,7 +109,7 @@ __device__ void geoRHS(
     *dth  = gthth * pth;
     *dphi = gff * b - gtf;
 
-    /* ∂/∂r derivatives for dp_r */
+    /* ???/???r derivatives for dp_r */
     double dsig_r = 2.0 * r;
     double ddel_r = 2.0 * r - 2.0;
     double dA_r = 4.0 * r * rpa2 - ddel_r * a2 * s2;
@@ -124,7 +124,7 @@ __device__ void geoRHS(
     *dpr = -0.5 * (dgtt_r - 2.0 * b * dgtf_r + dgrr_r * pr * pr
                    + dgthth_r * pth * pth + dgff_r * b * b);
 
-    /* ∂/∂θ derivatives for dp_θ */
+    /* ???/????? derivatives for dp_?? */
     double dsig_th = -2.0 * a2 * sth * cth;
     double ds2_th = 2.0 * sth * cth;
     double dA_th = -sdel * a2 * ds2_th;
@@ -140,7 +140,7 @@ __device__ void geoRHS(
 }
 
 
-/* ── Ray initialization ───────────────────────────────────── */
+/* -- Ray initialization ------------------------------------- */
 
 /* Initialize a ray from pixel coordinates (ix, iy).
  * Returns the initial state: r, th, phi, pr, pth, and the
@@ -159,7 +159,7 @@ __device__ void initRay(
     /* Map pixel to normalized [-1, 1] coordinates.
      * ux: left=-1, right=+1.
      * uy: bottom=-1, top=+1 (bottom-to-top row order).
-     * iy=0 maps to uy≈-1 (bottom of image).
+     * iy=0 maps to uy???-1 (bottom of image).
      * The caller (renderer.py) applies np.flipud() to produce standard
      * top-to-bottom image order. */
     double ux = (2.0 * (ix + 0.5) / p.width  - 1.0);
@@ -268,7 +268,7 @@ __device__ void initRayJittered(
 }
 
 
-/* ── Hash function (for procedural backgrounds) ───────────── */
+/* -- Hash function (for procedural backgrounds) ------------- */
 
 /* Exact port of the GLSL hash function:
  *   float hash(vec2 p){
@@ -293,7 +293,7 @@ __device__ float hash2(float inx, float iny) {
 }
 
 
-/* ── Cube-map projection (Cartesian direction → face + UV) ── */
+/* -- Cube-map projection (Cartesian direction ??? face + UV) -- */
 
 __device__ void cubeMap(float dx, float dy, float dz,
                         float *face, float *uv_x, float *uv_y) {
@@ -345,12 +345,12 @@ __device__ void faceColor(float face, float *r, float *g, float *b) {
 }
 
 
-/* ── Smoothstep utility ───────────────────────────────────── */
+/* -- Smoothstep utility ------------------------------------- */
 
 /* Matches GLSL smoothstep semantics: works correctly even when
  * edge0 > edge1 (reversed edges for fade-out ramps).
  * Computes t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
- * then returns t² × (3 - 2t). */
+ * then returns t?? ?? (3 - 2t). */
 __device__ float smoothstepf(float edge0, float edge1, float x) {
     float t = (x - edge0) / (edge1 - edge0);
     t = fminf(fmaxf(t, 0.0f), 1.0f);
@@ -358,7 +358,7 @@ __device__ float smoothstepf(float edge0, float edge1, float x) {
 }
 
 
-/* ── Sphere direction from (θ, φ) ─────────────────────────── */
+/* -- Sphere direction from (??, ??) --------------------------- */
 
 __device__ void sphereDir(double th, double ph,
                           float *dx, float *dy, float *dz) {
@@ -369,7 +369,7 @@ __device__ void sphereDir(double th, double ph,
 }
 
 
-/* ── Post-processing: tone mapping + gamma ────────────────── */
+/* -- Post-processing: tone mapping + gamma ------------------ */
 
 /* Standard sRGB transfer function (IEC 61966-2-1).
  * Maps linear-light [0,1] to sRGB-encoded [0,1].
@@ -383,7 +383,7 @@ __device__ float linear_to_srgb(float c) {
 }
 
 /* ACES filmic tone mapping curve (Narkowicz 2015 approximation).
- * Maps HDR luminance [0, ∞) to SDR [0, ~1.0) with a natural
+ * Maps HDR luminance [0, ???) to SDR [0, ~1.0) with a natural
  * film-like S-curve: deep toe (rich shadows), linear mid-range,
  * and smooth shoulder (highlight rolloff without flat clipping). */
 __device__ float aces_curve(float x) {
@@ -417,10 +417,10 @@ __device__ void postProcess(float *cr, float *cg, float *cb,
      *
      * Historical note: an earlier revision of this kernel added an
      * isotropic screen-space Gaussian centred at impact parameter
-     * ≈ 5.2 − spin to every pixel, to hint at the critical null-orbit
+     * ??? 5.2 ??? spin to every pixel, to hint at the critical null-orbit
      * ring. That was a cosmetic cheat, and it masked the true Doppler
-     * asymmetry from the disk integrator — at a=0.94, θ=30° the
-     * approaching/receding intensity ratio is ~7× (g^4), but the fake
+     * asymmetry from the disk integrator ??? at a=0.94, ??=30?? the
+     * approaching/receding intensity ratio is ~7?? (g^4), but the fake
      * glow was added equally on both sides and washed that out.
      *
      * All features you see in the output now come from actual geodesic
@@ -438,7 +438,7 @@ __device__ void postProcess(float *cr, float *cg, float *cb,
      * We compute the scene luminance, apply the ACES curve to it,
      * then scale all channels by the same ratio.  This preserves
      * the hue (R:G:B ratio) while giving a cinematic S-curve
-     * response — deep shadows, smooth highlight rolloff, and
+     * response ??? deep shadows, smooth highlight rolloff, and
      * natural color rendering across the full dynamic range.
      *
      * This is critical for relativistic beaming: the approaching
@@ -485,10 +485,10 @@ __device__ void postProcess(float *cr, float *cg, float *cb,
  *  update) components for use in symplectic composition methods.
  *
  *  In the Hamiltonian formulation of geodesic motion, the super-
- *  Hamiltonian H = ½ g^μν p_μ p_ν generates the equations of motion:
+ *  Hamiltonian H = ?? g^???? p_?? p_?? generates the equations of motion:
  *
- *    dq^i/dλ = ∂H/∂p_i   (velocities — computed by geoVelocity)
- *    dp_i/dλ = -∂H/∂q^i  (forces    — computed by geoForce)
+ *    dq^i/d?? = ???H/???p_i   (velocities ??? computed by geoVelocity)
+ *    dp_i/d?? = -???H/???q^i  (forces    ??? computed by geoForce)
  *
  *  The symplectic leapfrog alternates between these two updates,
  *  preserving the symplectic 2-form to machine precision.
@@ -496,36 +496,36 @@ __device__ void postProcess(float *cr, float *cg, float *cb,
  *  References:
  *    - W. Kahan & R.-C. Li, "Composition constants for raising the
  *      orders of unconventional schemes for ordinary differential
- *      equations," Math. Comp. 66(219):1089–1099, 1997.
+ *      equations," Math. Comp. 66(219):1089???1099, 1997.
  *    - J. Wisdom & M. Holman, "Symplectic maps for the N-body
- *      problem," Astron. J. 102:1528–1538, 1991.
+ *      problem," Astron. J. 102:1528???1538, 1991.
  *    - H. Yoshida, "Construction of higher order symplectic
- *      integrators," Phys. Lett. A 150(5–7):262–268, 1990.
+ *      integrators," Phys. Lett. A 150(5???7):262???268, 1990.
  * ============================================================ */
 
 
-/* ── geoVelocity: drift (position update) ─────────────────── */
+/* -- geoVelocity: drift (position update) ------------------- */
 
 /* Computes only the velocity part of the geodesic equations:
- *   dr/dλ   = g^rr · p_r        = (Δ/Σ) · p_r
- *   dθ/dλ   = g^θθ · p_θ        = (1/Σ) · p_θ
- *   dφ/dλ   = g^φφ · b + g^tφ   (from conserved L_z = b, E = 1)
+ *   dr/d??   = g^rr ?? p_r        = (??/??) ?? p_r
+ *   d??/d??   = g^???? ?? p_??        = (1/??) ?? p_??
+ *   d??/d??   = g^???? ?? b + g^t??   (from conserved L_z = b, E = 1)
  *
  * This is the "cheap" half of the geodesic RHS (~15 FLOPs):
  * it requires only the metric components, not their derivatives.
  *
- * The velocity terms depend on the current position (r, θ) and
- * momenta (p_r, p_θ), so a fresh call is needed after each kick
+ * The velocity terms depend on the current position (r, ??) and
+ * momenta (p_r, p_??), so a fresh call is needed after each kick
  * (which changes the momenta).
  *
  * Metric components in Boyer-Lindquist coordinates:
- *   Σ = r² + a²cos²θ
- *   Δ = r² - 2r + a² + Q²  (clamped to 1e-14 for horizon safety)
- *   w = 2r - Q²
- *   g^rr  = Δ/Σ
- *   g^θθ  = 1/Σ
- *   g^tφ  = -a·w/(Σ·Δ)
- *   g^φφ  = (Σ - w)/(Σ·Δ·sin²θ)
+ *   ?? = r?? + a??cos????
+ *   ?? = r?? - 2r + a?? + Q??  (clamped to 1e-14 for horizon safety)
+ *   w = 2r - Q??
+ *   g^rr  = ??/??
+ *   g^????  = 1/??
+ *   g^t??  = -a??w/(??????)
+ *   g^????  = (?? - w)/(????????sin????)
  */
 __device__ void geoVelocity(
     double r, double th, double pr, double pth,
@@ -543,29 +543,29 @@ __device__ void geoVelocity(
     double iSD = 1.0 / (sig * sdel);
     double is2 = 1.0 / s2;
 
-    /* g^rr · p_r */
+    /* g^rr ?? p_r */
     *dr  = sdel * isig * pr;
-    /* g^θθ · p_θ */
+    /* g^???? ?? p_?? */
     *dth = isig * pth;
-    /* g^φφ · b + g^tφ · E  (E = 1 by affine normalization) */
+    /* g^???? ?? b + g^t?? ?? E  (E = 1 by affine normalization) */
     *dphi = (sig - w) * iSD * is2 * b - (-a * w * iSD);
 }
 
 
-/* ── geoForce: kick (momentum update) ─────────────────────── */
+/* -- geoForce: kick (momentum update) ----------------------- */
 
 /* Computes only the force/momentum part of the geodesic equations:
- *   dp_r/dλ  = -½ ∂(g^μν)/∂r · p_μ p_ν
- *   dp_θ/dλ  = -½ ∂(g^μν)/∂θ · p_μ p_ν
+ *   dp_r/d??  = -?? ???(g^????)/???r ?? p_?? p_??
+ *   dp_??/d??  = -?? ???(g^????)/????? ?? p_?? p_??
  *
  * This is the "expensive" half of the geodesic RHS (~80 FLOPs):
- * it requires the metric derivatives ∂g^μν/∂r and ∂g^μν/∂θ.
+ * it requires the metric derivatives ???g^????/???r and ???g^????/?????.
  *
- * The force terms depend on position (r, θ) and momenta (p_r, p_θ),
+ * The force terms depend on position (r, ??) and momenta (p_r, p_??),
  * but in the symplectic splitting the kick is evaluated at the
  * *current* position (after the preceding drift has updated q).
  *
- * The computation is identical to the dp_r, dp_θ portion of geoRHS()
+ * The computation is identical to the dp_r, dp_?? portion of geoRHS()
  * but avoids computing the velocity terms (saving ~15 FLOPs).
  */
 __device__ void geoForce(
@@ -589,7 +589,7 @@ __device__ void geoForce(
     double iSD = 1.0 / SD;
     double is2 = 1.0 / s2;
 
-    /* ∂/∂r derivatives for dp_r/dλ */
+    /* ???/???r derivatives for dp_r/d?? */
     double dsig_r = 2.0 * r;
     double ddel_r = 2.0 * r - 2.0;
     double dA_r = 4.0 * r * rpa2 - ddel_r * a2 * s2;
@@ -604,7 +604,7 @@ __device__ void geoForce(
     *dpr = -0.5 * (dgtt_r - 2.0 * b * dgtf_r + dgrr_r * pr * pr
                    + dgthth_r * pth * pth + dgff_r * b * b);
 
-    /* ∂/∂θ derivatives for dp_θ/dλ */
+    /* ???/????? derivatives for dp_??/d?? */
     double dsig_th = -2.0 * a2 * sth * cth;
     double ds2_th = 2.0 * sth * cth;
     double dA_th = -sdel * a2 * ds2_th;
@@ -620,52 +620,52 @@ __device__ void geoForce(
 }
 
 
-/* ── computeHamiltonian: null geodesic constraint ─────────── */
+/* -- computeHamiltonian: null geodesic constraint ----------- */
 
 /* Computes the super-Hamiltonian for null geodesic motion:
  *
- *   H = ½ g^μν p_μ p_ν
- *     = ½ [ g^tt·E² + 2·g^tφ·E·L_z + g^rr·p_r² + g^θθ·p_θ² + g^φφ·L_z² ]
+ *   H = ?? g^???? p_?? p_??
+ *     = ?? [ g^tt??E?? + 2??g^t????E??L_z + g^rr??p_r?? + g^??????p_???? + g^??????L_z?? ]
  *
  * With the affine normalization E = 1 and L_z = b (impact parameter):
  *
- *   H = ½ [ g^tt + 2b·g^tφ + g^rr·p_r² + g^θθ·p_θ² + g^φφ·b² ]
+ *   H = ?? [ g^tt + 2b??g^t?? + g^rr??p_r?? + g^??????p_???? + g^??????b?? ]
  *
  * For a perfect null geodesic, H = 0 identically. Any numerical
  * drift in H indicates accumulated integration error.
  *
  * The inverse metric components in Boyer-Lindquist coordinates are:
- *   g^tt  = -A/(Σ·Δ)           where A = (r²+a²)² - Δ·a²·sin²θ
- *   g^tφ  = -a·w/(Σ·Δ)         where w = 2r - Q²
- *   g^rr  = Δ/Σ
- *   g^θθ  = 1/Σ
- *   g^φφ  = (Σ - w)/(Σ·Δ·sin²θ)
+ *   g^tt  = -A/(??????)           where A = (r??+a??)?? - ????a????sin????
+ *   g^t??  = -a??w/(??????)         where w = 2r - Q??
+ *   g^rr  = ??/??
+ *   g^????  = 1/??
+ *   g^????  = (?? - w)/(????????sin????)
  *
  * Cost: ~30 FLOPs (dominated by sin, cos, and one division).
  * This is roughly 1/3 the cost of a full geoRHS() call.
  *
  * Reference: B. Carter, "Global structure of the Kerr family of
- * gravitational fields," Phys. Rev. 174:1559–1571, 1968.
+ * gravitational fields," Phys. Rev. 174:1559???1571, 1968.
  */
 
 
-/* ── computeCarter: Carter constant diagnostic ────────────── */
+/* -- computeCarter: Carter constant diagnostic -------------- */
 
 /* Computes the Carter constant Q for Kerr-Newman spacetime:
  *
- *   Q = p_θ² + cos²θ · (b²/sin²θ - a² + Q_charge²)
+ *   Q = p_???? + cos???? ?? (b??/sin???? - a?? + Q_charge??)
  *
  * The Carter constant is the fourth integral of motion for geodesic
  * motion in Kerr(-Newman) spacetime, arising from a hidden symmetry
- * encoded in the Killing tensor K_μν:
+ * encoded in the Killing tensor K_????:
  *
- *   Q = K^μν p_μ p_ν - (aE - L_z)²
+ *   Q = K^???? p_?? p_?? - (aE - L_z)??
  *
  * For Kerr spacetime (Q_charge = 0), this reduces to:
- *   Q = p_θ² + cos²θ · (b²/sin²θ - a²)
+ *   Q = p_???? + cos???? ?? (b??/sin???? - a??)
  *
  * The Carter constant should remain exactly conserved along each
- * geodesic. Its drift |ΔQ/Q₀| provides an independent measure of
+ * geodesic. Its drift |??Q/Q???| provides an independent measure of
  * integration quality complementary to the Hamiltonian:
  *   - H monitors constraint satisfaction (are we on the null cone?)
  *   - Q monitors phase-space accuracy (are we on the correct geodesic?)
@@ -674,13 +674,13 @@ __device__ void geoForce(
  *
  * References:
  *   - B. Carter, "Global structure of the Kerr family of gravitational
- *     fields," Phys. Rev. 174:1559–1571, 1968.
+ *     fields," Phys. Rev. 174:1559???1571, 1968.
  *   - S. Chandrasekhar, The Mathematical Theory of Black Holes,
  *     Oxford University Press, 1983, Chapter 7.
  */
 __device__ double computeCarter(
     double th, double pth,
-    double a, double b, double Q2  /* Q2 = Q_charge² */
+    double a, double b, double Q2  /* Q2 = Q_charge?? */
 ) {
     double sth = sin(th), cth = cos(th);
     double s2 = sth * sth + S2_EPS;
@@ -689,38 +689,38 @@ __device__ double computeCarter(
 }
 
 
-/* ── projectHamiltonian: constraint projection ────────────── */
+/* -- projectHamiltonian: constraint projection -------------- */
 
 /* Projects the state back onto the H = 0 constraint surface by
  * solving for p_r algebraically.
  *
  * The Hamiltonian is quadratic in p_r with no cross-terms (the
- * Boyer-Lindquist metric is block-diagonal in {t,φ} and {r,θ}):
+ * Boyer-Lindquist metric is block-diagonal in {t,??} and {r,??}):
  *
- *   H = ½ g^rr · p_r² + R
+ *   H = ?? g^rr ?? p_r?? + R
  *
- * where R = ½(g^tt + 2b·g^tφ + g^θθ·p_θ² + g^φφ·b²) collects
+ * where R = ??(g^tt + 2b??g^t?? + g^??????p_???? + g^??????b??) collects
  * all terms independent of p_r.
  *
  * Setting H = 0:
- *   0 = ½ g^rr · p_r² + R
- *   p_r² = -2R / g^rr
- *   p_r  = ±√(-2R / g^rr)   [preserving the sign of the current p_r]
+ *   0 = ?? g^rr ?? p_r?? + R
+ *   p_r?? = -2R / g^rr
+ *   p_r  = ?????(-2R / g^rr)   [preserving the sign of the current p_r]
  *
- * This is NOT Newton iteration — it is an exact algebraic solve.
+ * This is NOT Newton iteration ??? it is an exact algebraic solve.
  * The projection is a canonical transformation that maps the
  * slightly-off-shell trajectory back to the constraint surface.
  *
  * If -2R/g^rr < 0 (no real solution), the state is left unchanged.
- * This can happen transiently near turning points where p_r ≈ 0.
+ * This can happen transiently near turning points where p_r ??? 0.
  *
  * Cost: ~35 FLOPs (metric computation + one sqrt).
  *
  * References:
  *   - J. Wisdom & M. Holman, "Symplectic maps for the N-body
- *     problem," Astron. J. 102:1528–1538, 1991.
+ *     problem," Astron. J. 102:1528???1538, 1991.
  *   - J. Wisdom, "Symplectic correctors for canonical heliocentric
- *     N-body maps," Astron. J. 131:2294–2298, 2006.
+ *     N-body maps," Astron. J. 131:2294???2298, 2006.
  */
 __device__ void projectHamiltonian(
     double r, double th, double *pr, double pth,
@@ -745,17 +745,17 @@ __device__ void projectHamiltonian(
     double gthth = 1.0 / sig;
     double gff   = (sig - w) * iSD * is2;
 
-    /* R = ½(g^tt + 2b·g^tφ + g^θθ·p_θ² + g^φφ·b²)
-     * — all Hamiltonian terms except the g^rr·p_r² piece */
+    /* R = ??(g^tt + 2b??g^t?? + g^??????p_???? + g^??????b??)
+     * ??? all Hamiltonian terms except the g^rr??p_r?? piece */
     double R = 0.5 * (gtt + 2.0 * b * gtf + gthth * pth * pth + gff * b * b);
 
-    /* Solve: 0 = ½ g^rr · p_r² + R  →  p_r² = -2R / g^rr */
+    /* Solve: 0 = ?? g^rr ?? p_r?? + R  ???  p_r?? = -2R / g^rr */
     double pr2_new = -2.0 * R / grr;
     if (pr2_new > 0.0) {
         *pr = copysign(sqrt(pr2_new), *pr);  /* preserve radial direction */
     }
     /* If pr2_new <= 0, no real solution exists (near turning point);
-     * leave p_r unchanged — the error is small and transient. */
+     * leave p_r unchanged ??? the error is small and transient. */
 }
 
 
@@ -763,76 +763,76 @@ __device__ void projectHamiltonian(
  *  KERR (INGOING) COORDINATE FUNCTIONS
  *
  *  These functions implement geodesic integration in ingoing Kerr
- *  coordinates (V, r, θ, φ̃) for the Kerr-Newman spacetime.
+ *  coordinates (V, r, ??, ????) for the Kerr-Newman spacetime.
  *
  *  Ingoing Kerr coordinates (MTW Box 33.2, Eq. 4-5) eliminate
  *  the coordinate singularity at the event horizon that plagues
- *  Boyer-Lindquist coordinates (where Δ → 0 causes g_rr → ∞).
- *  All metric components remain smooth and finite at r = r₊.
+ *  Boyer-Lindquist coordinates (where ?? ??? 0 causes g_rr ??? ???).
+ *  All metric components remain smooth and finite at r = r???.
  *
  *  The coordinate transformation from BL is (MTW Eq. 4):
- *    dV  = dt + (r²+a²)/Δ · dr
- *    dφ̃  = dφ + a/Δ · dr
+ *    dV  = dt + (r??+a??)/?? ?? dr
+ *    d????  = d?? + a/?? ?? dr
  *
  *  The inverse metric in Kerr coordinates, derived by
  *  transforming the BL inverse metric via the Jacobian
- *  ∂x^μ_Kerr/∂x^ν_BL, is:
+ *  ???x^??_Kerr/???x^??_BL, is:
  *
- *    g^VV  = a²sin²θ/Σ
- *    g^Vr  = (r²+a²)/Σ     ← absent in BL
- *    g^Vφ  = a/Σ            ← absent in BL
- *    g^rr  = Δ/Σ
- *    g^rφ  = a/Σ            ← absent in BL
- *    g^θθ  = 1/Σ
- *    g^φφ  = 1/(Σ sin²θ)
+ *    g^VV  = a??sin????/??
+ *    g^Vr  = (r??+a??)/??     ??? absent in BL
+ *    g^V??  = a/??            ??? absent in BL
+ *    g^rr  = ??/??
+ *    g^r??  = a/??            ??? absent in BL
+ *    g^????  = 1/??
+ *    g^????  = 1/(?? sin????)
  *
- *  where Σ = r² + a²cos²θ, Δ = r² − 2r + a² + Q².
+ *  where ?? = r?? + a??cos????, ?? = r?? ??? 2r + a?? + Q??.
  *
- *  The super-Hamiltonian F = 2Σ·H with p_V = −1, p_φ = b is:
+ *  The super-Hamiltonian F = 2????H with p_V = ???1, p_?? = b is:
  *
- *    F = a²s² − 2(r²+a²)·p_r − 2ab
- *        + Δ·p_r² + 2ab·p_r + p_θ² + b²/s²
- *      = a²s² − 2ab + Δ·p_r² + 2[ab − (r²+a²)]·p_r
- *        + p_θ² + b²/s²
+ *    F = a??s?? ??? 2(r??+a??)??p_r ??? 2ab
+ *        + ????p_r?? + 2ab??p_r + p_???? + b??/s??
+ *      = a??s?? ??? 2ab + ????p_r?? + 2[ab ??? (r??+a??)]??p_r
+ *        + p_???? + b??/s??
  *
  *  References:
  *    [1] C.W. Misner, K.S. Thorne & J.A. Wheeler, "Gravitation,"
- *        W.H. Freeman, 1973.  Box 33.2, Eqs. (4)–(5).
+ *        W.H. Freeman, 1973.  Box 33.2, Eqs. (4)???(5).
  *    [2] R.P. Kerr, "Gravitational field of a spinning mass as
  *        an example of algebraically special metrics,"
- *        Phys. Rev. Lett. 11:237–238, 1963.
+ *        Phys. Rev. Lett. 11:237???238, 1963.
  *    [3] S. Chandrasekhar, The Mathematical Theory of Black Holes,
  *        Oxford University Press, 1983.  Chapter 6.
  *    [4] B. Carter, "Global structure of the Kerr family of
- *        gravitational fields," Phys. Rev. 174:1559–1571, 1968.
+ *        gravitational fields," Phys. Rev. 174:1559???1571, 1968.
  * ============================================================ */
 
 
-/* ── geoVelocityKS: drift (position update) in Kerr coords ── */
+/* -- geoVelocityKS: drift (position update) in Kerr coords -- */
 
 /* Computes the velocity (drift) part of the geodesic equations
  * in ingoing Kerr coordinates:
  *
- *   dr/dλ  = [Δ·p_r + a·b − (r²+a²)] / Σ
- *   dθ/dλ  = p_θ / Σ
- *   dφ/dλ  = [a·p_r − a + b/sin²θ] / Σ
+ *   dr/d??  = [????p_r + a??b ??? (r??+a??)] / ??
+ *   d??/d??  = p_?? / ??
+ *   d??/d??  = [a??p_r ??? a + b/sin????] / ??
  *
- * Derived from dq^i/dλ = ∂H/∂p_i with the Kerr inverse metric.
+ * Derived from dq^i/d?? = ???H/???p_i with the Kerr inverse metric.
  *
  * The radial velocity:
- *   dr/dλ = ∂(2ΣH)/∂p_r / (2Σ)
- *         = [2Δ·p_r + 2(ab − (r²+a²))] / (2Σ)
- *         = [Δ·p_r + ab − (r²+a²)] / Σ
+ *   dr/d?? = ???(2??H)/???p_r / (2??)
+ *         = [2????p_r + 2(ab ??? (r??+a??))] / (2??)
+ *         = [????p_r + ab ??? (r??+a??)] / ??
  *
  * The azimuthal velocity:
- *   dφ/dλ = ∂(2ΣH)/∂b / (2Σ)
- *         = [−2a + 2a·p_r + 2b/s²] / (2Σ)
- *         = [a·p_r − a + b/s²] / Σ
+ *   d??/d?? = ???(2??H)/???b / (2??)
+ *         = [???2a + 2a??p_r + 2b/s??] / (2??)
+ *         = [a??p_r ??? a + b/s??] / ??
  *
  * Key differences from BL (geoVelocity):
- *   - dr/dλ has (ab − (r²+a²))/Σ instead of BL's g^tφ term
- *   - dφ/dλ has a·(p_r − 1)/Σ instead of BL's −a·w/(ΣΔ)
- *   - No Δ-clamping needed: the equations are regular at r = r₊
+ *   - dr/d?? has (ab ??? (r??+a??))/?? instead of BL's g^t?? term
+ *   - d??/d?? has a??(p_r ??? 1)/?? instead of BL's ???a??w/(????)
+ *   - No ??-clamping needed: the equations are regular at r = r???
  *
  * Cost: ~15 FLOPs (comparable to BL version).
  */
@@ -844,62 +844,62 @@ __device__ void geoVelocityKS(
     double sth = sin(th), cth = cos(th);
     double s2 = sth * sth + S2_EPS;
     double a2 = a * a, r2 = r * r;
-    double sig = r2 + a2 * cth * cth;          /* Σ = r² + a²cos²θ */
-    double del = r2 - 2.0 * r + a2 + Q2;       /* Δ = r² − 2r + a² + Q² */
-    double rpa2 = r2 + a2;                      /* r² + a² */
+    double sig = r2 + a2 * cth * cth;          /* ?? = r?? + a??cos???? */
+    double del = r2 - 2.0 * r + a2 + Q2;       /* ?? = r?? ??? 2r + a?? + Q?? */
+    double rpa2 = r2 + a2;                      /* r?? + a?? */
     double isig = 1.0 / sig;
 
-    /* dr/dλ = [Δ·p_r + (a·b − (r²+a²))] / Σ
-     * From ∂F/∂p_r = 2Δ·p_r + 2[ab − (r²+a²)], divided by 2Σ.
-     * The (ab − rpa2) term comes from g^Vr·p_V + g^rφ·p_φ:
-     *   (r²+a²)/Σ · (−1) + (a/Σ) · b = [ab − (r²+a²)]/Σ */
+    /* dr/d?? = [????p_r + (a??b ??? (r??+a??))] / ??
+     * From ???F/???p_r = 2????p_r + 2[ab ??? (r??+a??)], divided by 2??.
+     * The (ab ??? rpa2) term comes from g^Vr??p_V + g^r????p_??:
+     *   (r??+a??)/?? ?? (???1) + (a/??) ?? b = [ab ??? (r??+a??)]/?? */
     *dr  = (del * pr + a * b - rpa2) * isig;
 
-    /* dθ/dλ = p_θ / Σ  (identical to BL) */
+    /* d??/d?? = p_?? / ??  (identical to BL) */
     *dth = pth * isig;
 
-    /* dφ/dλ = [a·p_r − a + b/sin²θ] / Σ
-     * From ∂F/∂b = −2a + 2a·p_r + 2b/s², divided by 2Σ.
-     * The −a term comes from g^Vφ·p_V = (a/Σ)·(−1) = −a/Σ */
+    /* d??/d?? = [a??p_r ??? a + b/sin????] / ??
+     * From ???F/???b = ???2a + 2a??p_r + 2b/s??, divided by 2??.
+     * The ???a term comes from g^V????p_V = (a/??)??(???1) = ???a/?? */
     *dphi = (a * pr - a + b / s2) * isig;
 }
 
 
-/* ── geoForceKS: kick (momentum update) in Kerr coords ────── */
+/* -- geoForceKS: kick (momentum update) in Kerr coords ------ */
 
 /* Computes the force (kick) part of the geodesic equations
  * in ingoing Kerr coordinates:
  *
- *   dp_r/dλ  = [(1−r)·p_r² + 2r·p_r] / Σ
- *   dp_θ/dλ  = cosθ · [b²/(sin²θ · sinθ) − a²·sinθ] / Σ
+ *   dp_r/d??  = [(1???r)??p_r?? + 2r??p_r] / ??
+ *   dp_??/d??  = cos?? ?? [b??/(sin???? ?? sin??) ??? a????sin??] / ??
  *
- * Derived from dp_i/dλ = −∂H/∂q^i evaluated on the H = 0
- * constraint surface (null geodesic).  On-shell, F = 2Σ·H = 0,
- * so dp_r/dλ = −∂F/(2Σ·∂r).
+ * Derived from dp_i/d?? = ??????H/???q^i evaluated on the H = 0
+ * constraint surface (null geodesic).  On-shell, F = 2????H = 0,
+ * so dp_r/d?? = ??????F/(2???????r).
  *
  * The p_r force equation:
- *   ∂F/∂r = (2r−2)·p_r² − 4r·p_r
- *   dp_r/dλ = −∂F/(2Σ) = [(1−r)·p_r² + 2r·p_r] / Σ
+ *   ???F/???r = (2r???2)??p_r?? ??? 4r??p_r
+ *   dp_r/d?? = ??????F/(2??) = [(1???r)??p_r?? + 2r??p_r] / ??
  *
- *   Derivation of ∂F/∂r:
- *     ∂(a²s²)/∂r = 0
- *     ∂(−2ab)/∂r = 0
- *     ∂(Δ·p_r²)/∂r = (2r−2)·p_r²     [∂Δ/∂r = 2r−2]
- *     ∂(2[ab−(r²+a²)]·p_r)/∂r = −4r·p_r
- *     ∂(p_θ²)/∂r = 0
- *     ∂(b²/s²)/∂r = 0
+ *   Derivation of ???F/???r:
+ *     ???(a??s??)/???r = 0
+ *     ???(???2ab)/???r = 0
+ *     ???(????p_r??)/???r = (2r???2)??p_r??     [?????/???r = 2r???2]
+ *     ???(2[ab???(r??+a??)]??p_r)/???r = ???4r??p_r
+ *     ???(p_????)/???r = 0
+ *     ???(b??/s??)/???r = 0
  *
- * The p_θ force equation (unchanged from previous version):
- *   ∂F/∂θ = 2a²sinθcosθ − 2b²cosθ/sin³θ
- *   dp_θ/dλ = −∂F/(2Σ) = cosθ·[b²/(s²·sinθ) − a²·sinθ] / Σ
+ * The p_?? force equation (unchanged from previous version):
+ *   ???F/????? = 2a??sin??cos?? ??? 2b??cos??/sin????
+ *   dp_??/d?? = ??????F/(2??) = cos????[b??/(s????sin??) ??? a????sin??] / ??
  *
  * Key features:
  *   - Simpler than BL: ~20 FLOPs vs ~80 FLOPs
- *   - dp_r/dλ depends on p_r (non-separable)
- *   - dp_θ/dλ depends only on positions (fully separable)
- *   - Independent of Q² (charge terms cancel in ∂F/∂r)
+ *   - dp_r/d?? depends on p_r (non-separable)
+ *   - dp_??/d?? depends only on positions (fully separable)
+ *   - Independent of Q?? (charge terms cancel in ???F/???r)
  *
- * Reference: MTW (1973), Box 33.2; derivation from F = 2ΣH.
+ * Reference: MTW (1973), Box 33.2; derivation from F = 2??H.
  */
 __device__ void geoForceKS(
     double r, double th, double pr, double pth,
@@ -909,51 +909,51 @@ __device__ void geoForceKS(
     double sth = sin(th), cth = cos(th);
     double s2 = sth * sth + S2_EPS;
     double a2 = a * a, r2 = r * r;
-    double sig = r2 + a2 * cth * cth;          /* Σ = r² + a²cos²θ */
+    double sig = r2 + a2 * cth * cth;          /* ?? = r?? + a??cos???? */
     double isig = 1.0 / sig;
 
-    /* dp_r/dλ = [(1−r)·p_r² + 2r·p_r] / Σ
+    /* dp_r/d?? = [(1???r)??p_r?? + 2r??p_r] / ??
      *
      * This is the complete radial force in Kerr coordinates.
-     * Note: at large r with p_r ≈ 0, the force ≈ 0 (correct for
+     * Note: at large r with p_r ??? 0, the force ??? 0 (correct for
      * nearly-free propagation in the far field).
      * The p_r dependence (linear and quadratic terms) is the
      * signature of non-separability. */
     *dpr = ((1.0 - r) * pr * pr + 2.0 * r * pr) * isig;
 
-    /* dp_θ/dλ = cosθ · [b²/(s²·sinθ) − a²·sinθ] / Σ
+    /* dp_??/d?? = cos?? ?? [b??/(s????sin??) ??? a????sin??] / ??
      *
-     * The b²/sin³θ term is regularized using s² = sin²θ + ε
+     * The b??/sin???? term is regularized using s?? = sin???? + ??
      * to prevent divergence at the poles.  The pole reflection
-     * at θ = 0.005 (in the integrator) provides additional safety. */
+     * at ?? = 0.005 (in the integrator) provides additional safety. */
     *dpth = cth * (b * b / (s2 * sth) - a2 * sth) * isig;
 }
 
 
-/* ── computeHamiltonianKS: null constraint in Kerr coords ──── */
+/* -- computeHamiltonianKS: null constraint in Kerr coords ---- */
 
 /* Computes the super-Hamiltonian for null geodesic motion in
  * ingoing Kerr coordinates:
  *
- *   H = F / (2Σ)
+ *   H = F / (2??)
  *
- * where F = a²s² − 2ab + Δ·p_r² + 2[ab − (r²+a²)]·p_r
- *           + p_θ² + b²/s²
+ * where F = a??s?? ??? 2ab + ????p_r?? + 2[ab ??? (r??+a??)]??p_r
+ *           + p_???? + b??/s??
  *
- * With the affine normalization E = −p_V = 1 and L_z = p_φ = b.
+ * With the affine normalization E = ???p_V = 1 and L_z = p_?? = b.
  *
  * The Kerr inverse metric components are (MTW Box 33.2):
- *   g^VV = a²s²/Σ,  g^Vr = (r²+a²)/Σ,  g^Vφ = a/Σ,
- *   g^rr = Δ/Σ,  g^rφ = a/Σ,  g^θθ = 1/Σ,  g^φφ = 1/(Σs²)
+ *   g^VV = a??s??/??,  g^Vr = (r??+a??)/??,  g^V?? = a/??,
+ *   g^rr = ??/??,  g^r?? = a/??,  g^???? = 1/??,  g^???? = 1/(??s??)
  *
- * Expanding 2ΣH = g^μν p_μ p_ν · Σ:
- *   g^VV·p_V² = a²s²/Σ · 1 · Σ = a²s²
- *   2g^Vr·p_V·p_r = 2(r²+a²)/Σ · (−1) · p_r · Σ = −2(r²+a²)·p_r
- *   2g^Vφ·p_V·p_φ = 2(a/Σ) · (−1) · b · Σ = −2ab
- *   g^rr·p_r² = Δ/Σ · p_r² · Σ = Δ·p_r²
- *   2g^rφ·p_r·p_φ = 2(a/Σ) · p_r · b · Σ = 2ab·p_r
- *   g^θθ·p_θ² = 1/Σ · p_θ² · Σ = p_θ²
- *   g^φφ·p_φ² = 1/(Σs²) · b² · Σ = b²/s²
+ * Expanding 2??H = g^???? p_?? p_?? ?? ??:
+ *   g^VV??p_V?? = a??s??/?? ?? 1 ?? ?? = a??s??
+ *   2g^Vr??p_V??p_r = 2(r??+a??)/?? ?? (???1) ?? p_r ?? ?? = ???2(r??+a??)??p_r
+ *   2g^V????p_V??p_?? = 2(a/??) ?? (???1) ?? b ?? ?? = ???2ab
+ *   g^rr??p_r?? = ??/?? ?? p_r?? ?? ?? = ????p_r??
+ *   2g^r????p_r??p_?? = 2(a/??) ?? p_r ?? b ?? ?? = 2ab??p_r
+ *   g^??????p_???? = 1/?? ?? p_???? ?? ?? = p_????
+ *   g^??????p_???? = 1/(??s??) ?? b?? ?? ?? = b??/s??
  *
  * For a perfect null geodesic, H = 0 identically.
  *
@@ -963,38 +963,38 @@ __device__ void geoForceKS(
  */
 
 
-/* ── projectHamiltonianKS: constraint projection in Kerr ───── */
+/* -- projectHamiltonianKS: constraint projection in Kerr ----- */
 
 /* Projects the state back onto the H = 0 constraint surface by
  * solving for p_r algebraically in ingoing Kerr coordinates.
  *
  * Setting F = 0 gives a quadratic in p_r:
  *
- *   Δ·p_r² + 2·B·p_r + C = 0
+ *   ????p_r?? + 2??B??p_r + C = 0
  *
  * where:
- *   B = a·b − (r²+a²)     (half the linear coefficient)
- *   C = a²sin²θ − 2ab + p_θ² + b²/sin²θ
+ *   B = a??b ??? (r??+a??)     (half the linear coefficient)
+ *   C = a??sin???? ??? 2ab + p_???? + b??/sin????
  *
  * Using the quadratic formula:
- *   disc = B² − Δ·C
- *   p_r  = (−B ± √disc) / Δ
+ *   disc = B?? ??? ????C
+ *   p_r  = (???B ?? ???disc) / ??
  *
  * The sign of p_r is preserved from the current value.
  *
- * Near the horizon where Δ → 0, the quadratic degenerates to
- * a linear equation: 2·B·p_r + C = 0, giving:
- *   p_r = −C / (2·B)
+ * Near the horizon where ?? ??? 0, the quadratic degenerates to
+ * a linear equation: 2??B??p_r + C = 0, giving:
+ *   p_r = ???C / (2??B)
  *
- * This linear fallback is well-defined since B = ab − (r²+a²)
- * is generically large and negative (dominated by −(r²+a²)).
+ * This linear fallback is well-defined since B = ab ??? (r??+a??)
+ * is generically large and negative (dominated by ???(r??+a??)).
  *
  * Cost: ~30 FLOPs (metric computation + discriminant + sqrt).
  *
  * References:
  *   - MTW (1973), Box 33.2.
  *   - Wisdom & Holman (1991), Section 3.
- *   - Wisdom (2006), Eq. 12–14.
+ *   - Wisdom (2006), Eq. 12???14.
  */
 __device__ void projectHamiltonianKS(
     double r, double th, double *pr, double pth,
@@ -1003,37 +1003,37 @@ __device__ void projectHamiltonianKS(
     double sth = sin(th), cth = cos(th);
     double s2 = sth * sth + S2_EPS;
     double a2 = a * a, r2 = r * r;
-    double sig = r2 + a2 * cth * cth;          /* Σ */
-    double del = r2 - 2.0 * r + a2 + Q2;       /* Δ */
-    double rpa2 = r2 + a2;                      /* r² + a² */
+    double sig = r2 + a2 * cth * cth;          /* ?? */
+    double del = r2 - 2.0 * r + a2 + Q2;       /* ?? */
+    double rpa2 = r2 + a2;                      /* r?? + a?? */
 
     /* Constant term: everything except p_r terms in F */
     double C = a2 * s2 - 2.0 * a * b + pth * pth + b * b / s2;
 
-    /* Half of the linear coefficient: B = a·b − (r²+a²) */
+    /* Half of the linear coefficient: B = a??b ??? (r??+a??) */
     double Bhalf = a * b - rpa2;
 
     if (fabs(del) < 1e-14) {
-        /* Near horizon: Δ ≈ 0, equation is linear in p_r.
-         * 2·B·p_r + C = 0  →  p_r = −C / (2·B)
-         * B = ab − (r²+a²) is large and negative, so well-defined. */
+        /* Near horizon: ?? ??? 0, equation is linear in p_r.
+         * 2??B??p_r + C = 0  ???  p_r = ???C / (2??B)
+         * B = ab ??? (r??+a??) is large and negative, so well-defined. */
         if (fabs(Bhalf) > 1e-30) {
             *pr = -C / (2.0 * Bhalf);
         }
-        /* If both Δ ≈ 0 and B ≈ 0, leave p_r unchanged */
+        /* If both ?? ??? 0 and B ??? 0, leave p_r unchanged */
     } else {
         /* Standard quadratic solve:
-         * Δ·p_r² + 2·B·p_r + C = 0
-         * disc = B² − Δ·C
-         * p_r = (−B ± √disc) / Δ */
+         * ????p_r?? + 2??B??p_r + C = 0
+         * disc = B?? ??? ????C
+         * p_r = (???B ?? ???disc) / ?? */
         double disc = Bhalf * Bhalf - del * C;
         if (disc > 0.0) {
             double sqrt_disc = sqrt(disc);
             /* Pick the root closest to the current p_r.
              *
-             * In Kerr coordinates, p_r ≈ 0 for ingoing rays at
-             * large r (unlike BL where p_r ≈ −1).  The simple
-             * copysign(√disc, p_r) strategy fails when p_r ≈ 0
+             * In Kerr coordinates, p_r ??? 0 for ingoing rays at
+             * large r (unlike BL where p_r ??? ???1).  The simple
+             * copysign(???disc, p_r) strategy fails when p_r ??? 0
              * because tiny floating-point noise can flip the sign
              * and select the wrong (outgoing) root.
              *
@@ -1045,54 +1045,54 @@ __device__ void projectHamiltonianKS(
             double d_minus = fabs(root_minus - *pr);
             *pr = (d_plus <= d_minus) ? root_plus : root_minus;
         }
-        /* If disc ≤ 0, no real solution (near turning point);
-         * leave p_r unchanged — the error is small and transient. */
+        /* If disc ??? 0, no real solution (near turning point);
+         * leave p_r unchanged ??? the error is small and transient. */
     }
 }
 
 
-/* ── transformBLtoKS: momentum transformation BL → KS ──────── */
+/* -- transformBLtoKS: momentum transformation BL ??? KS -------- */
 
 /* Transforms the radial covariant momentum from Boyer-Lindquist
  * to Kerr-Schild coordinates:
  *
- *   p_r^KS = p_r^BL + (r² + a² − a·b) / Δ
+ *   p_r^KS = p_r^BL + (r?? + a?? ??? a??b) / ??
  *
  * Derived from the Jacobian of the coordinate transformation:
- *   t_BL = t_KS − f(r),  φ_BL = φ_KS − g(r)
- *   where df/dr = (r²+a²)/Δ,  dg/dr = a/Δ
+ *   t_BL = t_KS ??? f(r),  ??_BL = ??_KS ??? g(r)
+ *   where df/dr = (r??+a??)/??,  dg/dr = a/??
  *
  * The covariant momentum transforms as:
- *   p_r^KS = (∂t_BL/∂r_KS)·p_t^BL + p_r^BL + (∂φ_BL/∂r_KS)·p_φ^BL
- *          = −(r²+a²)/Δ·(−1) + p_r^BL + (−a/Δ)·b
- *          = p_r^BL + (r² + a² − a·b) / Δ
+ *   p_r^KS = (???t_BL/???r_KS)??p_t^BL + p_r^BL + (?????_BL/???r_KS)??p_??^BL
+ *          = ???(r??+a??)/????(???1) + p_r^BL + (???a/??)??b
+ *          = p_r^BL + (r?? + a?? ??? a??b) / ??
  *
- * Position coordinates (r, θ) are unchanged between BL and KS.
- * The azimuthal angle φ_KS = φ_BL + g(r), but at the observer
- * distance (r >> r₊) the difference is negligible and absorbed
- * into the initial φ₀.
+ * Position coordinates (r, ??) are unchanged between BL and KS.
+ * The azimuthal angle ??_KS = ??_BL + g(r), but at the observer
+ * distance (r >> r???) the difference is negligible and absorbed
+ * into the initial ?????.
  *
- * At large r_obs, Δ ≈ r² and the correction ≈ 1, so
- * p_r^KS ≈ p_r^BL + 1.  This is a significant correction
+ * At large r_obs, ?? ??? r?? and the correction ??? 1, so
+ * p_r^KS ??? p_r^BL + 1.  This is a significant correction
  * that must not be neglected.
  *
- * Reference: See plans/kahanli8s-ks-design.md, Section 3.3–3.4.
+ * Reference: See plans/kahanli8s-ks-design.md, Section 3.3???3.4.
  */
 __device__ void transformBLtoKS(
     double r, double a, double b, double Q2,
     double *pr
 ) {
     double a2 = a * a, r2 = r * r;
-    double del = r2 - 2.0 * r + a2 + Q2;       /* Δ at observer */
+    double del = r2 - 2.0 * r + a2 + Q2;       /* ?? at observer */
 
-    /* p_r^KS = p_r^BL + (r² + a² − a·b) / Δ */
+    /* p_r^KS = p_r^BL + (r?? + a?? ??? a??b) / ?? */
     *pr += (r2 + a2 - a * b) / del;
 }
 
 
-/* ═══════════════════════════════════════════════════════════
+/* ?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
  * Volumetric emission: hot corona + relativistic jet
- * ═══════════════════════════════════════════════════════════
+ * ?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
  *
  * Called once per integration step to accumulate optically thin
  * emission from the diffuse environment around the black hole.
@@ -1101,10 +1101,10 @@ __device__ void transformBLtoKS(
  * GRMHD simulation renders (e.g. Moscibrodzka et al. 2016).
  *
  * Two components:
- *   1. Hot corona — exponential atmosphere above/below the disk
+ *   1. Hot corona ??? exponential atmosphere above/below the disk
  *      plane. Emits thermal bremsstrahlung (warm white glow).
- *   2. Relativistic jet — collimated emission along the spin
- *      axis (|cos θ| > 0.85). Blue-shifted, concentrated near
+ *   2. Relativistic jet ??? collimated emission along the spin
+ *      axis (|cos ??| > 0.85). Blue-shifted, concentrated near
  *      the BH. Based on force-free jet models (Blandford &
  *      Znajek 1977).
  *
@@ -1120,19 +1120,19 @@ __device__ void accumulate_volume_emission(
     double cth = cos(th), sth = sin(th);
     double r_cyl = r * fabs(sth);          /* cylindrical radius */
     double z = r * cth;                     /* height above equator */
-    /* Kerr-Newman horizon: r_+ = 1 + sqrt(1 - a² - Q²).
-     * Previously used sqrt(1 - a²), which over-estimated r_+ for Q > 0
+    /* Kerr-Newman horizon: r_+ = 1 + sqrt(1 - a?? - Q??).
+     * Previously used sqrt(1 - a??), which over-estimated r_+ for Q > 0
      * and wrongly suppressed volumetric emission inside the annulus
      * between the Kerr and K-N horizons. */
     double r_horizon = 1.0 + sqrt(fmax(1.0 - a * a - Q2, 0.0));
 
-    /* ── Hot corona (disk atmosphere) ─────────────────────── */
+    /* -- Hot corona (disk atmosphere) ----------------------- */
     /* Optically thin thermal bremsstrahlung from the hot corona.
-     * Real AGN coronas have scattering depth τ_es ~ 0.1–1 but
-     * thermal emission depth τ_ff ~ 10⁻⁴ (Fabian et al. 2015).
+     * Real AGN coronas have scattering depth ??_es ~ 0.1???1 but
+     * thermal emission depth ??_ff ~ 10?????? (Fabian et al. 2015).
      * The visual effect should be a subtle warm haze, not a fog.
      *
-     * Coefficient 0.03 gives τ ~ 0.01–0.03 through the midplane
+     * Coefficient 0.03 gives ?? ~ 0.01???0.03 through the midplane
      * at r ~ 10M, consistent with optically thin emission.
      *
      * NOTE: blendColor(R,G,B, alpha) applies alpha internally as
@@ -1146,13 +1146,13 @@ __device__ void accumulate_volume_emission(
                    acc_r, acc_g, acc_b, acc_a);
     }
 
-    /* ── Relativistic jet (polar funnel) ──────────────────── */
+    /* -- Relativistic jet (polar funnel) -------------------- */
     /* Optically thin synchrotron emission along the spin axis.
      * Jets are primarily radio/X-ray emitters; optical emission
      * is faint.  This produces a subtle blue-white brightening
      * near the poles, visible mainly against dark backgrounds.
      *
-     * Half-opening angle ~10° (|cos θ| > 0.985 at core).
+     * Half-opening angle ~10?? (|cos ??| > 0.985 at core).
      * Coefficient 0.015 gives a barely-visible streak. */
     if (fabs(cth) > 0.90 && r > r_horizon * 1.5 && r < 30.0) {
         double axis_dist = 1.0 - fabs(cth);

@@ -3,9 +3,9 @@ Core rendering and shadow-classification functions.
 
 Two rendering paths:
 
-- :func:`render_frame` — Full visual pipeline (disk, stars, Doppler,
+- :func:`render_frame` - Full visual pipeline (disk, stars, Doppler,
   tone mapping).  Returns an ``(H, W, 3)`` uint8 sRGB image.
-- :func:`classify_shadow` — Lightweight shadow measurement.  Returns
+- :func:`classify_shadow` - Lightweight shadow measurement.  Returns
   a boolean mask plus disk-crossing radii and g-factors.
 
 Both dispatch to the same production CUDA kernels in ``kernels/``.
@@ -52,7 +52,7 @@ def available_methods() -> list[str]:
     return _kc.available_methods
 
 
-# ── Step-budget heuristic ──────────────────────────────────────
+# ---- Step-budget heuristic ----
 
 
 def auto_steps(
@@ -99,7 +99,7 @@ def auto_steps(
         return max(int(N * safety), 200)
 
 
-# ── Render (full visual pipeline) ─────────────────────────────
+# ---- Render (full visual pipeline) ----
 
 
 @dataclass
@@ -145,17 +145,17 @@ def render_frame(
     Parameters
     ----------
     spin : float
-        Dimensionless spin parameter, 0 ≤ a < 1.
+        Dimensionless spin parameter, 0 <= a < 1.
     inclination_deg : float
         Observer inclination in degrees (0 = pole-on, 90 = equatorial).
     charge : float
-        Dimensionless charge (Kerr–Newman), default 0.
+        Dimensionless charge (Kerr-Newman), default 0.
     width, height : int
         Output resolution in pixels.
     fov : float
         Screen half-width in units of M (gravitational radii). Matches the
-        CUDA kernel, which maps pixel column ``ux ∈ [-1, +1]`` to impact
-        parameter ``α = ux · fov · aspect``. NOT an angle, despite the name.
+        CUDA kernel, which maps pixel column ux in [-1, +1] to impact
+        parameter alpha = ux * fov * aspect. NOT an angle, despite the name.
     obs_dist : float
         Observer distance in gravitational radii (M).
     max_steps : int, optional
@@ -173,7 +173,7 @@ def render_frame(
     disk_temp : float
         Disk colour-temperature multiplier.
     doppler_boost : int
-        0 = off, 1 = g³ (optically thin), 2 = g⁴ (optically thick).
+        0 = off, 1 = g^3 (optically thin), 2 = g^4 (optically thick).
     phi0 : float
         Azimuthal rotation offset (radians).
     srgb_output : bool
@@ -185,7 +185,7 @@ def render_frame(
     disk_outer : float
         Outer edge of the disk in units of M (default 50.0). For Novikov-Thorne
         the emission falls off as ~1/r, so most of the bright region sits inside
-        r ≲ 5-10 M; a smaller ``disk_outer`` crops the invisible outer halo and
+        r less-than  5-10 M; a smaller ``disk_outer`` crops the invisible outer halo and
         can produce cleaner hero images.
     aa_samples : int
         Number of stochastic super-samples per pixel (default 1). Each sample
@@ -272,7 +272,7 @@ def render_frame(
     return img, info
 
 
-# ── Classify (shadow measurement) ─────────────────────────────
+# ---- Classify (shadow measurement) ----
 
 
 @dataclass
@@ -307,21 +307,21 @@ def classify_shadow(
     Parameters
     ----------
     spin : float
-        Dimensionless spin, 0 ≤ a < 1.
+        Dimensionless spin, 0 <= a < 1.
     inclination_deg : float
         Observer inclination in degrees.
     width, height : int
         Classification grid resolution.
     fov : float
         Screen half-width in units of M (gravitational radii). Matches the
-        CUDA kernel, which maps pixel column ``ux ∈ [-1, +1]`` to impact
-        parameter ``α = ux · fov · aspect``. NOT an angle, despite the name.
+        CUDA kernel, which maps pixel column ux in [-1, +1] to impact
+        parameter alpha = ux * fov * aspect. NOT an angle, despite the name.
     obs_dist : float
         Observer distance in M.
     max_steps : int, optional
         If *None*, estimated automatically.
     step_size : float
-        Base step size (smaller → more accurate near horizon).
+        Base step size (smaller implies more accurate near horizon).
 
     Returns
     -------

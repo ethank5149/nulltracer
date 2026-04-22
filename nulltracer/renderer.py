@@ -35,7 +35,7 @@ def _resolve_inclination(params: dict) -> float:
     Accepts either ``inclination`` (canonical, documented) or the shorthand
     alias ``incl`` that the notebook/UI uses. Defaults to 80.0 if neither
     is provided. Fixes the historical silent bug where dict-based renders
-    always ran at 80° regardless of the caller's ``incl`` setting.
+    always ran at 80?? regardless of the caller's ``incl`` setting.
     """
     if "inclination" in params:
         return float(params["inclination"])
@@ -49,10 +49,10 @@ def _resolve_steps(params: dict, *, spin: float, charge: float, method: str,
     """Return the integration step budget.
 
     Uses an explicit ``steps`` / ``max_steps`` value if supplied, otherwise
-    calls :func:`nulltracer.render.auto_steps` — matching the behaviour of
+    calls :func:`nulltracer.render.auto_steps` ??? matching the behaviour of
     the free ``nulltracer.render_frame`` entry point. Without this, dict-based
     renders at large ``obs_dist`` would terminate before reaching the black
-    hole (the default of 200 steps × 0.15 step_size = 30 M of affine length).
+    hole (the default of 200 steps ?? 0.15 step_size = 30 M of affine length).
     """
     if "steps" in params:
         return int(params["steps"])
@@ -79,7 +79,7 @@ _KERNEL_REGISTRY = {
 
 # Map method names to single-ray trace kernel entry points.
 # The ray_trace.cu kernel provides per-integrator entry points
-# for ALL available methods — no fallback needed.
+# for ALL available methods ??? no fallback needed.
 _RAY_TRACE_REGISTRY = {
     "rk4":          "ray_trace_rk4",
     "rkdp8":        "ray_trace_rkdp8",
@@ -318,7 +318,7 @@ class CudaRenderer:
             obs_dist=obs_dist, step_size=step_size,
         )
         logger.info(
-            "CUDA render params: %dx%d method=%s spin=%.3f charge=%.3f incl=%.1f° "
+            "CUDA render params: %dx%d method=%s spin=%.3f charge=%.3f incl=%.1f?? "
             "fov=%.1f steps=%d obs_dist=%.0f step_size=%.2f bg_mode=%d "
             "show_disk=%s show_grid=%s disk_temp=%.2f star_layers=%d isco=%.4f",
             width, height, method, spin, charge,
@@ -394,7 +394,7 @@ class CudaRenderer:
         # Copy to host
         h_output = d_output.get()
 
-        # Reshape to (H, W, 3) — kernel writes in row-major order
+        # Reshape to (H, W, 3) ??? kernel writes in row-major order
         # with iy=0 at bottom (same as OpenGL's glReadPixels convention).
         pixel_array = h_output.reshape(height, width, 3)
 
@@ -425,10 +425,10 @@ class CudaRenderer:
 
         Returns:
             dict with keys:
-                raw_rgb: bytes — raw RGB pixel data (top-to-bottom)
-                kernel_ms: float — GPU kernel execution time in ms
-                total_ms: float — total wall-clock time (kernel + readback)
-                gpu_mem_alloc_bytes: int — GPU memory allocated for buffers
+                raw_rgb: bytes ??? raw RGB pixel data (top-to-bottom)
+                kernel_ms: float ??? GPU kernel execution time in ms
+                total_ms: float ??? total wall-clock time (kernel + readback)
+                gpu_mem_alloc_bytes: int ??? GPU memory allocated for buffers
         """
         if not self._initialized:
             raise RuntimeError("Renderer not initialized. Call initialize() first.")
@@ -566,7 +566,7 @@ class CudaRenderer:
                 results[method] = False
         return results
 
-    # ── Single-ray tracing ───────────────────────────────────
+    # ?????? Single-ray tracing ?????????????????????????????????????????????????????????????????????????????????????????????????????????
 
     def _get_ray_trace_kernel(self, method: str) -> cp.RawKernel:
         """Get or compile a single-ray trace CUDA kernel for the given method.
@@ -584,7 +584,7 @@ class CudaRenderer:
 
         if effective_method != method:
             logger.warning(
-                "RAY TRACE FALLBACK: method '%s' has no native ray trace kernel — "
+                "RAY TRACE FALLBACK: method '%s' has no native ray trace kernel ??? "
                 "falling back to '%s'. Results will NOT match /bench output for this method! "
                 "Native ray trace methods: %s",
                 method, effective_method, list(_RAY_TRACE_REGISTRY.keys()),
@@ -627,23 +627,23 @@ class CudaRenderer:
 
         Args:
             params: dict with keys:
-                mode: str — "pixel" or "impact_parameter"
-                ix, iy: int — pixel coordinates (if mode="pixel")
-                alpha, beta: float — impact parameters in radians (if mode="impact_parameter")
+                mode: str ??? "pixel" or "impact_parameter"
+                ix, iy: int ??? pixel coordinates (if mode="pixel")
+                alpha, beta: float ??? impact parameters in radians (if mode="impact_parameter")
                 spin, charge, inclination (degrees), fov, width, height,
                 method, steps, step_size, obs_dist, phi0, disk_temp,
                 doppler_boost, max_trajectory_points
 
         Returns:
             dict with keys:
-                ray: dict — input ray specification
-                spacetime: dict — black hole parameters
-                initial_state: dict — r, theta, phi, pr, pth
-                final_state: dict — r, theta, phi, pr, pth
-                termination: dict — reason, steps_used, steps_max
-                trajectory: dict — r[], theta[], phi[], step_sizes[]
-                disk_crossings: list[dict] — crossing details with physics
-                timing: dict — kernel_ms, total_ms
+                ray: dict ??? input ray specification
+                spacetime: dict ??? black hole parameters
+                initial_state: dict ??? r, theta, phi, pr, pth
+                final_state: dict ??? r, theta, phi, pr, pth
+                termination: dict ??? reason, steps_used, steps_max
+                trajectory: dict ??? r[], theta[], phi[], step_sizes[]
+                disk_crossings: list[dict] ??? crossing details with physics
+                timing: dict ??? kernel_ms, total_ms
         """
         if not self._initialized:
             raise RuntimeError("Renderer not initialized. Call initialize() first.")

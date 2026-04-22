@@ -4,22 +4,22 @@
  *
  *  Tao extended phase space method (Tao 2016, Phys. Rev. E 94,
  *  043303) with Kahan-Li s15odr8 optimal 8th-order composition
- *  (Kahan & Li, Math. Comp. 66:1089–1099, 1997).
+ *  (Kahan & Li, Math. Comp. 66:1089???1099, 1997).
  *
  *  Uses doubled phase space (10 variables per ray) to make the
  *  non-separable Kerr-Newman Hamiltonian amenable to symplectic
  *  splitting, achieving true 8th-order accuracy.
  *
  *  Integration uses ingoing Kerr coordinates which eliminate the
- *  Boyer-Lindquist coordinate singularity at Δ = 0 (horizon).
+ *  Boyer-Lindquist coordinate singularity at ?? = 0 (horizon).
  *  This prevents catastrophic force blowups when negative
  *  Kahan-Li substeps temporarily push r below the horizon.
  *
  *  Kahan-Li coefficients have max |W_i| = 0.797 (vs 2.447 for
- *  Yoshida Solution D), giving 3.1× smaller intermediate
+ *  Yoshida Solution D), giving 3.1?? smaller intermediate
  *  excursions and better numerical stability.
  *
- *  15 symmetric substeps × 2 force evals per substep = 30 evals/step.
+ *  15 symmetric substeps ?? 2 force evals per substep = 30 evals/step.
  *  All geodesic integration in float64; color output in float32.
  * ============================================================ */
 

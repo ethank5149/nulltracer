@@ -10,11 +10,11 @@
  *  splitting, achieving true 6th-order accuracy.
  *
  *  Integration uses ingoing Kerr coordinates which eliminate the
- *  Boyer-Lindquist coordinate singularity at Δ = 0 (horizon).
+ *  Boyer-Lindquist coordinate singularity at ?? = 0 (horizon).
  *  This prevents catastrophic force blowups when negative
  *  Yoshida substeps temporarily push r below the horizon.
  *
- *  7 symmetric substeps × 2 force evals per substep = 14 evals/step.
+ *  7 symmetric substeps ?? 2 force evals per substep = 14 evals/step.
  *  All geodesic integration in float64; color output in float32.
  * ============================================================ */
 

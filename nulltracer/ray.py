@@ -1,7 +1,7 @@
 """
 Single-ray geodesic tracing for diagnostics and validation.
 
-Traces one photon through Kerr–Newman spacetime and returns the
+Traces one photon through Kerr???Newman spacetime and returns the
 full trajectory, equatorial-plane crossings, and disk physics.
 """
 
@@ -107,8 +107,8 @@ def trace_ray(
 
     # Output buffer layout:
     #   Header:     20 doubles
-    #   Trajectory: max_traj × 4 doubles (r, θ, φ, h_e)
-    #   Crossings:  1 + 16 × 8 = 129 doubles
+    #   Trajectory: max_traj ?? 4 doubles (r, ??, ??, h_e)
+    #   Crossings:  1 + 16 ?? 8 = 129 doubles
     max_crossings = 16
     output_size = 20 + max_traj * 4 + 1 + max_crossings * 8
     d_output = cp.zeros(output_size, dtype=cp.float64)

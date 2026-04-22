@@ -10,11 +10,11 @@
  *  splitting, achieving true 4th-order accuracy.
  *
  *  Integration uses ingoing Kerr coordinates which eliminate the
- *  Boyer-Lindquist coordinate singularity at Δ = 0 (horizon).
+ *  Boyer-Lindquist coordinate singularity at ?? = 0 (horizon).
  *  This prevents catastrophic force blowups when negative
  *  Yoshida substeps temporarily push r below the horizon.
  *
- *  3 symmetric substeps × 2 force evals per substep = 6 evals/step.
+ *  3 symmetric substeps ?? 2 force evals per substep = 6 evals/step.
  *  All geodesic integration in float64; color output in float32.
  * ============================================================ */
 
@@ -33,7 +33,7 @@ void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output, const flo
     int W = (int)p.width, H = (int)p.height;
     if (ix >= W || iy >= H) return;
 
-    /* ── Initialize ray in BL, then transform to Kerr coords ── */
+    /* -- Initialize ray in BL, then transform to Kerr coords -- */
     double r, th, phi, pr, pth, b, rp;
     float alpha, beta;
     initRay(ix, iy, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta);
@@ -57,7 +57,7 @@ void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output, const flo
     float base_alpha = (float)p.disk_alpha;
     bool done = false;
 
-    /* ── Integration loop ────────────────────────────────── */
+    /* -- Integration loop ---------------------------------- */
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
 
@@ -82,10 +82,10 @@ void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output, const flo
                                        &acc_r, &acc_g, &acc_b, &acc_a);
         }
 
-        /* ── Termination conditions ──────────────────────── */
+        /* -- Termination conditions ------------------------ */
 
         /* KS coordinates are regular at the horizon, so we can
-         * detect capture well inside (r ≤ 0.5·r₊) */
+         * detect capture well inside (r ??? 0.5??r???) */
         if (r <= rp * 0.5) {
             blendColor(0.0f, 0.0f, 0.0f, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);
             done = true; break;
@@ -133,7 +133,7 @@ void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output, const flo
         if (r < 0.5 || r != r || th != th) { done = true; break; }
     }
 
-    /* ── Post-processing ─────────────────────────────────── */
+    /* -- Post-processing ----------------------------------- */
     float cr = acc_r, cg = acc_g, cb = acc_b;
     float ux = 2.0f * (ix + 0.5f) / (float)W  - 1.0f;
     float uy = 2.0f * (iy + 0.5f) / (float)H - 1.0f;

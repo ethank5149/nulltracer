@@ -1,5 +1,5 @@
 /* ============================================================
- *  RK4 — Classical 4th-order Runge-Kutta integrator
+ *  RK4 ??? Classical 4th-order Runge-Kutta integrator
  *
  *  4 stages per step with 1/6, 1/3, 1/3, 1/6 weights.
  *  All geodesic integration in float64; color output in float32.

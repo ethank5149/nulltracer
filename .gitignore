@@ -15,7 +15,8 @@ build/
 # Environment
 .venv/
 venv/
-.env
+.env/
+.unraid/
 
 reference/
 output/

@@ -37,7 +37,7 @@ def load_skymap(
     Returns
     -------
     (d_skymap, width, height)
-        GPU float32 array (H×W×3 flattened) and its dimensions.
+        GPU float32 array (H??W??3 flattened) and its dimensions.
     """
     global _cache
 
@@ -114,7 +114,7 @@ def load_skymap(
             data = raw.astype(np.float32)
             fmt_info = f"{raw.dtype} ({ext})"
 
-        # sRGB → linear (inverse IEC 61966-2-1)
+        # sRGB ??? linear (inverse IEC 61966-2-1)
         mask = data <= 0.04045
         data[mask] /= 12.92
         data[~mask] = ((data[~mask] + 0.055) / 1.055) ** 2.4
@@ -126,8 +126,8 @@ def load_skymap(
     _cache = (d_skymap, w, h)
 
     print(
-        f"Skymap loaded: {path.name} ({w}×{h}, {fmt_info}, "
-        f"brightness={brightness}×, {data.nbytes / 1e6:.1f} MB on GPU)"
+        f"Skymap loaded: {path.name} ({w}??{h}, {fmt_info}, "
+        f"brightness={brightness}??, {data.nbytes / 1e6:.1f} MB on GPU)"
     )
     return _cache
 

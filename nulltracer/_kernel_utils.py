@@ -65,9 +65,9 @@ class KernelCache:
     def __init__(self) -> None:
         self._cache: dict[str, cp.RawKernel] = {}
 
-    # ── render kernels (full-frame, one thread per pixel) ──────
+    # ?????? render kernels (full-frame, one thread per pixel) ??????????????????
 
-    #: Maps method name → (filename, entry_point) for full-frame rendering.
+    #: Maps method name ??? (filename, entry_point) for full-frame rendering.
     RENDER_REGISTRY: dict[str, tuple[str, str]] = {
         "rk4":           ("rk4.cu",           "trace_rk4"),
         "rkdp8":         ("rkdp8.cu",         "trace_rkdp8"),
@@ -78,7 +78,7 @@ class KernelCache:
         "tao_kahan_li8": ("tao_kahan_li8.cu", "trace_tao_kahan_li8"),
     }
 
-    #: Maps method name → entry_point for single-ray tracing.
+    #: Maps method name ??? entry_point for single-ray tracing.
     RAY_TRACE_REGISTRY: dict[str, str] = {
         "rk4":           "ray_trace_rk4",
         "rkdp8":         "ray_trace_rkdp8",
@@ -91,18 +91,18 @@ class KernelCache:
 
     #: Human-readable labels.
     METHOD_LABELS: dict[str, str] = {
-        "rk4":           "Runge–Kutta 4th order",
-        "rkdp8":         "Dormand–Prince 8(7) adaptive",
-        "kahanli8s":     "Kahan–Li 8th symplectic",
-        "kahanli8s_ks":  "Kahan–Li 8th symplectic (Kerr–Schild)",
+        "rk4":           "Runge???Kutta 4th order",
+        "rkdp8":         "Dormand???Prince 8(7) adaptive",
+        "kahanli8s":     "Kahan???Li 8th symplectic",
+        "kahanli8s_ks":  "Kahan???Li 8th symplectic (Kerr???Schild)",
         "tao_yoshida4":  "Tao + Yoshida 4th symplectic",
         "tao_yoshida6":  "Tao + Yoshida 6th symplectic",
-        "tao_kahan_li8": "Tao + Kahan–Li 8th symplectic",
+        "tao_kahan_li8": "Tao + Kahan???Li 8th symplectic",
     }
 
     _COMPILE_OPTS = ("--std=c++14", "-use_fast_math")
 
-    # ── public helpers ─────────────────────────────────────────
+    # ?????? public helpers ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
     @property
     def available_methods(self) -> list[str]:
@@ -120,7 +120,7 @@ class KernelCache:
         self._cache.clear()
         return n
 
-    # ── compilation ────────────────────────────────────────────
+    # ?????? compilation ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
     def get_render_kernel(self, method: str) -> cp.RawKernel:
         """Return (compiling if needed) the full-frame render kernel."""
@@ -166,17 +166,17 @@ class KernelCache:
         for m in self.RENDER_REGISTRY:
             self.get_render_kernel(m)
             if verbose:
-                print(f"  ✓ render   {self.METHOD_LABELS.get(m, m)}")
+                print(f"  ??? render   {self.METHOD_LABELS.get(m, m)}")
         self.get_classify_kernel()
         if verbose:
-            print(f"  ✓ classify RK4 + production geoRHS")
+            print(f"  ??? classify RK4 + production geoRHS")
             print(
                 f"All {len(self.RENDER_REGISTRY)} render "
                 f"+ 1 classify kernels ready."
             )
 
 
-# ── Inline classify kernel (the only CUDA not in .cu files) ───
+# ?????? Inline classify kernel (the only CUDA not in .cu files) ?????????
 
 _CLASSIFY_KERNEL_BODY = r"""
 __device__ double adaptive_step_classify(double r, double rp, double h_base) {

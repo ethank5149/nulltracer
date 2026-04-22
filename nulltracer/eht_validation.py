@@ -3,8 +3,8 @@ EHT shadow metric extraction for Nulltracer renders.
 
 Extracts shadow diameter, circularity, and brightness asymmetry
 from rendered images. Compares against EHT M87* observables:
-  - Ring diameter: 42 ± 3 μas (EHT Collaboration 2019, Paper VI)
-  - Circularity ΔC < 0.10
+  - Ring diameter: 42 ?? 3 ??as (EHT Collaboration 2019, Paper VI)
+  - Circularity ??C < 0.10
 """
 
 import numpy as np
@@ -96,15 +96,15 @@ def extract_shadow_metrics(
 
     Returns:
         dict with keys:
-            'diameter_px': shadow diameter in pixels (2 × circle-fit radius)
+            'diameter_px': shadow diameter in pixels (2 ?? circle-fit radius)
             'diameter_M':  shadow diameter in units of M (circle fit).
                            Best for comparing against analytic critical
-                           impact parameters like 2·3√3 M.
+                           impact parameters like 2??3???3 M.
             'ring_diameter_M': ellipse-fit major-axis diameter in M.
-                           This is the **EHT observable** — the M87* and
+                           This is the **EHT observable** ??? the M87* and
                            Sgr A* papers quote the bright ring's major
                            axis, not a circle-averaged diameter.
-            'circularity': ΔC = 1 - b/a (0 = perfect circle)
+            'circularity': ??C = 1 - b/a (0 = perfect circle)
             'center_x', 'center_y': shadow center in pixels
             'asymmetry': brightness asymmetry (ratio of left/right flux)
             'circle_fit_rms', 'ellipse_fit_rms': residuals
@@ -127,7 +127,7 @@ def extract_shadow_metrics(
     _, _, a_ell, b_ell, angle, ellipse_rms = fit_ellipse(contour)
 
     height, width = gray.shape
-    px_per_M = width / (2.0 * fov_deg)  # kernel maps ux∈[-1,1] to α∈[-fov,+fov]·M
+    px_per_M = width / (2.0 * fov_deg)  # kernel maps ux???[-1,1] to ?????[-fov,+fov]??M
 
     semi_major_px = max(a_ell, b_ell)
     semi_minor_px = min(a_ell, b_ell)
