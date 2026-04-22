@@ -140,12 +140,6 @@ __device__ void initRay(
     float *alpha_out, float *beta_out
 ) {
     double asp = p.width / p.height;
-    /* Map pixel to normalized [-1, 1] coordinates.
-     * ux: left=-1, right=+1.
-     * uy: bottom=-1, top=+1 (bottom-to-top row order).
-     * iy=0 maps to uy≈-1 (bottom of image).
-     * The caller (renderer.py) applies np.flipud() to produce standard
-     * top-to-bottom image order. */
     double ux = (2.0 * ixf / p.width  - 1.0);
     double uy = (2.0 * iyf / p.height - 1.0);
 
@@ -155,48 +149,67 @@ __device__ void initRay(
     double a = p.spin;
     double a2 = a * a;
     double Q2 = p.charge * p.charge;
-    double thObs = p.incl;
-    double sO = sin(thObs), cO = cos(thObs);
+    double r0 = p.obs_dist;
+    double th0 = p.incl;
 
-    double sin_i = sO;
-    double cos_i = cO;
-
-    double Lz = -alpha * sin_i;
-
-    *r   = p.obs_dist;
-    *th  = thObs;
+    *r = r0;
+    *th = th0;
     *phi = p.phi0;
 
-    double sth = sin(thObs), cth = cos(thObs);
-    double s2 = sth * sth + S2_EPS;
-    double c2 = cth * cth;
-    double r0 = p.obs_dist;
-    double r02 = r0 * r0;
-    double sig = r02 + a2 * c2;
-    double del = r02 - 2.0 * r0 + a2 + Q2;
-    double sdel = fmax(del, 1e-14);
-    double rpa2 = r02 + a2;
-    double A_ = rpa2 * rpa2 - sdel * a2 * s2;
-    double iSD = 1.0 / (sig * sdel);
-    double is2 = 1.0 / s2;
-    double grr = sdel / sig;
-    double gthi = 1.0 / sig;
-    double w_init = 2.0 * r0 - Q2;
+    double sth = sin(th0), cth = cos(th0);
+    double s2 = sth * sth;
+    double r2 = r0 * r0;
+    
+    double sig = r2 + a2 * c2;
+    double del = r2 - 2.0 * r0 + a2 + Q2;
+    double w = 2.0 * r0 - Q2;
+    
+    // Construct local tetrad basis vectors (ZAMO frame)
+    double e_t[4], e_r[4], e_th[4], e_ph[4];
+    double Omega = a * w / (r2*sig + a2*w*s2); // Frame dragging angular velocity
+    
+    e_t[0] = sqrt(r2*sig / (del*(r2*sig + a2*w*s2))); // e_t^t
+    e_t[1] = 0.0; e_t[2] = 0.0;
+    e_t[3] = Omega * e_t[0];                         // e_t^phi
+    
+    e_r[0] = 0.0; e_r[1] = sqrt(del / sig); e_r[2] = 0.0; e_r[3] = 0.0; // e_r^r
+    e_th[0] = 0.0; e_th[1] = 0.0; e_th[2] = 1.0/sqrt(sig); e_th[3] = 0.0; // e_th^theta
+    
+    e_ph[0] = a * sth * sqrt(w / (del*(r2*sig + a2*w*s2))); // e_ph^t
+    e_ph[1] = 0.0; e_ph[2] = 0.0;
+    e_ph[3] = sqrt(sig/del) * e_t[0] * sth;                 // e_ph^phi
 
-    double Q = beta * beta + c2 * (a2 - Lz * Lz / s2);
-    double pth2 = fmax(Q - c2 * (a2 - Lz * Lz / s2), 0.0);
-    *pth = sqrt(pth2);
-    if (beta < 0.0) *pth = -*pth;
+    // Photon momentum in local frame (ingoing ray)
+    double p_loc_t = 1.0; // Energy
+    double p_loc_r = -1.0 * sqrt(fmax(1.0 - alpha*alpha - beta*beta, 0.0));
+    double p_loc_th = beta;
+    double p_loc_ph = -alpha;
 
-    double rest = -A_ * iSD + 2.0 * a * Lz * w_init * iSD
-                  + gthi * (*pth) * (*pth) + (sig - w_init) * iSD * is2 * Lz * Lz;
-    double pr2 = -rest / grr;
-    *pr = (pr2 > 0.0) ? -sqrt(pr2) : 0.0;
+    // Transform momentum to contravariant coordinate basis p^mu
+    double p_cov_t = p_loc_t * e_t[0] + p_loc_ph * e_ph[0];
+    double p_cov_r = p_loc_r * e_r[1];
+    double p_cov_th = p_loc_th * e_th[2];
+    double p_cov_ph = p_loc_t * e_t[3] + p_loc_ph * e_ph[3];
 
-    /* Event horizon radius */
+    // Lower index to get covariant momentum p_mu
+    double g_tt = -(1.0 - w/sig);
+    double g_tph = -a * w * s2 / sig;
+    double g_rr = sig / del;
+    double g_thth = sig;
+    double g_phph = (r2 + a2 + a2*w*s2/sig) * s2;
+
+    double p_t = g_tt * p_cov_t + g_tph * p_cov_ph;
+    *pr = g_rr * p_cov_r;
+    *pth = g_thth * p_cov_th;
+    double p_phi = g_tph * p_cov_t + g_phph * p_cov_ph;
+
+    // Normalize with p_t = -1
+    *pr /= -p_t;
+    *pth /= -p_t;
+    p_phi /= -p_t;
+
+    *b_out = p_phi; // p_phi is the conserved angular momentum Lz
     *rp_out = 1.0 + sqrt(fmax(1.0 - a2 - Q2, 0.0));
-    *b_out = Lz;
-
     *alpha_out = (float)alpha;
     *beta_out  = (float)beta;
 }
@@ -1309,19 +1322,40 @@ void adaptive_render_kernel(const RenderParams *pp, unsigned char *output, const
         }
     }
 
-    // Average all collected samples
-    float avg_r = 0, avg_g = 0, avg_b = 0;
+    // Weighted average of all collected samples using a Gaussian filter
+    double avg_r = 0, avg_g = 0, avg_b = 0;
+    double total_w = 0.0;
+    const double sigma = 0.5;
+    const double sigma2 = 2.0 * sigma * sigma;
+
     for (int i = 0; i < num_samples; ++i) {
-        avg_r += sample_colors[i].r;
-        avg_g += sample_colors[i].g;
-        avg_b += sample_colors[i].b;
+        double dx = sample_coords[i][0] - (ix + 0.5); // distance from pixel center
+        double dy = sample_coords[i][1] - (iy + 0.5);
+        double w = exp(-(dx*dx + dy*dy) / sigma2);
+        avg_r += sample_colors[i].r * w;
+        avg_g += sample_colors[i].g * w;
+        avg_b += sample_colors[i].b * w;
+        total_w += w;
     }
-    avg_r /= num_samples;
-    avg_g /= num_samples;
-    avg_b /= num_samples;
+
+    if (total_w > 1e-9) {
+        avg_r /= total_w;
+        avg_g /= total_w;
+        avg_b /= total_w;
+    } else if (num_samples > 0) {
+        // Fallback to simple average if weights are somehow all zero
+        for (int i = 0; i < num_samples; ++i) {
+            avg_r += sample_colors[i].r;
+            avg_g += sample_colors[i].g;
+            avg_b += sample_colors[i].b;
+        }
+        avg_r /= num_samples;
+        avg_g /= num_samples;
+        avg_b /= num_samples;
+    }
 
     int idx = (iy * W + ix) * 3;
-    output[idx + 0] = (unsigned char)(fminf(fmaxf(avg_r * 255.0f, 0.0f), 255.0f));
-    output[idx + 1] = (unsigned char)(fminf(fmaxf(avg_g * 255.0f, 0.0f), 255.0f));
-    output[idx + 2] = (unsigned char)(fminf(fmaxf(avg_b * 255.0f, 0.0f), 255.0f));
+    output[idx + 0] = (unsigned char)(fminf(fmaxf((float)avg_r * 255.0f, 0.0f), 255.0f));
+    output[idx + 1] = (unsigned char)(fminf(fmaxf((float)avg_g * 255.0f, 0.0f), 255.0f));
+    output[idx + 2] = (unsigned char)(fminf(fmaxf((float)avg_b * 255.0f, 0.0f), 255.0f));
 }
