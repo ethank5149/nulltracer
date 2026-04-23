@@ -48,6 +48,7 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
 
         double a = p.spin;
         double Q2 = p.charge * p.charge;
+        float F_peak = novikov_thorne_peak(a, (double)p.isco);
         float acc_r = 0.0f, acc_g = 0.0f, acc_b = 0.0f, acc_a = 0.0f;
         int disk_crossings = 0;
         int max_crossings = (int)p.disk_max_crossings;
@@ -230,7 +231,7 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
                     float dcr, dcg, dcb;
                     diskColor(dr_f, dphi_f, (float)a, (float)Q2,
                              (float)p.isco, (float)p.disk_outer, (float)p.disk_temp,
-                             g, (int)p.doppler_boost,
+                             g, (int)p.doppler_boost, F_peak,
                              &dcr, &dcg, &dcb);
                     float crossing_alpha = base_alpha;
                     blendColor(dcr, dcg, dcb, crossing_alpha, &acc_r, &acc_g, &acc_b, &acc_a);

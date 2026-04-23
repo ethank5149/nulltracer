@@ -329,7 +329,7 @@ def classify_shadow(
             np.float64(step_size),
         ),
     )
-    cp.cuda.Device(0).synchronize()
+    cp.cuda.Device().synchronize()
     ms = (_time.perf_counter() - t0) * 1000.0
 
     h_class = np.flipud(d_class.get().reshape(height, width))

@@ -109,11 +109,11 @@ class CudaRenderer:
             return
 
         try:
-            # Force CUDA context creation
-            cp.cuda.Device(0).use()
+            # Query current device instead of forcing 0
+            dev_id = cp.cuda.runtime.getDevice()
 
             # Query GPU info
-            props = cp.cuda.runtime.getDeviceProperties(0)
+            props = cp.cuda.runtime.getDeviceProperties(dev_id)
             name = props["name"].decode() if isinstance(props["name"], bytes) else props["name"]
             mem_gb = props["totalGlobalMem"] / (1024**3)
             cc = f"{props['major']}.{props['minor']}"
