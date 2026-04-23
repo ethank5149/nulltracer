@@ -82,7 +82,7 @@ def isco_kn(a: float, Q: float) -> float:
         return (Ep - Em) / (2.0 * dr)
 
     lo = rh + 0.01
-    hi = 9.0
+    hi = isco_kerr(0.0) + 1.0  # 7.0, since ISCO <= 6M for all KN parameters
     # ISCO is where dE/dr changes from negative to positive
     for _ in range(80):
         mid = (lo + hi) / 2.0

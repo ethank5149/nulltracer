@@ -70,8 +70,7 @@ void trace_tao_yoshida6(const RenderParams *pp, unsigned char *output, const flo
         /* Hamiltonian constraint projection on real variables (KS) */
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
+
 
         /* Volumetric emission: hot corona + relativistic jet */
         if (acc_a < 0.99f) {

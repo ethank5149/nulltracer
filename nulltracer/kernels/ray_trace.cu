@@ -114,7 +114,7 @@ __device__ __forceinline__ void rt_kahan_add(
 
 /* -- Common ray initialization ------------------------------ */
 
-__device__ void ray_init(
+__device__ bool ray_init(
     const RenderParams &p, double *output,
     double *r, double *th, double *phi, double *pr, double *pth,
     double *b, double *rp, double *alpha_val, double *beta_val,
@@ -132,7 +132,9 @@ __device__ void ray_init(
         /* Pixel mode: use initRay from geodesic_base.cu */
         int ix = (int)input1, iy = (int)input2;
         float alpha_f, beta_f;
-        initRay(ix, iy, p, r, th, phi, pr, pth, b, rp, &alpha_f, &beta_f);
+        if (!initRay(ix, iy, p, r, th, phi, pr, pth, b, rp, &alpha_f, &beta_f)) {
+            return false;
+        }
         *alpha_val = (double)alpha_f;
         *beta_val = (double)beta_f;
     } else {
@@ -168,7 +170,8 @@ __device__ void ray_init(
                       + gthi * (*beta_val) * (*beta_val)
                       + (sig - w_init) * iSD * is2 * (*b) * (*b);
         double pr2 = -rest / grr;
-        *pr = (pr2 > 0.0) ? -sqrt(pr2) : 0.0;
+        if (pr2 <= 0.0) return false;
+        *pr = -sqrt(pr2);
 
         /* Event horizon radius */
         *rp = 1.0 + sqrt(fmax(1.0 - a2 - Q2, 0.0));
@@ -185,6 +188,10 @@ __device__ void ray_init(
     output[7] = *beta_val;
     output[15] = *rp;
     output[16] = p.isco;
+    output[17] = computeHamiltonian(*r, *th, *pr, *pth, a, *b, Q2);
+    output[19] = computeCarter(*th, *pth, a, *b, Q2);
+
+    return true;
 }
 
 
@@ -237,6 +244,9 @@ __device__ void ray_finalize(
     double r, double th, double phi, double pr, double pth,
     int term_reason, int steps_used
 ) {
+    output[18] = computeHamiltonian(r, th, pr, pth, a, b, Q2);
+    output[20] = computeCarter(th, pth, a, b, Q2);
+
     output[8]  = r;
     output[9]  = th;
     output[10] = phi;
@@ -259,11 +269,14 @@ void ray_trace_rk4(const RenderParams *pp, double *output) {
 
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
-    ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
+    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        return;
+    }
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
-    int traj_base = 20;
+    int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
     int STEPS = (int)p.steps;
@@ -282,8 +295,7 @@ void ray_trace_rk4(const RenderParams *pp, double *output) {
         double oldR = r, oldTh = th, oldPhi = phi;
         rk4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
+
 
         if (r <= rp * 1.01) { term_reason = 1; break; }
 
@@ -312,11 +324,14 @@ void ray_trace_rkdp8(const RenderParams *pp, double *output) {
 
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
-    ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
+    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        return;
+    }
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
-    int traj_base = 20;
+    int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
     int STEPS = (int)p.steps;
@@ -435,8 +450,7 @@ void ray_trace_rkdp8(const RenderParams *pp, double *output) {
             }
         }
 
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
+
 
         if (r <= rp * 1.01) { term_reason = 1; break; }
 
@@ -467,11 +481,14 @@ void ray_trace_kahanli8s(const RenderParams *pp, double *output) {
 
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
-    ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
+    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        return;
+    }
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
-    int traj_base = 20;
+    int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
 
@@ -560,8 +577,7 @@ void ray_trace_kahanli8s(const RenderParams *pp, double *output) {
         if (Phi < 0.01) Phi = 0.01;
 
         /* Pole reflection */
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
+
 
         if (r <= rp * 1.01) { term_reason = 1; break; }
 
@@ -592,7 +608,10 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
 
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
-    ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
+    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        return;
+    }
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
@@ -600,7 +619,7 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
     /* Transform p_r from BL to KS coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
 
-    int traj_base = 20;
+    int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
 
@@ -689,8 +708,7 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
         if (Phi < 0.01) Phi = 0.01;
 
         /* Pole reflection */
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
+
 
         /* KS horizon capture: well inside horizon (r ??? 0.5??r???) */
         if (r <= rp * 0.5) { term_reason = 1; break; }
@@ -720,7 +738,10 @@ void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
 
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
-    ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
+    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        return;
+    }
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
@@ -729,7 +750,7 @@ void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
     transformBLtoKS(r, a, b, Q2, &pr);
 
     double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-    int traj_base = 20;
+    int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
     int STEPS = (int)p.steps;
@@ -752,8 +773,7 @@ void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
 
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
+
 
         if (r <= rp * 0.5) { term_reason = 1; break; }
 
@@ -782,7 +802,10 @@ void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
 
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
-    ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
+    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        return;
+    }
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
@@ -791,7 +814,7 @@ void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
     transformBLtoKS(r, a, b, Q2, &pr);
 
     double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-    int traj_base = 20;
+    int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
     int STEPS = (int)p.steps;
@@ -814,8 +837,7 @@ void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
 
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
+
 
         if (r <= rp * 0.5) { term_reason = 1; break; }
 
@@ -844,7 +866,10 @@ void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
 
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
-    ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj);
+    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        return;
+    }
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
@@ -853,7 +878,7 @@ void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
     transformBLtoKS(r, a, b, Q2, &pr);
 
     double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-    int traj_base = 20;
+    int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
     int STEPS = (int)p.steps;
@@ -876,8 +901,7 @@ void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
 
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
+
 
         if (r <= rp * 0.5) { term_reason = 1; break; }
 

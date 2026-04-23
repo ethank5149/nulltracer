@@ -23,7 +23,7 @@
 /* Smooth regularization epsilon for sin????.
  * Prevents d??/d?? divergence at poles.
  * Physics error confined to ?? < arcsin(?????) ??? 1.1?? from poles. */
-#define S2_EPS 0.0004
+#define S2_EPS 0.001
 
 
 /* -- Parameter struct passed to kernel ----------------------- */
@@ -62,6 +62,7 @@ struct RenderParams {
     double disk_alpha;          /* base opacity per disk crossing (0.0???1.0) */
     double disk_max_crossings;  /* max disk crossings to accumulate (as double, cast to int) */
     double bloom_enabled;       /* 1.0 = output float32 linear for bloom, 0.0 = normal uint8 sRGB */
+    double debug_trace;         /* debug tracing enabled flag */
     double aa_samples;          /* stochastic multi-sample anti-aliasing count */
 
     /* Skymap texture (equirectangular projection) */
@@ -148,7 +149,7 @@ __device__ void geoRHS(
  *
  * This is the common setup shared by all integrators.
  */
-__device__ void initRay(
+__device__ bool initRay(
     int ix, int iy, const RenderParams &p,
     double *r, double *th, double *phi,
     double *pr, double *pth,
@@ -199,15 +200,20 @@ __device__ void initRay(
     double gthi = 1.0 / sig;
     double w_init = 2.0 * r0 - Q2;
 
-    double Q = beta * beta + c2 * (a2 - Lz * Lz / s2);
-    double pth2 = fmax(Q - c2 * (a2 - Lz * Lz / s2), 0.0);
-    *pth = sqrt(pth2);
-    if (beta < 0.0) *pth = -*pth;
+    /* The Carter constant Q is evaluated at the observer */
+    double Carter_Q = beta * beta + c2 * (a2 - Lz * Lz / s2);
+    
+    /* pth2 simplifies exactly to beta^2 */
+    *pth = beta;
 
     double rest = -A_ * iSD + 2.0 * a * Lz * w_init * iSD
                   + gthi * (*pth) * (*pth) + (sig - w_init) * iSD * is2 * Lz * Lz;
     double pr2 = -rest / grr;
-    *pr = (pr2 > 0.0) ? -sqrt(pr2) : 0.0;
+    if (pr2 <= 0.0) {
+        *pr = 0.0;
+        return false;
+    }
+    *pr = -sqrt(pr2);
 
     /* Event horizon radius */
     *rp_out = 1.0 + sqrt(fmax(1.0 - a2 - Q2, 0.0));
@@ -215,9 +221,11 @@ __device__ void initRay(
 
     *alpha_out = (float)alpha;
     *beta_out  = (float)beta;
+
+    return true;
 }
 
-__device__ void initRayJittered(
+__device__ bool initRayJittered(
     int ix, int iy, float jitter_x, float jitter_y, const RenderParams &p,
     double *r, double *th, double *phi,
     double *pr, double *pth,
@@ -260,11 +268,16 @@ __device__ void initRayJittered(
     double rest = -A_ * iSD + 2.0 * a * Lz * w_init * iSD
                   + gthi * (*pth) * (*pth) + (sig - w_init) * iSD * is2 * Lz * Lz;
     double pr2 = -rest / grr;
-    *pr = (pr2 > 0.0) ? -sqrt(pr2) : 0.0;
+    if (pr2 <= 0.0) {
+        *pr = 0.0;
+        return false;
+    }
+    *pr = -sqrt(pr2);
     *rp_out = 1.0 + sqrt(fmax(1.0 - a2 - Q2, 0.0));
     *b_out = Lz;
     *alpha_out = (float)alpha;
     *beta_out  = (float)beta;
+    return true;
 }
 
 
@@ -647,7 +660,31 @@ __device__ void geoForce(
  * Reference: B. Carter, "Global structure of the Kerr family of
  * gravitational fields," Phys. Rev. 174:1559???1571, 1968.
  */
+__device__ double computeHamiltonian(
+    double r, double th, double pr, double pth,
+    double a, double b, double Q2
+) {
+    double sth = sin(th), cth = cos(th);
+    double s2 = sth * sth + S2_EPS;
+    double c2 = cth * cth;
+    double a2 = a * a, r2 = r * r;
+    double sig = r2 + a2 * c2;
+    double del = r2 - 2.0 * r + a2 + Q2;
+    double sdel = fmax(del, 1e-14);
+    double rpa2 = r2 + a2;
+    double w = 2.0 * r - Q2;
+    double A_ = rpa2 * rpa2 - sdel * a2 * s2;
+    double iSD = 1.0 / (sig * sdel);
+    double is2 = 1.0 / s2;
 
+    double gtt = -A_ * iSD;
+    double gtf = -a * w * iSD;
+    double grr = sdel / sig;
+    double gthth = 1.0 / sig;
+    double gff = (sig - w) * iSD * is2;
+
+    return 0.5 * (gtt + 2.0 * b * gtf + grr * pr * pr + gthth * pth * pth + gff * b * b);
+}
 
 /* -- computeCarter: Carter constant diagnostic -------------- */
 
@@ -961,7 +998,19 @@ __device__ void geoForceKS(
  *
  * Reference: MTW (1973), Box 33.2; Carter (1968).
  */
-
+__device__ double computeHamiltonianKS(
+    double r, double th, double pr, double pth,
+    double a, double b, double Q2
+) {
+    double sth = sin(th), cth = cos(th);
+    double s2 = sth * sth + S2_EPS;
+    double a2 = a * a, r2 = r * r;
+    double sig = r2 + a2 * cth * cth;
+    double del = r2 - 2.0 * r + a2 + Q2;
+    double rpa2 = r2 + a2;
+    double F = a2 * s2 - 2.0 * a * b + del * pr * pr + 2.0 * (a * b - rpa2) * pr + pth * pth + b * b / s2;
+    return F / (2.0 * sig);
+}
 
 /* -- projectHamiltonianKS: constraint projection in Kerr ----- */
 

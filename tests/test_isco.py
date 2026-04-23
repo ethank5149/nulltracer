@@ -38,3 +38,11 @@ def test_isco_monotonically_decreasing():
         assert iscos[i] > iscos[i + 1], (
             f"ISCO not monotonically decreasing: ISCO(a={spins[i]})={iscos[i]} vs ISCO(a={spins[i + 1]})={iscos[i + 1]}"
         )
+
+
+def test_isco_kn_reduces_to_kerr():
+    """Numerical Kerr-Newman ISCO reduces to analytic Kerr ISCO when Q=0."""
+    from nulltracer.isco import isco_kn, isco_kerr
+    spins = [0.0, 0.5, 0.9, 0.998]
+    for a in spins:
+        assert abs(isco_kn(a, 0.0) - isco_kerr(a)) < 1e-4

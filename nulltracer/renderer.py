@@ -18,6 +18,8 @@ import numpy as np
 
 from .bloom import apply_bloom
 from .isco import isco
+from ._params import RenderParams
+from ._kernel_utils import resolve_includes
 
 logger = logging.getLogger(__name__)
 
@@ -89,44 +91,6 @@ _RAY_TRACE_REGISTRY = {
     "tao_yoshida6":  "ray_trace_tao_yoshida6",
     "tao_kahan_li8": "ray_trace_tao_kahan_li8",
 }
-
-
-class RenderParams(ctypes.Structure):
-    """C-compatible struct matching the CUDA RenderParams definition.
-
-    Must be kept in sync with server/kernels/geodesic_base.cu.
-    """
-    # All fields are c_double to guarantee identical layout between
-    # Python ctypes and CUDA compiler (no alignment padding issues).
-    # Integer values are stored as double and cast to int in the kernel.
-    _fields_ = [
-        ("width",       ctypes.c_double),
-        ("height",      ctypes.c_double),
-        ("spin",        ctypes.c_double),
-        ("charge",      ctypes.c_double),
-        ("incl",        ctypes.c_double),
-        ("fov",         ctypes.c_double),
-        ("phi0",        ctypes.c_double),
-        ("isco",        ctypes.c_double),
-        ("steps",       ctypes.c_double),
-        ("obs_dist",    ctypes.c_double),
-        ("esc_radius",  ctypes.c_double),
-        ("disk_outer",  ctypes.c_double),
-        ("step_size",   ctypes.c_double),
-        ("bg_mode",     ctypes.c_double),
-        ("star_layers", ctypes.c_double),
-        ("show_disk",   ctypes.c_double),
-        ("show_grid",   ctypes.c_double),
-        ("disk_temp",   ctypes.c_double),
-        ("doppler_boost", ctypes.c_double),
-        ("srgb_output",   ctypes.c_double),
-        ("disk_alpha",    ctypes.c_double),
-        ("disk_max_crossings", ctypes.c_double),
-        ("bloom_enabled", ctypes.c_double),
-        ("debug_trace", ctypes.c_double),
-        ("sky_width",     ctypes.c_double),
-        ("sky_height",    ctypes.c_double),
-    ]
 
 
 class CudaRenderer:
@@ -217,45 +181,9 @@ class CudaRenderer:
         # CuPy RawKernel doesn't support #include, so we need to
         # inline the included files. Replace #include directives
         # with the actual file contents.
-        source = self._resolve_includes(source, source_path.parent)
+        source = resolve_includes(source, source_path.parent)
 
         return source, entry_point
-
-    def _resolve_includes(self, source: str, base_dir: Path) -> str:
-        """Resolve #include directives by inlining file contents.
-
-        CuPy's RawKernel doesn't support the #include preprocessor
-        directive, so we manually inline all includes.
-        """
-        import re
-        include_pattern = re.compile(r'#include\s+"([^"]+)"')
-
-        resolved = set()  # Track resolved files to avoid duplicates
-
-        def replace_include(match):
-            rel_path = match.group(1)
-            abs_path = (base_dir / rel_path).resolve()
-
-            # Avoid double-inclusion (header guards handle this in real CUDA,
-            # but we need to handle it here since we're inlining)
-            if abs_path in resolved:
-                return f"/* Already included: {rel_path} */"
-            resolved.add(abs_path)
-
-            if not abs_path.exists():
-                raise FileNotFoundError(
-                    f"Include file not found: {rel_path} "
-                    f"(resolved to {abs_path})"
-                )
-
-            included_source = abs_path.read_text()
-            # Recursively resolve includes in the included file
-            included_source = self._resolve_includes(
-                included_source, abs_path.parent
-            )
-            return f"/* Begin include: {rel_path} */\n{included_source}\n/* End include: {rel_path} */"
-
-        return include_pattern.sub(replace_include, source)
 
     def _get_kernel(self, method: str) -> cp.RawKernel:
         """Get or compile a CUDA kernel for the given method."""
@@ -284,134 +212,12 @@ class CudaRenderer:
         """Render a single frame and return raw RGB pixel data.
 
         Args:
-            params: dict with all render parameters. Recognised keys:
-                spin, charge, inclination (degrees; also accepts the
-                shorthand ``incl``), fov, width, height, method, steps
-                (auto-estimated if omitted), step_size, obs_dist,
-                bg_mode, show_disk, show_grid (default False),
-                disk_temp, star_layers, phi0.
+            params: dict with all render parameters.
 
         Returns:
             Raw RGB bytes (width * height * 3), top-to-bottom row order.
         """
-        if not self._initialized:
-            raise RuntimeError("Renderer not initialized. Call initialize() first.")
-
-        width = params.get("width", 1280)
-        height = params.get("height", 720)
-        method = params.get("method", "rkdp8")
-
-        # Get compiled kernel
-        kernel = self._get_kernel(method)
-
-        # Compute ISCO
-        spin = params.get("spin", 0.6)
-        charge = params.get("charge", 0.0)
-        isco_radius = isco(spin, charge)
-
-        # Build RenderParams struct
-        obs_dist = float(params.get("obs_dist", 40))
-        step_size = float(params.get("step_size", 0.30))
-        inclination_deg = _resolve_inclination(params)
-        steps = _resolve_steps(
-            params, spin=spin, charge=charge, method=method,
-            obs_dist=obs_dist, step_size=step_size,
-        )
-        logger.info(
-            "CUDA render params: %dx%d method=%s spin=%.3f charge=%.3f incl=%.1f?? "
-            "fov=%.1f steps=%d obs_dist=%.0f step_size=%.2f bg_mode=%d "
-            "show_disk=%s show_grid=%s disk_temp=%.2f star_layers=%d isco=%.4f",
-            width, height, method, spin, charge,
-            inclination_deg,
-            float(params.get("fov", 8.0)),
-            steps,
-            obs_dist,
-            step_size,
-            int(params.get("bg_mode", 1)),
-            params.get("show_disk", True),
-            params.get("show_grid", False),
-            float(params.get("disk_temp", 1.0)),
-            int(params.get("star_layers", 3)),
-            float(isco_radius),
-        )
-        rp = RenderParams(
-            width=width,
-            height=height,
-            spin=float(spin),
-            charge=float(charge),
-            incl=math.radians(inclination_deg),
-            fov=float(params.get("fov", 8.0)),
-            phi0=float(params.get("phi0", 0.0)),
-            isco=float(isco_radius),
-            steps=steps,
-            obs_dist=obs_dist,
-            esc_radius=obs_dist + 12.0,
-            disk_outer=50.0,
-            step_size=step_size,
-            bg_mode=int(params.get("bg_mode", 1)),
-            star_layers=int(params.get("star_layers", 3)),
-            show_disk=1 if params.get("show_disk", True) else 0,
-            show_grid=1 if params.get("show_grid", False) else 0,
-            disk_temp=float(params.get("disk_temp", 1.0)),
-            doppler_boost=float(params.get("doppler_boost", 2.0)),
-            srgb_output=1.0 if params.get("srgb_output", True) else 0.0,
-            disk_alpha=float(params.get("disk_alpha", 0.95)),
-            disk_max_crossings=float(params.get("disk_max_crossings", 5)),
-            bloom_enabled=1.0 if params.get("bloom_enabled", False) else 0.0,
-            aa_samples=float(params.get("aa_samples", 1)),
-            debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
-            sky_width=0.0,
-            sky_height=0.0,
-        )
-
-        # Copy params struct to GPU as a byte array
-        params_bytes = bytes(rp)
-        h_params = np.frombuffer(params_bytes, dtype=np.uint8)
-        d_params = cp.asarray(h_params)
-
-        # Allocate output buffer on GPU (RGB, uint8)
-        d_output = cp.zeros(height * width * 3, dtype=cp.uint8)
-
-        # Launch kernel
-        block_size = (16, 16)
-        grid_size = (
-            (width + block_size[0] - 1) // block_size[0],
-            (height + block_size[1] - 1) // block_size[1],
-        )
-
-        # Null skymap (texture background not yet supported in server)
-        d_skymap = cp.zeros(1, dtype=cp.float32)
-
-        kernel(
-            grid_size,
-            block_size,
-            (d_params, d_output, d_skymap),
-        )
-
-        # Synchronize and read back
-        cp.cuda.Stream.null.synchronize()
-
-        # Copy to host
-        h_output = d_output.get()
-
-        # Reshape to (H, W, 3) ??? kernel writes in row-major order
-        # with iy=0 at bottom (same as OpenGL's glReadPixels convention).
-        pixel_array = h_output.reshape(height, width, 3)
-
-        # Flip vertically to get top-to-bottom row order,
-        # matching the OpenGL renderer's np.flipud() at readback.
-        pixel_array = np.flipud(pixel_array)
-
-        # Apply bloom post-processing if enabled
-        if params.get("bloom_enabled", False):
-            pixel_array = apply_bloom(
-                pixel_array,
-                fov=float(params.get("fov", 8.0)),
-                bloom_radius=float(params.get("bloom_radius", 1.0)),
-                width=width,
-            )
-
-        return pixel_array.tobytes()
+        return self.render_frame_timed(params)["raw_rgb"]
 
     def render_frame_timed(self, params: dict) -> dict:
         """Render a single frame with precise CUDA event timing.
@@ -533,6 +339,7 @@ class CudaRenderer:
                 fov=float(params.get("fov", 8.0)),
                 bloom_radius=float(params.get("bloom_radius", 1.0)),
                 width=width,
+                obs_dist=obs_dist,
             )
 
         t_wall_end = _time.monotonic()
@@ -543,6 +350,7 @@ class CudaRenderer:
             "kernel_ms": float(kernel_ms),
             "total_ms": float(total_ms),
             "gpu_mem_alloc_bytes": gpu_mem_alloc,
+            "max_steps": steps,
         }
 
     @property
@@ -601,7 +409,7 @@ class CudaRenderer:
             raise FileNotFoundError(f"Ray trace kernel not found: {source_path}")
 
         source = source_path.read_text()
-        source = self._resolve_includes(source, source_path.parent)
+        source = resolve_includes(source, source_path.parent)
 
         kernel = cp.RawKernel(
             source,
@@ -718,11 +526,11 @@ class CudaRenderer:
         d_params = cp.asarray(h_params)
 
         # Allocate output buffer:
-        #   Header: 20 doubles
+        #   Header: 24 doubles
         #   Trajectory: max_traj * 4 doubles (r, th, phi, he per step)
         #   Crossings: 1 + 16 * 8 = 129 doubles
         max_crossings = 16
-        output_size = 20 + max_traj * 4 + 1 + max_crossings * 8
+        output_size = 24 + max_traj * 4 + 1 + max_crossings * 8
         d_output = cp.zeros(output_size, dtype=cp.float64)
 
         # Write input parameters to output buffer
@@ -780,7 +588,7 @@ class CudaRenderer:
 
         # Parse trajectory
         traj_points = min(steps_used, max_traj)
-        traj_base = 20
+        traj_base = 24
         traj_r = []
         traj_th = []
         traj_phi = []
@@ -826,6 +634,8 @@ class CudaRenderer:
                 "phi": float(result[2]),
                 "pr": float(result[3]),
                 "pth": float(result[4]),
+                "H": float(result[17]),
+                "Q": float(result[19]),
             },
             "final_state": {
                 "r": _safe_float(float(result[8])),
@@ -833,6 +643,8 @@ class CudaRenderer:
                 "phi": _safe_float(float(result[10])),
                 "pr": _safe_float(float(result[11])),
                 "pth": _safe_float(float(result[12])),
+                "H": _safe_float(float(result[18])),
+                "Q": _safe_float(float(result[20])),
             },
             "termination": {
                 "reason": term_names.get(term_reason_code, f"unknown({term_reason_code})"),

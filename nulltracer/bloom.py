@@ -105,14 +105,16 @@ def linear_to_srgb(arr: 'cp.ndarray | np.ndarray', xp) -> np.ndarray:
 
 def apply_bloom(image: np.ndarray, fov: float = 8.0,
                 bloom_radius: float = 1.0,
-                width: int = 0) -> np.ndarray:
+                width: int = 0,
+                obs_dist: float = 40.0) -> np.ndarray:
     """Apply Airy disk bloom to a rendered image, using GPU if available.
 
     Args:
         image: Input image as (H, W, 3) uint8 sRGB array.
-        fov: Field of view in degrees (used to compute diffraction scale).
+        fov: Field of view (half-width) in units of M (gravitational radii).
         bloom_radius: User-adjustable radius multiplier (1.0 = physical default).
         width: Image width (for resolution scaling). If 0, uses image.shape[1].
+        obs_dist: Observer distance in units of M.
 
     Returns:
         Bloomed image as (H, W, 3) uint8 sRGB array.
@@ -126,8 +128,9 @@ def apply_bloom(image: np.ndarray, fov: float = 8.0,
     linear = srgb_to_linear(image, xp)
 
     # Compute diffraction radius in pixels
-    fov_rad = np.radians(fov) if fov > 0.1 else np.radians(8.0)
-    radd = 0.00019825 * width / fov_rad
+    # fov is in units of M. The angular half-width is roughly fov / obs_dist.
+    angular_fov = fov / max(obs_dist, 1.0)
+    radd = 0.00019825 * width / angular_fov
     radd *= bloom_radius
 
     # Isolate bright areas that cause bloom

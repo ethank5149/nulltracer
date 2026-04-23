@@ -104,3 +104,12 @@ def test_kerr_contour_is_closed():
     assert abs(beta_p[-1]) < 1e-2
     assert abs(beta_m[0]) < 1e-2
     assert abs(beta_m[-1]) < 1e-2
+
+
+def test_pole_on_shadow_circular():
+    """Pole-on observer sees a perfectly circular shadow regardless of spin."""
+    from nulltracer.compare import shadow_boundary
+    alpha, beta_p, beta_m = shadow_boundary(0.9, 0.01, N=500)
+    width = alpha.max() - alpha.min()
+    height = beta_p.max() - beta_m.min()
+    assert abs(width - height) < 0.1

@@ -387,8 +387,7 @@ void trace_kahanli8s_ks(const RenderParams *pp, unsigned char *output, const flo
         /* -- Pole reflection -------------------------------- */
         /* ?? is the same coordinate in BL and KS, so the pole
          * reflection logic is identical. */
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); th_comp = 0.0; pth_comp = 0.0; }
+
 
         /* Volumetric emission: hot corona + relativistic jet */
         if (acc_a < 0.99f) {

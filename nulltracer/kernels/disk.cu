@@ -203,6 +203,7 @@ __device__ float compute_g_factor(double r, double a, double Q2, double b) {
      * Taking fabs() would *flip* the sign and mask the forbidden regime
      * as a spurious bright spot on the far approaching limb. */
     double one_minus_bOmega = 1.0 - b * Omega;
+    // assert(one_minus_bOmega > -0.5); /* Debug assertion for sanity */
     double denom_ou = ut * fmax(one_minus_bOmega, 1e-30);
     double g = 1.0 / fmax(denom_ou, 1e-30);
     g = fmin(fmax(g, 0.01), 10.0);  // Clamp to physical range [0.01, 10.0]
@@ -324,9 +325,19 @@ __device__ float novikov_thorne_flux(double r, double a, double r_isco) {
  * and the shadow boundary, producing a more realistic appearance
  * that matches GRMHD simulations (Moscibrodzka et al. 2016). */
 
+__device__ float novikov_thorne_peak(double a, double r_isco) {
+    float F_max = 0.0f;
+    for (int i = 1; i <= 20; i++) {
+        float r_sample = r_isco * (1.0f + 0.5f * (float)i);
+        float F_sample = novikov_thorne_flux((double)r_sample, a, r_isco);
+        if (F_sample > F_max) F_max = F_sample;
+    }
+    return fmaxf(F_max, 1e-10f);
+}
+
 __device__ void diskColor(float r, float ph, float a, float Q2,
                           float isco, float disk_outer, float disk_temp,
-                          float g_factor, int doppler_boost,
+                          float g_factor, int doppler_boost, float F_max,
                           float *cr, float *cg, float *cb) {
     float ri = isco;
     /* Kerr-Newman horizon: r_+ = 1 + sqrt(1 - a?? - Q??). Previously used the
@@ -345,13 +356,7 @@ __device__ void diskColor(float r, float ph, float a, float Q2,
     float F_norm;
 
     /* Compute peak NT flux for normalization */
-    float F_max = 0.0f;
-    for (int i = 1; i <= 20; i++) {
-        float r_sample = ri * (1.0f + 0.5f * (float)i);
-        float F_sample = novikov_thorne_flux((double)r_sample, (double)a, (double)ri);
-        if (F_sample > F_max) F_max = F_sample;
-    }
-    F_max = fmaxf(F_max, 1e-10f);
+    // F_max is now passed as an argument
 
     if (r >= ri) {
         /* Standard Novikov-Thorne region */

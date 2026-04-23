@@ -276,23 +276,19 @@ def compare_integrators(
         timed = renderer.render_frame_timed(params)
         import numpy as np
         img = np.frombuffer(timed['raw_rgb'], dtype=np.uint8).reshape((height, width, 3))
-        class FakeInfo:
-            render_ms = timed['kernel_ms']
-            max_steps = 0 # Cannot get max_steps out of timed easily, so assume 0
-        info = FakeInfo()
         ax.imshow(img)
         ax.axis("off")
         label = m
         ax.set_title(
-            f"{label}\n{info.render_ms:.0f} ms, {info.max_steps} steps",
+            f"{label}\n{timed['kernel_ms']:.0f} ms, {timed['max_steps']} steps",
             fontsize=10,
         )
         results.append(
             {
                 "method": m,
                 "label": label,
-                "render_ms": info.render_ms,
-                "max_steps": info.max_steps,
+                "render_ms": timed['kernel_ms'],
+                "max_steps": timed['max_steps'],
             }
         )
 

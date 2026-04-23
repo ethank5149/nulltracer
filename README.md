@@ -79,7 +79,13 @@ uvicorn nulltracer.server:app --host 0.0.0.0 --port 8420
 
 Open `web/index.html` in a browser. The client auto-detects the server at `/health`.
 
-> The FastAPI server module is under active consolidation; see `DEPLOYMENT.md` for the current deployment story (Caddy reverse-proxy + Docker on Unraid).
+See `DEPLOYMENT.md` for the current deployment story (Caddy reverse-proxy + Docker on Unraid).
+
+### Known Limitations
+
+- **Pole Reflection:** The `S2_EPS` regularization provides an accuracy-preserving transition near the poles, but orbits crossing precisely $\theta = 0$ may still experience minor unphysical drifts of $\approx 0.3^\circ$.
+- **Plunging Region:** The disk emission interior to the ISCO (the plunging region) uses a phenomenological quadratic falloff matched to the ISCO flux, not the full Cunningham (1975) plunging geodesic calculations.
+- **Single-Crossing Default:** By default only the first equatorial crossing is recorded per ray; `disk_max_crossings > 1` is required to build up the photon-ring sub-images.
 
 ### Running tests
 

@@ -203,68 +203,29 @@ def render_frame(
         ``image`` is an ``(H, W, 3)`` uint8 sRGB NumPy array.
         ``info`` is a :class:`RenderInfo` dataclass.
     """
-    kernel = _kc.get_render_kernel(method)
-
-    isco_r = isco(spin, charge)
-
-    if max_steps is None:
-        max_steps = auto_steps(
-            obs_dist, step_size, spin=spin, charge=charge, method=method
-        )
-
-    # Skymap
-    d_skymap, sky_w, sky_h = get_skymap()
-    actual_bg = bg_mode if not (bg_mode == 3 and sky_w == 0) else 0
-
-    rp = RenderParams(
-        width=float(width),
-        height=float(height),
-        spin=float(spin),
-        charge=float(charge),
-        incl=math.radians(inclination_deg),
-        fov=float(fov),
-        phi0=float(phi0),
-        isco=float(isco_r),
-        steps=float(max_steps),
-        obs_dist=float(obs_dist),
-        esc_radius=float(obs_dist) + 12.0,
-        disk_outer=float(disk_outer),
-        step_size=float(step_size),
-        bg_mode=float(actual_bg),
-        star_layers=float(star_layers),
-        show_disk=1.0 if show_disk else 0.0,
-        show_grid=0.0,
-        disk_temp=float(disk_temp),
-        doppler_boost=float(doppler_boost),
-        srgb_output=1.0 if srgb_output else 0.0,
-        disk_alpha=float(disk_alpha),
-        disk_max_crossings=float(disk_max_crossings),
-        bloom_enabled=1.0 if bloom_enabled else 0.0,
-        aa_samples=float(aa_samples),
-        sky_width=float(sky_w),
-        sky_height=float(sky_h),
-    )
-
-    d_params = rp.to_gpu()
-    d_output = cp.zeros(width * height * 3, dtype=cp.uint8)
-
-    block = (16, 16)
-    grid = ((width + 15) // 16, (height + 15) // 16)
-
-    t0 = _time.perf_counter()
-    kernel(grid, block, (d_params, d_output, d_skymap))
-    cp.cuda.Device(0).synchronize()
-    ms = (_time.perf_counter() - t0) * 1000.0
-
-    img = np.flipud(d_output.get().reshape(height, width, 3))
-
-    if bloom_enabled:
-        img = apply_bloom(img, fov=fov, bloom_radius=bloom_radius, width=width)
-
+    params = {
+        "spin": spin, "charge": charge, "inclination": inclination_deg,
+        "width": width, "height": height, "fov": fov, "obs_dist": obs_dist,
+        "max_steps": max_steps, "step_size": step_size, "method": method,
+        "show_disk": show_disk, "bg_mode": bg_mode, "star_layers": star_layers,
+        "disk_temp": disk_temp, "doppler_boost": doppler_boost, "phi0": phi0,
+        "srgb_output": srgb_output, "disk_alpha": disk_alpha,
+        "disk_max_crossings": disk_max_crossings, "disk_outer": disk_outer,
+        "aa_samples": aa_samples, "bloom_enabled": bloom_enabled,
+        "bloom_radius": bloom_radius
+    }
+    
+    from .renderer import CudaRenderer
+    renderer = CudaRenderer()
+    renderer.initialize()
+    
+    res = renderer.render_frame_timed(params)
+    img = np.frombuffer(res["raw_rgb"], dtype=np.uint8).reshape((height, width, 3))
+    
     info = RenderInfo(
-        render_ms=ms,
+        render_ms=res["kernel_ms"],
         method=method,
-        max_steps=max_steps,
+        max_steps=res["max_steps"],
         obs_dist=obs_dist,
         width=width,
         height=height,

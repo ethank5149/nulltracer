@@ -42,7 +42,9 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
 
         double r, th, phi, pr, pth, b, rp;
         float alpha, beta;
-        initRayJittered(ix, iy, jitter_x, jitter_y, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta);
+        if (!initRayJittered(ix, iy, jitter_x, jitter_y, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta)) {
+            continue;
+        }
 
         double a = p.spin;
         double Q2 = p.charge * p.charge;
@@ -150,8 +152,7 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
                 }
             }
 
-            if (th < 0.005) { th = 0.005; pth = fabs(pth); }
-            if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
+
 
             if (acc_a < 0.99f) {
                 accumulate_volume_emission(r, th, he, a, Q2, (double)p.isco, p.disk_outer,

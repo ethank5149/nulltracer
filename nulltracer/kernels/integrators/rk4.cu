@@ -25,7 +25,13 @@ void trace_rk4(const RenderParams *pp, unsigned char *output, const float *skyma
 
     double r, th, phi, pr, pth, b, rp;
     float alpha, beta;
-    initRay(ix, iy, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta);
+    if (!initRay(ix, iy, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta)) {
+        int idx = (iy * W + ix) * 3;
+        output[idx + 0] = 0;
+        output[idx + 1] = 0;
+        output[idx + 2] = 0;
+        return;
+    }
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
@@ -51,8 +57,7 @@ void trace_rk4(const RenderParams *pp, unsigned char *output, const float *skyma
         /* RK4 step (shared function from steps.cu) */
         rk4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
-        if (th < 0.005) { th = 0.005; pth = fabs(pth); }
-        if (th > PI - 0.005) { th = PI - 0.005; pth = -fabs(pth); }
+
 
         /* Volumetric emission: hot corona + relativistic jet */
         if (acc_a < 0.99f) {
