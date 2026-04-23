@@ -325,6 +325,60 @@ __device__ float novikov_thorne_flux(double r, double a, double r_isco) {
  * and the shadow boundary, producing a more realistic appearance
  * that matches GRMHD simulations (Moscibrodzka et al. 2016). */
 
+__device__ void fluid_4velocity(double r, double theta, double a, double u[4]) {
+    double r_isco = 6.0; // Approximation or from isco_radius logic
+    if (r >= r_isco) {
+        // Standard Keplerian
+        double r2 = r*r;
+        double a2 = a*a;
+        double w = 2.0*r; // Q=0
+        double gtt = -(1.0 - w/r2);
+        double gtph = -a*w/r2;
+        double gphph = (r2*r2 + a2*r2 + a2*w)/r2;
+        
+        double dgtt_dr = -2.0/(r2);
+        double dgtph_dr = 2.0*a/(r2);
+        double dgphph_dr = 2.0*r - 2.0*a2/r2;
+        
+        double disc = dgtph_dr*dgtph_dr - dgtt_dr*dgphph_dr;
+        double Omega = (-dgtph_dr + sqrt(fmax(disc, 0.0))) / fmax(dgphph_dr, 1e-30);
+        
+        double denom = -(gtt + 2.0*Omega*gtph + Omega*Omega*gphph);
+        double ut = 1.0 / sqrt(fmax(denom, 1e-30));
+        
+        u[0] = ut;
+        u[1] = 0.0;
+        u[2] = 0.0;
+        u[3] = ut * Omega;
+    } else {
+        // Plunging region
+        u[0] = 1.0;
+        u[1] = -0.5; // Falling inward approximation
+        u[2] = 0.0;
+        u[3] = 0.1;
+    }
+}
+
+__device__ double riaf_density(double r, double theta, double a) {
+    double H = 0.2 * r;
+    double z = r * cos(theta);
+    double rho_equatorial = pow(r, -1.5);
+    return rho_equatorial * exp(-0.5 * (z*z)/(H*H)); 
+}
+
+__device__ double compute_doppler(double p_t, double pr, double pth, double p_phi, double u_fluid[4], double th, double a) {
+    double k_dot_u = p_t * u_fluid[0] + pr * u_fluid[1] + pth * u_fluid[2] + p_phi * u_fluid[3];
+    return (-1.0) / fmin(k_dot_u, -1e-14);
+}
+
+__device__ double compute_synchrotron_j(double rho, double r) {
+    return rho * 100.0; // Dummy emissivity
+}
+
+__device__ double compute_synchrotron_alpha(double rho, double r) {
+    return rho * 10.0; // Dummy absorption
+}
+
 __device__ float novikov_thorne_peak(double a, double r_isco) {
     float F_max = 0.0f;
     for (int i = 1; i <= 20; i++) {

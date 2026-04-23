@@ -10,7 +10,7 @@ def test_struct_fields():
         "steps", "obs_dist", "esc_radius", "disk_outer", "step_size",
         "bg_mode", "star_layers", "show_disk", "show_grid", "disk_temp",
         "doppler_boost", "srgb_output", "disk_alpha", "disk_max_crossings",
-        "bloom_enabled", "debug_trace", "aa_samples", "sky_width", "sky_height"
+        "disk_mode", "bloom_enabled", "debug_trace", "aa_samples", "sky_width", "sky_height"
     ]
     
     actual_fields = [f[0] for f in RenderParams._fields_]

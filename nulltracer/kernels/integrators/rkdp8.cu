@@ -63,6 +63,7 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
         double atol = 1.0e-8, rtol = 1.0e-8, safety = 0.9, h_min = 0.001, h_max = 2.0;
         int max_reject = 4;
         double he = adaptive_step_rkdp8_initial(r, rp, p.step_size, p.obs_dist, h_min, h_max);
+        double pixel_intensity = 0.0; // Volumetric intensity
 
         for (int i = 0; i < STEPS; i++) {
             if (done) break;
@@ -136,6 +137,30 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
                     pr  += dpr8;
                     pth += dpth8;
                     accepted = true;
+
+                    // Volumetric Ray Marching for RIAF
+                    if (p.disk_mode == 2.0 && r < p.disk_outer && r > rp) {
+                        double rho = riaf_density(r, th, a);
+                        if (rho > 1e-6) {
+                            double u_fluid[4];
+                            fluid_4velocity(r, th, a, u_fluid);
+                            double g_factor = compute_doppler(-1.0, pr, pth, b, u_fluid, th, a);
+                            
+                            double j_nu = compute_synchrotron_j(rho, r) * pow(g_factor, 3.0);
+                            double alpha_nu = compute_synchrotron_alpha(rho, r) / g_factor;
+                            
+                            double d_lambda = he;
+                            double d_tau = alpha_nu * d_lambda;
+                            
+                            pixel_intensity = pixel_intensity * exp(-d_tau) + j_nu * d_lambda;
+                            
+                            float dcr = (float)(pixel_intensity * 1.0);
+                            float dcg = (float)(pixel_intensity * 0.7);
+                            float dcb = (float)(pixel_intensity * 0.3);
+                            float crossing_alpha = 1.0f - expf(-(float)d_tau);
+                            blendColor(dcr, dcg, dcb, crossing_alpha, &acc_r, &acc_g, &acc_b, &acc_a);
+                        }
+                    }
 
                     if (err_norm > 1e-30) {
                         double factor = safety * pow(err_norm, -1.0/8.0);

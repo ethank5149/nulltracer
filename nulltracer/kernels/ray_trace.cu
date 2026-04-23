@@ -48,10 +48,14 @@
  * ============================================================ */
 
 #include "geodesic_base.cu"
+#include "cks_metric.cu"
 #include "disk.cu"
 #include "integrators/steps.cu"
 #include "integrators/adaptive_step.cu"
 
+
+#include "integrators/rkdp8_cks.cu"
+#include "integrators/rk4_cks.cu"
 
 /* -- Maximum disk crossings to record ----------------------- */
 #define MAX_CROSSINGS 16

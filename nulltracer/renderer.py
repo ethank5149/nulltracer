@@ -71,7 +71,9 @@ _INTEGRATOR_DIR = _KERNEL_DIR / "integrators"
 # Map method names to kernel source files and entry point names
 _KERNEL_REGISTRY = {
     "rk4":      ("rk4.cu",      "trace_rk4"),
+    "rk4_cks":  ("rk4_cks.cu",  "trace_rk4_cks"),
     "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
+    "rkdp8_cks":("rkdp8_cks.cu","trace_rkdp8_cks"),
     "kahanli8s":    ("kahanli8s.cu",    "trace_kahanli8s"),
     "kahanli8s_ks": ("kahanli8s_ks.cu", "trace_kahanli8s_ks"),
     "tao_yoshida4":  ("tao_yoshida4.cu",  "trace_tao_yoshida4"),
@@ -80,11 +82,11 @@ _KERNEL_REGISTRY = {
 }
 
 # Map method names to single-ray trace kernel entry points.
-# The ray_trace.cu kernel provides per-integrator entry points
-# for ALL available methods ??? no fallback needed.
 _RAY_TRACE_REGISTRY = {
     "rk4":          "ray_trace_rk4",
+    "rk4_cks":      "ray_trace_rk4_cks",
     "rkdp8":        "ray_trace_rkdp8",
+    "rkdp8_cks":    "ray_trace_rkdp8_cks",
     "kahanli8s":    "ray_trace_kahanli8s",
     "kahanli8s_ks": "ray_trace_kahanli8s_ks",
     "tao_yoshida4":  "ray_trace_tao_yoshida4",
@@ -284,6 +286,7 @@ class CudaRenderer:
             srgb_output=1.0 if params.get("srgb_output", True) else 0.0,
             disk_alpha=float(params.get("disk_alpha", 0.95)),
             disk_max_crossings=float(params.get("disk_max_crossings", 5)),
+            disk_mode=float(params.get("disk_mode", 1)),
             bloom_enabled=1.0 if params.get("bloom_enabled", False) else 0.0,
             aa_samples=float(params.get("aa_samples", 1)),
             debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
@@ -514,6 +517,7 @@ class CudaRenderer:
             srgb_output=1.0 if params.get("srgb_output", True) else 0.0,
             disk_alpha=float(params.get("disk_alpha", 0.95)),
             disk_max_crossings=float(params.get("disk_max_crossings", 5)),
+            disk_mode=float(params.get("disk_mode", 1)),
             bloom_enabled=0.0,  # Not used for single-ray tracing
             debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
             sky_width=0.0,

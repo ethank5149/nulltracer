@@ -46,6 +46,7 @@ class RenderParams(ctypes.Structure):
         ("srgb_output",        ctypes.c_double),  # >0.5 ??? IEC 61966-2-1 sRGB
         ("disk_alpha",         ctypes.c_double),
         ("disk_max_crossings", ctypes.c_double),
+        ("disk_mode",          ctypes.c_double),  # 1=Thin Novikov-Thorne, 2=Thick RIAF
         ("bloom_enabled",      ctypes.c_double),
         ("debug_trace",        ctypes.c_double),
         ("aa_samples",         ctypes.c_double),

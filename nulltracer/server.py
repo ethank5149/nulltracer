@@ -49,6 +49,7 @@ class RenderRequest(BaseModel):
     step_size: float = 0.30
     bg_mode: int = 1
     show_disk: bool = True
+    disk_mode: int = 1
     show_grid: bool = False
     disk_temp: float = 1.0
     star_layers: int = 3
