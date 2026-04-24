@@ -140,12 +140,16 @@ def test_kerr_contour_is_closed():
 
 
 def test_pole_on_shadow_circular():
-    """Pole-on observer sees a perfectly circular shadow.
+    """Pole-on observer sees a perfectly circular shadow."""
+    from nulltracer.compare import shadow_boundary
+    import numpy as np
     
-    Note: This test is SKIPPED because:
-    - At exactly theta=0, the shadow_boundary function has numerical issues
-      (division by sin(theta) = 0)
-    - At theta close to 0, the shadow may still show asymmetry for a>0
-    - The proper test would require careful handling of the theta→0 limit
-    """
-    pytest.skip("Pole-on shadow test requires careful handling of theta→0 limit")
+    for a in [0.0, 0.5, 0.99]:
+        alpha, beta_p, beta_m = shadow_boundary(a, 0.0, N=500)
+        radii = np.sqrt(alpha ** 2 + beta_p ** 2)
+        
+        # Shadow should be perfectly circular (standard deviation near zero)
+        assert np.std(radii) < 1e-4, f"Shadow not circular for a={a}"
+        
+        # Center should be exactly at 0
+        assert abs(alpha.mean()) < 1e-4

@@ -93,6 +93,22 @@ def shadow_boundary(
     sO = np.sin(theta_obs)
     cO = np.cos(theta_obs)
 
+    if abs(sO) < 1e-7:
+        # Pole-on observer: limit where xi -> 0, shadow is a perfect circle.
+        coeffs = [1.0, -3.0, a**2 + 2.0 * Q**2, a**2]
+        r_plus = 1.0 + np.sqrt(max(0.0, 1.0 - a**2 - Q**2))
+        real_roots = [r.real for r in np.roots(coeffs) if abs(r.imag) < 1e-8 and r.real > r_plus + 1e-10]
+        if not real_roots:
+            raise RuntimeError(f"Could not locate polar photon orbit for a={a}, Q={Q}.")
+        r_c = max(real_roots)
+        
+        Delta_c = r_c**2 - 2.0 * r_c + a**2 + Q**2
+        eta_c = (r_c**2 * (4.0 * a**2 * Delta_c - (r_c**2 - 3.0 * r_c + 2.0 * a**2 + 2.0 * Q**2)**2)) / (a**2 * (r_c - 1.0)**2)
+        
+        R = np.sqrt(max(0.0, eta_c + a**2))
+        phi = np.linspace(0.0, 2.0 * np.pi, N, endpoint=False)
+        return R * np.cos(phi), R * np.sin(phi), -R * np.sin(phi)
+
     # ?????? Schwarzschild / Reissner-Nordstr??m (spherically symmetric) ??????
     if a < 1e-5:
         if Q < 1e-12:
@@ -102,7 +118,7 @@ def shadow_boundary(
             # for physical 0 ??? Q?? < 1 this is always satisfied.
             r_ph = 0.5 * (3.0 + np.sqrt(9.0 - 8.0 * Q**2))
             r_shadow = r_ph**2 / np.sqrt(r_ph**2 - 2.0 * r_ph + Q**2)
-        phi = np.linspace(0.0, 2.0 * np.pi, N)
+        phi = np.linspace(0.0, 2.0 * np.pi, N, endpoint=False)
         alpha = r_shadow * np.cos(phi)
         beta = r_shadow * np.sin(phi)
         return alpha, beta, -beta

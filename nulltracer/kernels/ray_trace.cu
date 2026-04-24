@@ -246,9 +246,14 @@ __device__ void record_crossing(
 __device__ void ray_finalize(
     double *output, int crossing_base, int num_crossings,
     double r, double th, double phi, double pr, double pth,
-    int term_reason, int steps_used
+    double a, double b, double Q2,
+    int term_reason, int steps_used, int coords
 ) {
-    output[18] = computeHamiltonian(r, th, pr, pth, a, b, Q2);
+    if (coords == 1) {
+        output[18] = computeHamiltonianKS(r, th, pr, pth, a, b, Q2);
+    } else {
+        output[18] = computeHamiltonian(r, th, pr, pth, a, b, Q2);
+    }
     output[20] = computeCarter(th, pth, a, b, Q2);
 
     output[8]  = r;
@@ -271,15 +276,17 @@ void ray_trace_rk4(const RenderParams *pp, double *output) {
     if (threadIdx.x != 0 || blockIdx.x != 0) return;
     const RenderParams &p = *pp;
 
+    double a = p.spin;
+    double Q2 = p.charge * p.charge;
+
+    int coords = 0;
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
     if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
         return;
     }
 
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
     int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
@@ -299,8 +306,6 @@ void ray_trace_rk4(const RenderParams *pp, double *output) {
         double oldR = r, oldTh = th, oldPhi = phi;
         rk4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
-
-
         if (r <= rp * 1.01) { term_reason = 1; break; }
 
         record_crossing(output, crossing_base, &num_crossings,
@@ -313,7 +318,7 @@ void ray_trace_rk4(const RenderParams *pp, double *output) {
     }
 
     ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, term_reason, steps_used);
+                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
 }
 
 
@@ -326,15 +331,16 @@ void ray_trace_rkdp8(const RenderParams *pp, double *output) {
     if (threadIdx.x != 0 || blockIdx.x != 0) return;
     const RenderParams &p = *pp;
 
+    double a = p.spin;
+    double Q2 = p.charge * p.charge;
+
+    int coords = 0;
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
     if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
         return;
     }
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
     int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
@@ -468,7 +474,7 @@ void ray_trace_rkdp8(const RenderParams *pp, double *output) {
     }
 
     ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, term_reason, steps_used);
+                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
 }
 
 
@@ -483,15 +489,16 @@ void ray_trace_kahanli8s(const RenderParams *pp, double *output) {
     if (threadIdx.x != 0 || blockIdx.x != 0) return;
     const RenderParams &p = *pp;
 
+    double a = p.spin;
+    double Q2 = p.charge * p.charge;
+
+    int coords = 0;
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
     if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
         return;
     }
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
     int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
@@ -595,7 +602,7 @@ void ray_trace_kahanli8s(const RenderParams *pp, double *output) {
     }
 
     ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, term_reason, steps_used);
+                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
 }
 
 
@@ -610,15 +617,16 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
     if (threadIdx.x != 0 || blockIdx.x != 0) return;
     const RenderParams &p = *pp;
 
+    double a = p.spin;
+    double Q2 = p.charge * p.charge;
+
+    int coords = 1;
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
     if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
         return;
     }
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
 
     /* Transform p_r from BL to KS coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
@@ -727,7 +735,7 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
     }
 
     ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, term_reason, steps_used);
+                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
 }
 
 
@@ -740,15 +748,16 @@ void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
     if (threadIdx.x != 0 || blockIdx.x != 0) return;
     const RenderParams &p = *pp;
 
+    double a = p.spin;
+    double Q2 = p.charge * p.charge;
+
+    int coords = 1;
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
     if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
         return;
     }
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
 
     /* Transform p_r from BL to Kerr coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
@@ -791,7 +800,7 @@ void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
     }
 
     ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, term_reason, steps_used);
+                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
 }
 
 
@@ -804,15 +813,16 @@ void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
     if (threadIdx.x != 0 || blockIdx.x != 0) return;
     const RenderParams &p = *pp;
 
+    double a = p.spin;
+    double Q2 = p.charge * p.charge;
+
+    int coords = 1;
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
     if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
         return;
     }
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
 
     /* Transform p_r from BL to Kerr coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
@@ -855,7 +865,7 @@ void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
     }
 
     ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, term_reason, steps_used);
+                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
 }
 
 
@@ -868,15 +878,16 @@ void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
     if (threadIdx.x != 0 || blockIdx.x != 0) return;
     const RenderParams &p = *pp;
 
+    double a = p.spin;
+    double Q2 = p.charge * p.charge;
+
+    int coords = 1;
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
     if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, 4, 0);
+        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
         return;
     }
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
 
     /* Transform p_r from BL to Kerr coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
@@ -919,5 +930,5 @@ void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
     }
 
     ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, term_reason, steps_used);
+                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
 }

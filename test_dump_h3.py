@@ -1,0 +1,22 @@
+import pytest
+import numpy as np
+
+def dump_h():
+    from nulltracer.renderer import CudaRenderer
+    renderer = CudaRenderer()
+    renderer.initialize()
+
+    from nulltracer.ray import trace_ray
+    res = trace_ray(
+        method="tao_kahan_li8",
+        steps=1000,
+        step_size=0.1,
+        mode="impact_parameter",
+        alpha=5.0,
+        beta=5.0,
+    )
+    print("tao init state:", res["initial_state"])
+    print("tao final state:", res["final_state"])
+    print("tao term:", res["termination"])
+
+dump_h()
