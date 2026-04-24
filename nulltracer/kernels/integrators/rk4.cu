@@ -60,12 +60,10 @@ void trace_rk4(const RenderParams *pp, unsigned char *output, const float *skyma
                 adaptive_factor = 0.1 + 0.9 * dist_to_photon_sphere;
             }
             double effective_step = p.step_size * adaptive_factor;
+            /* Adaptive step size (shared function) */
+            double he = adaptive_step_rk4(r, rp, p.step_size, p.obs_dist);
             // Cap he if needed
             if (he > effective_step) he = effective_step;
-    
-
-        /* Adaptive step size (shared function) */
-        double he = adaptive_step_rk4(r, rp, p.step_size, p.obs_dist);
         double oldTh = th, oldR = r, oldPhi = phi;
 
         /* RK4 step (shared function from steps.cu) */

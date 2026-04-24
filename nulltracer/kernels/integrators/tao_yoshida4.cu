@@ -71,11 +71,10 @@ void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output, const flo
                 adaptive_factor = 0.1 + 0.9 * dist_to_photon_sphere;
             }
             double effective_step = p.step_size * adaptive_factor;
+            /* Adaptive step size (shared function) */
+            double he = adaptive_step_tao(r, rp, p.step_size, p.obs_dist);
             // Cap he if needed
             if (he > effective_step) he = effective_step;
-    
-
-        double he = adaptive_step_tao(r, rp, p.step_size, p.obs_dist);
         double oldTh = th, oldR = r, oldPhi = phi;
 
         /* Tao + Yoshida 4th-order step (extended phase space) */
