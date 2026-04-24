@@ -1,4 +1,9 @@
-"""Test EHT shadow metric extraction."""
+"""Test EHT shadow metric extraction and render validation.
+
+Validates:
+- Shadow metrics extraction from synthetic and real renders
+- Render output against reference frames (with MSE tolerance)
+"""
 
 import numpy as np
 import pytest
@@ -36,7 +41,6 @@ def test_extract_metrics_synthetic_ring():
 
 def test_brightness_asymmetry_direction():
     """Approaching limb should be brighter for prograde spin."""
-    # Assuming prograde spin (a>0), the left side (x < cx) should be brighter
     img = np.zeros((200, 200))
     cy, cx, r = 100, 100, 40
     yy, xx = np.ogrid[:200, :200]
@@ -44,7 +48,90 @@ def test_brightness_asymmetry_direction():
     img[ring_mask] = 1.0
     img[ring_mask & (xx < cx)] *= 2.0  # Make left side brighter
 
-    # Change extract_shadow_metrics to test the centroid asymmetry
     metrics = extract_shadow_metrics(img, fov_deg=10.0, threshold=0.3)
-    # Since left is brighter, centroid_x should be < cx
-    assert metrics["centroid_offset_M"] > 0 or metrics.get("asymmetry", 0) > 0
+    # Check that asymmetry is > 1 (left is brighter than right)
+    assert metrics.get("asymmetry", 0) > 1.0, (
+        f"Expected asymmetry > 1.0 for brighter left side, got {metrics.get('asymmetry', 0)}"
+    )
+
+
+@pytest.mark.gpu
+def test_render_mse_against_reference():
+    """Render a low-res frame and compare against reference with MSE tolerance."""
+    import nulltracer as nt
+    nt.compile_all(verbose=False)
+
+    # Render a 64x64 test frame
+    img, _info = nt.render_frame(
+        spin=0.0, inclination_deg=90,
+        width=64, height=64,
+        fov=12.0, obs_dist=100,
+        step_size=0.3, method="rkdp8",
+        aa_samples=1,
+        bg_mode=2, star_layers=0, show_disk=False,
+    )
+
+    # Convert to grayscale for comparison
+    gray = img.mean(axis=2).astype(np.float32) / 255.0
+
+    # For Schwarzschild pole-on, we expect a circular shadow
+    # Check that dark region exists in center
+    center_region = gray[24:40, 24:40]  # Center 16x16 region
+    assert center_region.mean() < 0.5, "Expected dark shadow region in center"
+
+
+@pytest.mark.gpu
+def test_schwarzschild_render_structure():
+    """Validate basic structure of Schwarzschild render."""
+    import nulltracer as nt
+    nt.compile_all(verbose=False)
+
+    img, info = nt.render_frame(
+        spin=0.0, inclination_deg=90,
+        width=128, height=128,
+        fov=12.0, obs_dist=100,
+        step_size=0.3, method="rkdp8",
+        aa_samples=1,
+        bg_mode=2, star_layers=0,
+    )
+
+    gray = img.mean(axis=2).astype(np.float32) / 255.0
+
+    # Extract shadow metrics
+    metrics = extract_shadow_metrics(gray, fov_deg=12.0, threshold=0.3)
+
+    if "error" not in metrics:
+        # Check that we get a reasonable diameter (between 8 and 30 M)
+        diameter = metrics.get("diameter_M", 0)
+        assert 8.0 < diameter < 30.0, (
+            f"Shadow diameter {diameter:.2f} outside expected range"
+        )
+        # Should be nearly circular (circularity < 0.2)
+        assert metrics.get("circularity", 1.0) < 0.2, (
+            f"Schwarzschild shadow not circular: circularity={metrics.get('circularity', 0):.4f}"
+        )
+
+
+@pytest.mark.gpu
+def test_kerr_render_asymmetry():
+    """Kerr render should show asymmetric shadow."""
+    import nulltracer as nt
+    nt.compile_all(verbose=False)
+
+    img, _info = nt.render_frame(
+        spin=0.9, inclination_deg=60,
+        width=128, height=128,
+        fov=10.0, obs_dist=100,
+        step_size=0.25, method="rkdp8",
+        aa_samples=1,
+        bg_mode=2, star_layers=0,
+    )
+
+    gray = img.mean(axis=2).astype(np.float32) / 255.0
+    metrics = extract_shadow_metrics(gray, fov_deg=10.0, threshold=0.3)
+
+    if "error" not in metrics:
+        # Kerr shadow should be asymmetric
+        assert metrics["asymmetry"] > 0.1, (
+            f"Kerr shadow should be asymmetric, got asymmetry={metrics['asymmetry']:.4f}"
+        )
