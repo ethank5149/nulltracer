@@ -22,9 +22,89 @@ from .isco import isco_kerr
 
 __all__ = [
     "shadow_boundary",
+    "shadow_observables",
     "compare_integrators",
     "fit_ellipse_to_shadow",
 ]
+
+
+# ── Analytic shadow observables ──────────────────────────────
+
+def shadow_observables(
+    a: float,
+    theta_obs: float,
+    Q: float = 0.0,
+    N: int = 2000,
+) -> dict:
+    """Compute analytic shadow observables for EHT comparison.
+
+    Returns a dict with every diameter metric needed for comparing
+    against EHT measurements, along with the angular sizes for
+    M87* and Sgr A*.
+
+    Parameters
+    ----------
+    a : float
+        Dimensionless spin.
+    theta_obs : float
+        Observer inclination in **radians**.
+    Q : float
+        Dimensionless charge.
+    N : int
+        Number of contour points.
+
+    Returns
+    -------
+    dict
+        Geometric quantities (in M = GM/c²):
+            diameter_circle_M   – mean-radius circle fit × 2
+            diameter_alpha_M    – α-direction extent
+            diameter_beta_M     – β-direction extent (**best for EHT**)
+            centroid_shift_M    – α-centroid offset from spin
+            circularity_delta_C – 1 − min/max extent
+        Angular sizes (in μas):
+            m87_shadow_uas      – shadow D_β at M87* scale
+            m87_ring_est_uas    – estimated ring (shadow × 1.10 calib)
+            sgra_shadow_uas     – shadow D_β at Sgr A* scale
+            sgra_ring_est_uas   – estimated ring (shadow × 1.10 calib)
+    """
+    from .eht_validation import EHT_M87, EHT_SGRA, uas_per_M
+
+    alpha, bp, bm = shadow_boundary(a, theta_obs, Q=Q, N=N)
+
+    # Full contour
+    alpha_full = np.concatenate([alpha, alpha[::-1]])
+    beta_full = np.concatenate([bp, bm[::-1]])
+
+    # Circle fit
+    cx_a = (alpha.max() + alpha.min()) / 2.0
+    r_vals = np.sqrt((alpha_full - cx_a) ** 2 + beta_full ** 2)
+    d_circle = 2.0 * r_vals.mean()
+
+    d_alpha = alpha.max() - alpha.min()
+    d_beta_top = bp.max()
+    d_beta_bot = -bm.min()
+    d_beta = d_beta_top + d_beta_bot
+
+    d_max = max(d_alpha, d_beta)
+    d_min = min(d_alpha, d_beta)
+    delta_C = 1.0 - d_min / d_max if d_max > 0 else 0.0
+
+    scale_m87 = uas_per_M(EHT_M87["mass_kg"], EHT_M87["dist_m"])
+    scale_sgra = uas_per_M(EHT_SGRA["mass_kg"], EHT_SGRA["dist_m"])
+    calib = EHT_M87["calib_ring_shadow"]
+
+    return {
+        "diameter_circle_M": d_circle,
+        "diameter_alpha_M": d_alpha,
+        "diameter_beta_M": d_beta,
+        "centroid_shift_M": cx_a,
+        "circularity_delta_C": delta_C,
+        "m87_shadow_uas": d_beta * scale_m87,
+        "m87_ring_est_uas": d_beta * scale_m87 * calib,
+        "sgra_shadow_uas": d_beta * scale_sgra,
+        "sgra_ring_est_uas": d_beta * scale_sgra * calib,
+    }
 
 
 # ?????? Analytic shadow boundary ??????????????????????????????????????????????????????????????????????????????????????????????????????

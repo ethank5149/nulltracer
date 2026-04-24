@@ -153,3 +153,44 @@ def test_pole_on_shadow_circular():
         
         # Center should be exactly at 0
         assert abs(alpha.mean()) < 1e-4
+
+
+def test_shadow_observables_schwarzschild():
+    """shadow_observables returns correct values for Schwarzschild."""
+    from nulltracer.compare import shadow_observables
+    import numpy as np
+
+    obs = shadow_observables(0.0, np.pi / 2)
+    d_sch = 2.0 * 3.0 * np.sqrt(3.0)
+
+    assert abs(obs["diameter_beta_M"] - d_sch) / d_sch < 1e-3, (
+        f"D_beta = {obs['diameter_beta_M']:.4f}, expected {d_sch:.4f}"
+    )
+    assert abs(obs["diameter_alpha_M"] - d_sch) / d_sch < 1e-3
+    assert obs["circularity_delta_C"] < 0.01
+
+    # Check M87 angular size: ~39.7 μas
+    assert 38.0 < obs["m87_shadow_uas"] < 41.0, (
+        f"M87* angular shadow {obs['m87_shadow_uas']:.1f} outside [38, 41]"
+    )
+    # Check Sgr A* angular size: ~49.6 μas
+    assert 48.0 < obs["sgra_shadow_uas"] < 51.0, (
+        f"Sgr A* angular shadow {obs['sgra_shadow_uas']:.1f} outside [48, 51]"
+    )
+
+
+def test_shadow_observables_m87_within_eht():
+    """M87*-like shadow at θ=17° lies within EHT error bars for all spins."""
+    from nulltracer.compare import shadow_observables
+    from nulltracer.eht_validation import EHT_M87
+    import numpy as np
+
+    shadow_lo = EHT_M87["ring_uas"] / EHT_M87["calib_ring_shadow"] - 4.0
+    shadow_hi = EHT_M87["ring_uas"] / EHT_M87["calib_ring_shadow"] + 4.0
+
+    for a in [0.0, 0.3, 0.5, 0.7, 0.9, 0.95, 0.998]:
+        obs = shadow_observables(max(a, 1e-6), np.radians(17.0))
+        d = obs["m87_shadow_uas"]
+        assert shadow_lo <= d <= shadow_hi, (
+            f"a={a}: M87 shadow {d:.1f} μas outside [{shadow_lo:.1f}, {shadow_hi:.1f}]"
+        )

@@ -145,7 +145,7 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
                         double rho = riaf_density(r, th, a);
                         if (rho > 1e-6) {
                             double u_fluid[4];
-                            fluid_4velocity(r, th, a, u_fluid);
+                            fluid_4velocity(r, th, a, (double)p.isco, u_fluid);
                             double g_factor = compute_doppler(-1.0, pr, pth, b, u_fluid, th, a);
                             
                             double j_nu = compute_synchrotron_j(rho, r) * pow(g_factor, 3.0);

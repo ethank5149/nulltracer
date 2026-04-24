@@ -399,8 +399,19 @@ __device__ double riaf_density(double r, double theta, double a) {
     return rho_equatorial * exp(-0.5 * (z*z)/(H*H)); 
 }
 
-__device__ void fluid_4velocity(double r, double theta, double a, double u[4]) {
-    double r_isco = 6.0;
+__device__ void fluid_4velocity(double r, double theta, double a,
+                                double r_isco, double u[4]) {
+    /* Compute the fluid 4-velocity for a RIAF accretion flow.
+     *
+     * Outside the ISCO: circular Keplerian orbit (prograde).
+     * Inside the ISCO:  geodesic plunge from the ISCO.  The radial
+     *   velocity ramps from 0 at the ISCO to free-fall at the horizon,
+     *   while the angular velocity freezes at the ISCO value.
+     *
+     * Previously this function hard-coded r_isco = 6.0 (Schwarzschild),
+     * giving incorrect velocities for spinning BHs where the ISCO can
+     * be as small as ~1.24 M (a = 0.998) or ~1 M (extremal).
+     */
     if (r >= r_isco) {
         double r2 = r*r;
         double a2 = a*a;
@@ -417,7 +428,28 @@ __device__ void fluid_4velocity(double r, double theta, double a, double u[4]) {
         double ut = 1.0 / sqrt(fmax(denom, 1e-30));
         u[0] = ut; u[1] = 0.0; u[2] = 0.0; u[3] = ut * Omega;
     } else {
-        u[0] = 1.0; u[1] = -0.5; u[2] = 0.0; u[3] = 0.1;
+        /* Plunging region: the fluid falls inward from the ISCO.
+         * Omega freezes at the ISCO value; u^r ramps up toward
+         * free-fall.  The interpolation x = (r - r_+) / (r_isco - r_+)
+         * gives a smooth transition. */
+        double r_horizon = 1.0 + sqrt(fmax(1.0 - a * a, 0.0));
+        double x = fmax((r - r_horizon) / fmax(r_isco - r_horizon, 1e-10), 0.0);
+
+        /* Compute Omega at ISCO for angular velocity freeze */
+        double Omega_isco = 1.0 / (r_isco * sqrt(r_isco) + a);
+
+        /* Radial velocity: zero at ISCO, grows inward */
+        double u_r = -0.5 * (1.0 - x * x);
+
+        /* Approximate u^t from normalisation u_mu u^mu = -1 */
+        double r2 = r * r;
+        double gtt = -(1.0 - 2.0 * r / r2);
+        double gtph = -a * 2.0 * r / r2;
+        double gphph = (r2 * r2 + a * a * r2 + a * a * 2.0 * r) / r2;
+        double denom = -(gtt + 2.0 * Omega_isco * gtph
+                         + Omega_isco * Omega_isco * gphph);
+        double ut = 1.0 / sqrt(fmax(denom, 1e-30));
+        u[0] = ut; u[1] = u_r; u[2] = 0.0; u[3] = ut * Omega_isco;
     }
 }
 
