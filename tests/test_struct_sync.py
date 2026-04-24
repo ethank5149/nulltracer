@@ -17,7 +17,7 @@ class TestStructSync:
         """RenderParams struct size matches expected 224 bytes."""
         import ctypes
         assert ctypes.sizeof(RenderParams) == 232, (
-            f"RenderParams size {ctypes.sizeof(RenderParams)} != 224 bytes"
+            f"RenderParams size {ctypes.sizeof(RenderParams)} != 232 bytes"
         )
 
     def test_render_params_fields(self):
