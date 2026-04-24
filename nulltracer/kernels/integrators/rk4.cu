@@ -58,6 +58,17 @@ void trace_rk4(const RenderParams *pp, unsigned char *output, const float *skyma
         /* RK4 step (shared function from steps.cu) */
         rk4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
+
+
 
 
         /* Volumetric emission: hot corona + relativistic jet */

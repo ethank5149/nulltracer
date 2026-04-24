@@ -254,6 +254,16 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
                 }
                 done = true; break;
             }
+            
+            if (th < 0.0) {
+                th = -th;
+                pth = -pth;
+                phi += PI;
+            } else if (th > PI) {
+                th = 2.0 * PI - th;
+                pth = -pth;
+                phi += PI;
+            }
             if (r < 0.5 || r != r || th != th) { done = true; break; }
         }
 

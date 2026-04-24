@@ -323,6 +323,17 @@ void trace_kahanli8s(const RenderParams *pp, unsigned char *output, const float 
 
         /* -- Pole reflection -------------------------------- */
 
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
+
+
 
         /* Volumetric emission: hot corona + relativistic jet */
         if (acc_a < 0.99f) {

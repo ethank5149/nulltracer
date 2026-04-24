@@ -275,7 +275,7 @@ def compare_integrators(
     renderer = CudaRenderer()
     renderer.initialize()
     if methods is None:
-        methods = renderer.available_methods()
+        methods = renderer.available_methods
     
     # ensure all kernels are compiled
     renderer.precompile_all()

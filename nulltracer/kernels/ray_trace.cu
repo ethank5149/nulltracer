@@ -306,6 +306,29 @@ void ray_trace_rk4(const RenderParams *pp, double *output) {
         double oldR = r, oldTh = th, oldPhi = phi;
         rk4_step(&r, &th, &phi, &pr, &pth, a, b, Q2, he);
 
+        
+        /* -- Pole reflection -------------------------------- */
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
+
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
+
+
         if (r <= rp * 1.01) { term_reason = 1; break; }
 
         record_crossing(output, crossing_base, &num_crossings,
@@ -587,7 +610,18 @@ void ray_trace_kahanli8s(const RenderParams *pp, double *output) {
         rt_kahan_add(&Phi, &Phi_comp, dPhi);
         if (Phi < 0.01) Phi = 0.01;
 
-        /* Pole reflection */
+        
+        /* -- Pole reflection -------------------------------- */
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
+
 
 
         if (r <= rp * 1.01) { term_reason = 1; break; }
@@ -719,8 +753,17 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
         rt_kahan_add(&Phi, &Phi_comp, dPhi);
         if (Phi < 0.01) Phi = 0.01;
 
-        /* Pole reflection */
-
+        
+        /* -- Pole reflection -------------------------------- */
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
 
         /* KS horizon capture: well inside horizon (r ??? 0.5??r???) */
         if (r <= rp * 0.5) { term_reason = 1; break; }
@@ -786,7 +829,26 @@ void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
 
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
-
+        /* -- Pole reflection -------------------------------- */
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
+        
+        if (ths < 0.0) {
+            ths = -ths;
+            pths = -pths;
+            phis += PI;
+        } else if (ths > PI) {
+            ths = 2.0 * PI - ths;
+            pths = -pths;
+            phis += PI;
+        }
 
         if (r <= rp * 0.5) { term_reason = 1; break; }
 
@@ -851,7 +913,26 @@ void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
 
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
-
+        /* -- Pole reflection -------------------------------- */
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
+        
+        if (ths < 0.0) {
+            ths = -ths;
+            pths = -pths;
+            phis += PI;
+        } else if (ths > PI) {
+            ths = 2.0 * PI - ths;
+            pths = -pths;
+            phis += PI;
+        }
 
         if (r <= rp * 0.5) { term_reason = 1; break; }
 
@@ -916,7 +997,26 @@ void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
 
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
-
+        /* -- Pole reflection -------------------------------- */
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
+        
+        if (ths < 0.0) {
+            ths = -ths;
+            pths = -pths;
+            phis += PI;
+        } else if (ths > PI) {
+            ths = 2.0 * PI - ths;
+            pths = -pths;
+            phis += PI;
+        }
 
         if (r <= rp * 0.5) { term_reason = 1; break; }
 

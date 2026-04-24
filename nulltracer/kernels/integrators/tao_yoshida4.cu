@@ -73,7 +73,28 @@ void trace_tao_yoshida4(const RenderParams *pp, unsigned char *output, const flo
         /* Hamiltonian constraint projection on real variables (KS) */
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
 
-        /* Pole reflection removed for symplecticity. S2_EPS regularizes poles. */
+        /* -- Pole reflection -------------------------------- */
+
+        if (th < 0.0) {
+            th = -th;
+            pth = -pth;
+            phi += PI;
+        } else if (th > PI) {
+            th = 2.0 * PI - th;
+            pth = -pth;
+            phi += PI;
+        }
+        
+        if (ths < 0.0) {
+            ths = -ths;
+            pths = -pths;
+            phis += PI;
+        } else if (ths > PI) {
+            ths = 2.0 * PI - ths;
+            pths = -pths;
+            phis += PI;
+        }
+
 
         /* Volumetric emission: hot corona + relativistic jet */
         if (acc_a < 0.99f) {
