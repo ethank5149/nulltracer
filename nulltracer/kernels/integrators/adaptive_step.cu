@@ -189,7 +189,7 @@ __device__ double phi_var_physical_step(double h, double Phi,
 
     /* Pole proximity factor (ipole-inspired): reduce step further
      * when within ~0.1 rad of either pole. */
-    double pole_dist = fmin(th, PI - th);
+    double pole_dist = fmin(fabs(th), fabs(PI - th));
     if (pole_dist < 0.1) {
         double pole_factor = pole_dist / 0.1;
         pole_factor = fmax(pole_factor, 0.05);

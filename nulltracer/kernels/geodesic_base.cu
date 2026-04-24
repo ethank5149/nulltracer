@@ -959,12 +959,12 @@ __device__ void geoForceKS(
      * signature of non-separability. */
     *dpr = ((1.0 - r) * pr * pr + 2.0 * r * pr) * isig;
 
-    /* dp_??/d?? = cos?? ?? [b??/(s????sin??) ??? a????sin??] / ??
+    /* dp_??/d?? = cos?? ?? sin?? ?? [b??/s_2^2 ??? a^2] / ??
      *
-     * The b??/sin???? term is regularized using s?? = sin???? + ??
-     * to prevent divergence at the poles.  The pole reflection
-     * at ?? = 0.005 (in the integrator) provides additional safety. */
-    *dpth = cth * (b * b / (s2 * sth) - a2 * sth) * isig;
+     * The b??/sin^2?? term is regularized using s?? = sin???? + ??
+     * to prevent divergence at the poles. The exact derivative of the
+     * regularized Hamiltonian is used to ensure the force goes to zero. */
+    *dpth = cth * sth * (b * b / (s2 * s2) - a2) * isig;
 }
 
 
