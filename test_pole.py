@@ -9,7 +9,7 @@ params = {
     'spin': 0.998, 'inclination': 0.1,
     'width': 512, 'height': 512, 'fov': 5.0,
     'show_disk': False, 'bg_mode': 1,
-    'obs_dist': 500, 'step_size': 0.1, 'method': 'kahanli8s_ks',
+    'obs_dist': 500, 'step_size': 0.1, 'method': 'symplectic8',
 }
 
 raw_bytes = renderer.render_frame(params)

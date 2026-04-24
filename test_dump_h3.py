@@ -8,7 +8,7 @@ def dump_h():
 
     from nulltracer.ray import trace_ray
     res = trace_ray(
-        method="tao_kahan_li8",
+        method="symplectic8",
         steps=1000,
         step_size=0.1,
         mode="impact_parameter",

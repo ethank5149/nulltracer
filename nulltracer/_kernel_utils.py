@@ -71,33 +71,21 @@ class KernelCache:
     RENDER_REGISTRY: dict[str, tuple[str, str]] = {
         "rk4":           ("rk4.cu",           "trace_rk4"),
         "rkdp8":         ("rkdp8.cu",         "trace_rkdp8"),
-        "kahanli8s":     ("kahanli8s.cu",     "trace_kahanli8s"),
-        "kahanli8s_ks":  ("kahanli8s_ks.cu",  "trace_kahanli8s_ks"),
-        "tao_yoshida4":  ("tao_yoshida4.cu",  "trace_tao_yoshida4"),
-        "tao_yoshida6":  ("tao_yoshida6.cu",  "trace_tao_yoshida6"),
-        "tao_kahan_li8": ("tao_kahan_li8.cu", "trace_tao_kahan_li8"),
+        "symplectic8":   ("symplectic8.cu",    "trace_symplectic8"),
     }
 
     #: Maps method name ??? entry_point for single-ray tracing.
     RAY_TRACE_REGISTRY: dict[str, str] = {
         "rk4":           "ray_trace_rk4",
         "rkdp8":         "ray_trace_rkdp8",
-        "kahanli8s":     "ray_trace_kahanli8s",
-        "kahanli8s_ks":  "ray_trace_kahanli8s_ks",
-        "tao_yoshida4":  "ray_trace_tao_yoshida4",
-        "tao_yoshida6":  "ray_trace_tao_yoshida6",
-        "tao_kahan_li8": "ray_trace_tao_kahan_li8",
+        "symplectic8":   "ray_trace_symplectic8",
     }
 
     #: Human-readable labels.
     METHOD_LABELS: dict[str, str] = {
-        "rk4":           "Runge???Kutta 4th order",
-        "rkdp8":         "Dormand???Prince 8(7) adaptive",
-        "kahanli8s":     "Kahan???Li 8th symplectic",
-        "kahanli8s_ks":  "Kahan???Li 8th symplectic (Kerr???Schild)",
-        "tao_yoshida4":  "Tao + Yoshida 4th symplectic",
-        "tao_yoshida6":  "Tao + Yoshida 6th symplectic",
-        "tao_kahan_li8": "Tao + Kahan???Li 8th symplectic",
+        "rk4":           "Runge–Kutta 4th order",
+        "rkdp8":         "Dormand–Prince 8(7) adaptive",
+        "symplectic8":   "Tao–Kahan-Li 8th–10th symplectic (ASΦ + Wisdom corrector)",
     }
 
     _COMPILE_OPTS = ("--std=c++14", "-use_fast_math")

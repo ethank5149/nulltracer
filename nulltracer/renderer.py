@@ -74,11 +74,7 @@ _KERNEL_REGISTRY = {
     "rk4_cks":  ("rk4_cks.cu",  "trace_rk4_cks"),
     "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
     "rkdp8_cks":("rkdp8_cks.cu","trace_rkdp8_cks"),
-    "kahanli8s":    ("kahanli8s.cu",    "trace_kahanli8s"),
-    "kahanli8s_ks": ("kahanli8s_ks.cu", "trace_kahanli8s_ks"),
-    "tao_yoshida4":  ("tao_yoshida4.cu",  "trace_tao_yoshida4"),
-    "tao_yoshida6":  ("tao_yoshida6.cu",  "trace_tao_yoshida6"),
-    "tao_kahan_li8": ("tao_kahan_li8.cu", "trace_tao_kahan_li8"),
+    "symplectic8": ("symplectic8.cu", "trace_symplectic8"),
 }
 
 # Map method names to single-ray trace kernel entry points.
@@ -87,11 +83,7 @@ _RAY_TRACE_REGISTRY = {
     "rk4_cks":      "ray_trace_rk4_cks",
     "rkdp8":        "ray_trace_rkdp8",
     "rkdp8_cks":    "ray_trace_rkdp8_cks",
-    "kahanli8s":    "ray_trace_kahanli8s",
-    "kahanli8s_ks": "ray_trace_kahanli8s_ks",
-    "tao_yoshida4":  "ray_trace_tao_yoshida4",
-    "tao_yoshida6":  "ray_trace_tao_yoshida6",
-    "tao_kahan_li8": "ray_trace_tao_kahan_li8",
+    "symplectic8":  "ray_trace_symplectic8",
 }
 
 
@@ -192,11 +184,11 @@ class CudaRenderer:
         if method in self._kernel_cache:
             return self._kernel_cache[method]
 
-        if method not in ['rk4', 'rkdp8']:
+        if method not in ['rk4', 'rkdp8', 'symplectic8']:
             warnings.warn(
-                f"Integration method '{method}' is deprecated and may be removed in a future version. "
-                "Use 'rk4' or 'rkdp8' instead.",
-                DeprecationWarning,
+                f"Integration method '{method}' is not recognized. "
+                "Use 'rk4', 'rkdp8', or 'symplectic8'.",
+                UserWarning,
                 stacklevel=2
             )
 

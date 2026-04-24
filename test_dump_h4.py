@@ -12,7 +12,7 @@ def dump_h():
         alpha = np.random.uniform(-2.0, 2.0)
         beta = np.random.uniform(3.0, 8.0)
         res = trace_ray(
-            method="tao_kahan_li8",
+            method="symplectic8",
             steps=1000,
             step_size=0.1,
             mode="impact_parameter",

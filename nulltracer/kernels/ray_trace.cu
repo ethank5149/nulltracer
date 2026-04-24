@@ -5,7 +5,7 @@
  *  and records the full trajectory, equatorial plane crossings,
  *  and disk physics (g-factor, Novikov-Thorne flux, temperature).
  *
- *  Provides per-integrator entry points for ALL 7 methods,
+ *  Provides per-integrator entry points for all 3 methods,
  *  sharing step functions from integrators/steps.cu and
  *  adaptive step sizing from integrators/adaptive_step.cu.
  *
@@ -81,7 +81,7 @@ __device__ double normalized_nt_flux(double r, double a, double r_isco) {
 }
 
 
-/* -- Kahan-Li s15odr8 coefficients (for kahanli8s/kahanli8s_ks) -- */
+/* -- Kahan-Li s15odr8 coefficients (for symplectic8 ray trace) -- */
 
 static __constant__ double RT_KL8S_W8[8] = {
      0.74167036435061295345,
@@ -501,160 +501,27 @@ void ray_trace_rkdp8(const RenderParams *pp, double *output) {
 }
 
 
-/* ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
- *  KAHANLI8S RAY TRACE (Boyer-Lindquist coordinates)
- *  Kahan-Li 8th-order with Sundman time + compensated summation
- *  + symplectic corrector + Hamiltonian projection
- * ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????? */
+/* ════════════════════════════════════════════════════════════════
+ *  SYMPLECTIC8 RAY TRACE
+ *  Unified 8th–10th order symplectic integrator combining:
+ *    - Tao extended phase space (non-separable splitting)
+ *    - Kahan-Li s15odr8 8th-order composition (15 palindromic stages)
+ *    - Kerr-Schild coordinates (no Δ=0 singularity)
+ *    - ASΦ adaptive stepping (Wu et al. 2024 / Preto & Saha 2009)
+ *    - Compensated (Kahan) summation (~2× machine precision)
+ *    - Wisdom symplectic corrector (raises order 8→~10)
+ *    - Hamiltonian projection (algebraic H=0 constraint)
+ * ════════════════════════════════════════════════════════════════ */
 
 extern "C" __global__
-void ray_trace_kahanli8s(const RenderParams *pp, double *output) {
+void ray_trace_symplectic8(const RenderParams *pp, double *output) {
     if (threadIdx.x != 0 || blockIdx.x != 0) return;
     const RenderParams &p = *pp;
 
     double a = p.spin;
     double Q2 = p.charge * p.charge;
 
-    int coords = 0;
-    double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
-    int max_traj;
-    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
-        return;
-    }
-    int traj_base = 24;
-    int crossing_base = traj_base + max_traj * 4;
-    int num_crossings = 0;
-
-    /* 4?? step multiplier (matching render kernel) */
-    int STEPS = (int)p.steps * 4;
-    int term_reason = 0, steps_used = 0;
-
-    /* Compensated summation accumulators */
-    double r_comp = 0.0, th_comp = 0.0, phi_comp = 0.0;
-    double pr_comp = 0.0, pth_comp = 0.0;
-
-    /* Sundman / Mino time step */
-    double dtau = sundman_dtau(a, Q2, rp, p.step_size, p.esc_radius, STEPS);
-
-    /* ??-variable adaptive stepping (AS??? algorithm) */
-    double Phi = p.obs_dist / r;
-    double Phi_comp = 0.0;
-    double h_phi = dtau * p.obs_dist * p.obs_dist;  /* h = dtau??r????? */
-
-    for (int i = 0; i < STEPS; i++) {
-        steps_used = i + 1;
-
-        double oldR = r, oldTh = th, oldPhi = phi;
-
-        /* AS??? Step 1: Half-step ?? update */
-        double g_sun = phi_var_sundman_g(r, th, a);
-        double dPhi = phi_var_dphi_BL(r, th, pr, a, Q2, g_sun, h_phi);
-        rt_kahan_add(&Phi, &Phi_comp, dPhi);
-        if (Phi < 0.01) Phi = 0.01;
-
-        /* AS??? Step 3: Compute physical step */
-        double he = phi_var_physical_step(h_phi, Phi, r, th, pth, a, p.obs_dist);
-
-        if (i < max_traj) {
-            int off = traj_base + i * 4;
-            output[off + 0] = r; output[off + 1] = th;
-            output[off + 2] = phi; output[off + 3] = he;
-        }
-
-        /* Kahan-Li s15odr8: 15 symmetric substeps with compensated summation */
-        double dr_, dth_, dphi_, dpr_, dpth_;
-
-        #define RT_KL8S_SUBSTEP(idx) { \
-            geoRHS(r, th, pr, pth, a, b, Q2, \
-                   &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-            rt_kahan_add(&r,   &r_comp,   he * RT_KL8S_D8[idx] * dr_); \
-            rt_kahan_add(&th,  &th_comp,  he * RT_KL8S_D8[idx] * dth_); \
-            rt_kahan_add(&phi, &phi_comp, he * RT_KL8S_D8[idx] * dphi_); \
-            geoRHS(r, th, pr, pth, a, b, Q2, \
-                   &dr_, &dth_, &dphi_, &dpr_, &dpth_); \
-            rt_kahan_add(&pr,  &pr_comp,  he * RT_KL8S_W8[idx] * dpr_); \
-            rt_kahan_add(&pth, &pth_comp, he * RT_KL8S_W8[idx] * dpth_); \
-        }
-
-        RT_KL8S_SUBSTEP(0) RT_KL8S_SUBSTEP(1) RT_KL8S_SUBSTEP(2)
-        RT_KL8S_SUBSTEP(3) RT_KL8S_SUBSTEP(4) RT_KL8S_SUBSTEP(5)
-        RT_KL8S_SUBSTEP(6) RT_KL8S_SUBSTEP(7) RT_KL8S_SUBSTEP(6)
-        RT_KL8S_SUBSTEP(5) RT_KL8S_SUBSTEP(4) RT_KL8S_SUBSTEP(3)
-        RT_KL8S_SUBSTEP(2) RT_KL8S_SUBSTEP(1) RT_KL8S_SUBSTEP(0)
-
-        #undef RT_KL8S_SUBSTEP
-
-        /* Symplectic corrector (Wisdom 2006) */
-        {
-            double corr_eps = he * he / 24.0;
-            double f_pr, f_pth;
-            geoForce(r, th, pr, pth, a, b, Q2, &f_pr, &f_pth);
-            pr  += corr_eps * f_pr;
-            pth += corr_eps * f_pth;
-
-            double v_r, v_th, v_phi;
-            geoVelocity(r, th, pr, pth, a, b, Q2, &v_r, &v_th, &v_phi);
-            rt_kahan_add(&r,   &r_comp,   corr_eps * v_r);
-            rt_kahan_add(&th,  &th_comp,  corr_eps * v_th);
-            rt_kahan_add(&phi, &phi_comp, corr_eps * v_phi);
-        }
-
-        /* Hamiltonian projection */
-        projectHamiltonian(r, th, &pr, pth, a, b, Q2);
-        pr_comp = 0.0;
-
-        /* AS??? Step 5: Second half-step ?? update */
-        g_sun = phi_var_sundman_g(r, th, a);
-        dPhi = phi_var_dphi_BL(r, th, pr, a, Q2, g_sun, h_phi);
-        rt_kahan_add(&Phi, &Phi_comp, dPhi);
-        if (Phi < 0.01) Phi = 0.01;
-
-        
-        /* -- Pole reflection -------------------------------- */
-        if (th < 0.0) {
-            th = -th;
-            pth = -pth;
-            phi += PI;
-        } else if (th > PI) {
-            th = 2.0 * PI - th;
-            pth = -pth;
-            phi += PI;
-        }
-
-
-
-        if (r <= rp * 1.01) { term_reason = 1; break; }
-
-        record_crossing(output, crossing_base, &num_crossings,
-                        i, oldR, oldTh, oldPhi, r, th, phi,
-                        a, Q2, b, p.isco, p.disk_temp);
-
-        if (r > p.esc_radius) { term_reason = 2; break; }
-        if (r < 0.5) { term_reason = 4; break; }
-        if (r != r || th != th) { term_reason = 3; break; }
-    }
-
-    ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
-}
-
-
-/* ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
- *  KAHANLI8S_KS RAY TRACE (Kerr-Schild coordinates)
- *  Kahan-Li 8th-order with Sundman time + compensated summation
- *  + symplectic corrector + KS Hamiltonian projection
- * ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????? */
-
-extern "C" __global__
-void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
-    if (threadIdx.x != 0 || blockIdx.x != 0) return;
-    const RenderParams &p = *pp;
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
-
-    int coords = 1;
+    int coords = 1;  /* KS coordinates */
     double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
     int max_traj;
     if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
@@ -662,45 +529,46 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
         return;
     }
 
-    /* Transform p_r from BL to KS coordinates */
+    /* Transform p_r from BL to Kerr-Schild coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
 
     /* Recompute H_init in KS coordinates (ray_init computed it in BL,
      * which gives a different numerical value after the p_r transform). */
     output[17] = computeHamiltonianKS(r, th, pr, pth, a, b, Q2);
 
+    /* Initialize Tao shadow variables */
+    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
+
     int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
 
-    /* 4?? step multiplier (matching render kernel) */
+    /* 4× step multiplier (matching render kernel) */
     int STEPS = (int)p.steps * 4;
     int term_reason = 0, steps_used = 0;
 
-    /* Compensated summation accumulators */
+    /* Compensated summation accumulators (real variables + Φ) */
     double r_comp = 0.0, th_comp = 0.0, phi_comp = 0.0;
     double pr_comp = 0.0, pth_comp = 0.0;
 
-    /* Sundman / Mino time step */
+    /* ASΦ: Sundman/Mino time base step + Φ variable */
     double dtau = sundman_dtau(a, Q2, rp, p.step_size, p.esc_radius, STEPS);
-
-    /* ??-variable adaptive stepping (AS??? algorithm) */
     double Phi = p.obs_dist / r;
     double Phi_comp = 0.0;
-    double h_phi = dtau * p.obs_dist * p.obs_dist;  /* h = dtau??r????? */
+    double h_phi = dtau * p.obs_dist * p.obs_dist;
 
     for (int i = 0; i < STEPS; i++) {
         steps_used = i + 1;
 
         double oldR = r, oldTh = th, oldPhi = phi;
 
-        /* AS??? Step 1: Half-step ?? update */
+        /* ─── ASΦ Step 1: Half-step Φ update (KS) ──────────── */
         double g_sun = phi_var_sundman_g(r, th, a);
         double dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
         rt_kahan_add(&Phi, &Phi_comp, dPhi);
         if (Phi < 0.01) Phi = 0.01;
 
-        /* AS??? Step 3: Compute physical step */
+        /* ─── ASΦ Step 3: Compute physical step h/Φ ────────── */
         double he = phi_var_physical_step(h_phi, Phi, r, th, pth, a, p.obs_dist);
 
         if (i < max_traj) {
@@ -709,331 +577,61 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
             output[off + 2] = phi; output[off + 3] = he;
         }
 
-        /* Kahan-Li s15odr8: 15 symmetric substeps in KS coordinates */
-        double dr_, dth_, dphi_, dpr_, dpth_;
+        /* ─── Tao + Kahan-Li 8th-order step ────────────────── */
+        tao_kahan_li8_step(&r, &th, &phi, &pr, &pth,
+                           &rs, &ths, &phis, &prs, &pths,
+                           a, b, Q2, he);
 
-        #define RT_KL8S_KS_SUBSTEP(idx) { \
-            geoVelocityKS(r, th, pr, pth, a, b, Q2, \
-                          &dr_, &dth_, &dphi_); \
-            rt_kahan_add(&r,   &r_comp,   he * RT_KL8S_D8[idx] * dr_); \
-            rt_kahan_add(&th,  &th_comp,  he * RT_KL8S_D8[idx] * dth_); \
-            rt_kahan_add(&phi, &phi_comp, he * RT_KL8S_D8[idx] * dphi_); \
-            geoForceKS(r, th, pr, pth, a, b, Q2, \
-                       &dpr_, &dpth_); \
-            rt_kahan_add(&pr,  &pr_comp,  he * RT_KL8S_W8[idx] * dpr_); \
-            rt_kahan_add(&pth, &pth_comp, he * RT_KL8S_W8[idx] * dpth_); \
-        }
-
-        RT_KL8S_KS_SUBSTEP(0) RT_KL8S_KS_SUBSTEP(1) RT_KL8S_KS_SUBSTEP(2)
-        RT_KL8S_KS_SUBSTEP(3) RT_KL8S_KS_SUBSTEP(4) RT_KL8S_KS_SUBSTEP(5)
-        RT_KL8S_KS_SUBSTEP(6) RT_KL8S_KS_SUBSTEP(7) RT_KL8S_KS_SUBSTEP(6)
-        RT_KL8S_KS_SUBSTEP(5) RT_KL8S_KS_SUBSTEP(4) RT_KL8S_KS_SUBSTEP(3)
-        RT_KL8S_KS_SUBSTEP(2) RT_KL8S_KS_SUBSTEP(1) RT_KL8S_KS_SUBSTEP(0)
-
-        #undef RT_KL8S_KS_SUBSTEP
-
-        /* Symplectic corrector (Wisdom 2006) ??? KS version */
+        /* ─── Wisdom symplectic corrector (KS, real + shadow) ─ */
         {
             double corr_eps = he * he / 24.0;
+
+            /* Real variables: kick then drift */
             double f_pr, f_pth;
             geoForceKS(r, th, pr, pth, a, b, Q2, &f_pr, &f_pth);
-            pr  += corr_eps * f_pr;
-            pth += corr_eps * f_pth;
+            rt_kahan_add(&pr,  &pr_comp,  corr_eps * f_pr);
+            rt_kahan_add(&pth, &pth_comp, corr_eps * f_pth);
 
             double v_r, v_th, v_phi;
             geoVelocityKS(r, th, pr, pth, a, b, Q2, &v_r, &v_th, &v_phi);
             rt_kahan_add(&r,   &r_comp,   corr_eps * v_r);
             rt_kahan_add(&th,  &th_comp,  corr_eps * v_th);
             rt_kahan_add(&phi, &phi_comp, corr_eps * v_phi);
+
+            /* Shadow variables: same canonical correction */
+            geoForceKS(rs, ths, prs, pths, a, b, Q2, &f_pr, &f_pth);
+            prs  += corr_eps * f_pr;
+            pths += corr_eps * f_pth;
+
+            geoVelocityKS(rs, ths, prs, pths, a, b, Q2, &v_r, &v_th, &v_phi);
+            rs   += corr_eps * v_r;
+            ths  += corr_eps * v_th;
+            phis += corr_eps * v_phi;
         }
 
-        /* KS Hamiltonian projection */
+        /* ─── Hamiltonian projection (KS) ──────────────────── */
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
         pr_comp = 0.0;
 
-        /* AS??? Step 5: Second half-step ?? update */
+        /* ─── ASΦ Step 5: Second half-step Φ update ────────── */
         g_sun = phi_var_sundman_g(r, th, a);
         dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
         rt_kahan_add(&Phi, &Phi_comp, dPhi);
         if (Phi < 0.01) Phi = 0.01;
 
-        
-        /* -- Pole reflection -------------------------------- */
+        /* ─── Pole reflection (real + shadow) ─────────────── */
         if (th < 0.0) {
-            th = -th;
-            pth = -pth;
-            phi += PI;
+            th = -th; pth = -pth; phi += PI;
         } else if (th > PI) {
-            th = 2.0 * PI - th;
-            pth = -pth;
-            phi += PI;
+            th = 2.0 * PI - th; pth = -pth; phi += PI;
         }
-
-        /* KS horizon capture: well inside horizon (r ??? 0.5??r???) */
-        if (r <= rp * 0.5) { term_reason = 1; break; }
-
-        record_crossing(output, crossing_base, &num_crossings,
-                        i, oldR, oldTh, oldPhi, r, th, phi,
-                        a, Q2, b, p.isco, p.disk_temp);
-
-        if (r > p.esc_radius) { term_reason = 2; break; }
-        if (r < 0.5) { term_reason = 4; break; }
-        if (r != r || th != th) { term_reason = 3; break; }
-    }
-
-    ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
-}
-
-
-/* ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
- *  TAO + YOSHIDA4 RAY TRACE
- * ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????? */
-
-extern "C" __global__
-void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
-    if (threadIdx.x != 0 || blockIdx.x != 0) return;
-    const RenderParams &p = *pp;
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
-
-    int coords = 1;
-    double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
-    int max_traj;
-    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
-        return;
-    }
-
-    /* Transform p_r from BL to Kerr coordinates */
-    transformBLtoKS(r, a, b, Q2, &pr);
-
-    /* Recompute H_init in KS coordinates (ray_init computed it in BL,
-     * which gives a different numerical value after the p_r transform). */
-    output[17] = computeHamiltonianKS(r, th, pr, pth, a, b, Q2);
-
-    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-    int traj_base = 24;
-    int crossing_base = traj_base + max_traj * 4;
-    int num_crossings = 0;
-    int STEPS = (int)p.steps;
-    int term_reason = 0, steps_used = 0;
-
-    for (int i = 0; i < STEPS; i++) {
-        steps_used = i + 1;
-        double he = adaptive_step_tao(r, rp, p.step_size, p.obs_dist);
-
-        if (i < max_traj) {
-            int off = traj_base + i * 4;
-            output[off + 0] = r; output[off + 1] = th;
-            output[off + 2] = phi; output[off + 3] = he;
-        }
-
-        double oldR = r, oldTh = th, oldPhi = phi;
-        tao_yoshida4_step(&r, &th, &phi, &pr, &pth,
-                          &rs, &ths, &phis, &prs, &pths,
-                          a, b, Q2, he);
-
-        projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
-
-        /* -- Pole reflection -------------------------------- */
-        if (th < 0.0) {
-            th = -th;
-            pth = -pth;
-            phi += PI;
-        } else if (th > PI) {
-            th = 2.0 * PI - th;
-            pth = -pth;
-            phi += PI;
-        }
-        
         if (ths < 0.0) {
-            ths = -ths;
-            pths = -pths;
-            phis += PI;
+            ths = -ths; pths = -pths; phis += PI;
         } else if (ths > PI) {
-            ths = 2.0 * PI - ths;
-            pths = -pths;
-            phis += PI;
+            ths = 2.0 * PI - ths; pths = -pths; phis += PI;
         }
 
-        if (r <= rp * 0.5) { term_reason = 1; break; }
-
-        record_crossing(output, crossing_base, &num_crossings,
-                        i, oldR, oldTh, oldPhi, r, th, phi,
-                        a, Q2, b, p.isco, p.disk_temp);
-
-        if (r > p.esc_radius) { term_reason = 2; break; }
-        if (r < 0.5) { term_reason = 4; break; }
-        if (r != r || th != th) { term_reason = 3; break; }
-    }
-
-    ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
-}
-
-
-/* ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
- *  TAO + YOSHIDA6 RAY TRACE
- * ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????? */
-
-extern "C" __global__
-void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
-    if (threadIdx.x != 0 || blockIdx.x != 0) return;
-    const RenderParams &p = *pp;
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
-
-    int coords = 1;
-    double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
-    int max_traj;
-    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
-        return;
-    }
-
-    /* Transform p_r from BL to Kerr coordinates */
-    transformBLtoKS(r, a, b, Q2, &pr);
-
-    /* Recompute H_init in KS coordinates (ray_init computed it in BL,
-     * which gives a different numerical value after the p_r transform). */
-    output[17] = computeHamiltonianKS(r, th, pr, pth, a, b, Q2);
-
-    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-    int traj_base = 24;
-    int crossing_base = traj_base + max_traj * 4;
-    int num_crossings = 0;
-    int STEPS = (int)p.steps;
-    int term_reason = 0, steps_used = 0;
-
-    for (int i = 0; i < STEPS; i++) {
-        steps_used = i + 1;
-        double he = adaptive_step_tao(r, rp, p.step_size, p.obs_dist);
-
-        if (i < max_traj) {
-            int off = traj_base + i * 4;
-            output[off + 0] = r; output[off + 1] = th;
-            output[off + 2] = phi; output[off + 3] = he;
-        }
-
-        double oldR = r, oldTh = th, oldPhi = phi;
-        tao_yoshida6_step(&r, &th, &phi, &pr, &pth,
-                          &rs, &ths, &phis, &prs, &pths,
-                          a, b, Q2, he);
-
-        projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
-
-        /* -- Pole reflection -------------------------------- */
-        if (th < 0.0) {
-            th = -th;
-            pth = -pth;
-            phi += PI;
-        } else if (th > PI) {
-            th = 2.0 * PI - th;
-            pth = -pth;
-            phi += PI;
-        }
-        
-        if (ths < 0.0) {
-            ths = -ths;
-            pths = -pths;
-            phis += PI;
-        } else if (ths > PI) {
-            ths = 2.0 * PI - ths;
-            pths = -pths;
-            phis += PI;
-        }
-
-        if (r <= rp * 0.5) { term_reason = 1; break; }
-
-        record_crossing(output, crossing_base, &num_crossings,
-                        i, oldR, oldTh, oldPhi, r, th, phi,
-                        a, Q2, b, p.isco, p.disk_temp);
-
-        if (r > p.esc_radius) { term_reason = 2; break; }
-        if (r < 0.5) { term_reason = 4; break; }
-        if (r != r || th != th) { term_reason = 3; break; }
-    }
-
-    ray_finalize(output, crossing_base, num_crossings,
-                 r, th, phi, pr, pth, a, b, Q2, term_reason, steps_used, coords);
-}
-
-
-/* ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
- *  TAO + KAHAN-LI 8th-ORDER RAY TRACE
- * ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????? */
-
-extern "C" __global__
-void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
-    if (threadIdx.x != 0 || blockIdx.x != 0) return;
-    const RenderParams &p = *pp;
-
-    double a = p.spin;
-    double Q2 = p.charge * p.charge;
-
-    int coords = 1;
-    double r, th, phi, pr, pth, b, rp, alpha_val, beta_val;
-    int max_traj;
-    if (!ray_init(p, output, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha_val, &beta_val, &max_traj)) {
-        ray_finalize(output, 20 + max_traj * 4, 0, r, th, phi, pr, pth, a, b, Q2, 4, 0, coords);
-        return;
-    }
-
-    /* Transform p_r from BL to Kerr coordinates */
-    transformBLtoKS(r, a, b, Q2, &pr);
-
-    /* Recompute H_init in KS coordinates (ray_init computed it in BL,
-     * which gives a different numerical value after the p_r transform). */
-    output[17] = computeHamiltonianKS(r, th, pr, pth, a, b, Q2);
-
-    double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
-    int traj_base = 24;
-    int crossing_base = traj_base + max_traj * 4;
-    int num_crossings = 0;
-    int STEPS = (int)p.steps;
-    int term_reason = 0, steps_used = 0;
-
-    for (int i = 0; i < STEPS; i++) {
-        steps_used = i + 1;
-        double he = adaptive_step_tao(r, rp, p.step_size, p.obs_dist);
-
-        if (i < max_traj) {
-            int off = traj_base + i * 4;
-            output[off + 0] = r; output[off + 1] = th;
-            output[off + 2] = phi; output[off + 3] = he;
-        }
-
-        double oldR = r, oldTh = th, oldPhi = phi;
-        tao_kahan_li8_step(&r, &th, &phi, &pr, &pth,
-                           &rs, &ths, &phis, &prs, &pths,
-                           a, b, Q2, he);
-
-        projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
-
-        /* -- Pole reflection -------------------------------- */
-        if (th < 0.0) {
-            th = -th;
-            pth = -pth;
-            phi += PI;
-        } else if (th > PI) {
-            th = 2.0 * PI - th;
-            pth = -pth;
-            phi += PI;
-        }
-        
-        if (ths < 0.0) {
-            ths = -ths;
-            pths = -pths;
-            phis += PI;
-        } else if (ths > PI) {
-            ths = 2.0 * PI - ths;
-            pths = -pths;
-            phis += PI;
-        }
-
+        /* KS coordinates: well inside horizon check */
         if (r <= rp * 0.5) { term_reason = 1; break; }
 
         record_crossing(output, crossing_base, &num_crossings,
