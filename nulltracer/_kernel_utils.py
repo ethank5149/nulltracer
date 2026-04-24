@@ -71,6 +71,8 @@ class KernelCache:
     RENDER_REGISTRY: dict[str, tuple[str, str]] = {
         "rk4":           ("rk4.cu",           "trace_rk4"),
         "rkdp8":         ("rkdp8.cu",         "trace_rkdp8"),
+        "verner98":      ("verner98.cu",      "trace_verner98"),
+        "rkn86":         ("rkn86.cu",         "trace_rkn86"),
         "symplectic8":   ("symplectic8.cu",    "trace_symplectic8"),
     }
 
@@ -78,6 +80,8 @@ class KernelCache:
     RAY_TRACE_REGISTRY: dict[str, str] = {
         "rk4":           "ray_trace_rk4",
         "rkdp8":         "ray_trace_rkdp8",
+        "verner98":      "ray_trace_verner98",
+        "rkn86":         "ray_trace_rkn86",
         "symplectic8":   "ray_trace_symplectic8",
     }
 
@@ -85,6 +89,8 @@ class KernelCache:
     METHOD_LABELS: dict[str, str] = {
         "rk4":           "Runge–Kutta 4th order",
         "rkdp8":         "Dormand–Prince 8(7) adaptive",
+        "verner98":      "Verner 9(8) adaptive (16-stage FSAL)",
+        "rkn86":         "Runge–Kutta–Nyström 8(6) adaptive",
         "symplectic8":   "Tao–Kahan-Li 8th–10th symplectic (ASΦ + Wisdom corrector)",
     }
 

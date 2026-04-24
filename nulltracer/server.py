@@ -44,7 +44,7 @@ class RenderRequest(BaseModel):
     obs_dist: float = 40.0
     width: int = 1280
     height: int = 720
-    method: str = "rkdp8"
+    method: str = "rkn86"
     steps: Optional[int] = 2000
     step_size: float = 0.08
     bg_mode: int = 1
@@ -70,7 +70,7 @@ class RayRequest(BaseModel):
     inclination: float = 80.0
     fov: float = 8.0
     obs_dist: float = 40.0
-    method: str = "rkdp8"
+    method: str = "rkn86"
     steps: Optional[int] = 2000
     step_size: float = 0.08
     mode: str = "pixel"

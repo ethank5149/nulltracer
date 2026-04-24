@@ -206,4 +206,33 @@ __device__ double phi_var_physical_step(double h, double Phi,
 }
 
 
+/* -- Verner 9(8) initial step estimate ----------------------- */
+
+/* Initial step size for Verner 9(8).  Subsequent steps
+ * are controlled by the embedded 8th-order error estimator.
+ * Larger initial step than RKDP8 because the 9th-order method
+ * tolerates bigger steps without accuracy loss. */
+__device__ double adaptive_step_verner98_initial(double r, double rp,
+                                                 double step_size, double obs_dist,
+                                                 double h_min, double h_max) {
+    double h_scaled = step_size * (obs_dist / 30.0) * 1.1;
+    double he = h_scaled * fmin(fmax((r - rp) * 0.4, 0.04), 1.0);
+    return fmin(fmax(he, h_min), h_max);
+}
+
+
+/* -- RKN 8(6) initial step estimate -------------------------- */
+
+/* Initial step size for the Runge-Kutta-Nystr??m 8(6) method.
+ * The Nystr??m structure is slightly more tolerant of larger
+ * initial steps since position updates have O(h??) accuracy. */
+__device__ double adaptive_step_rkn86_initial(double r, double rp,
+                                              double step_size, double obs_dist,
+                                              double h_min, double h_max) {
+    double h_scaled = step_size * (obs_dist / 30.0);
+    double he = h_scaled * fmin(fmax((r - rp) * 0.45, 0.04), 1.0);
+    return fmin(fmax(he, h_min), h_max);
+}
+
+
 #endif /* ADAPTIVE_STEP_CU */

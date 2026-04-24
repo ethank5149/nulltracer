@@ -1239,4 +1239,100 @@ __device__ void accumulate_volume_emission(
 }
 
 
+/* ============================================================
+ *  geoAccel ??? Second-order acceleration for RKN integrators
+ *
+ *  For Runge-Kutta-Nystr??m methods the geodesic equations are
+ *  written in second-order form:
+ *    q'' = a(q, q')
+ *
+ *  where q = (r, ??) are the non-cyclic coordinates and q' are
+ *  their affine-parameter derivatives (velocities).
+ *
+ *  Given positions (r, ??) and velocities (vr, vth), this
+ *  function:
+ *    1. Recovers momenta:  p_r = (??/??) v_r,  p_?? = ?? v_??
+ *    2. Computes the force dp/d?? via metric derivatives
+ *    3. Converts to accelerations:
+ *         a_r  = d(g^rr??p_r)/d??
+ *         a_??  = d(g^?????p_??)/d??
+ *         v_??  = g^?????b + g^t??   (for ??-accumulation)
+ *
+ *  Cost: ~130 FLOPs (comparable to geoRHS, but allows
+ *  the RKN method to use fewer stages for the same order).
+ * ============================================================ */
+__device__ void geoAccel(
+    double r, double th, double vr, double vth,
+    double a, double b, double Q2,
+    double *ar, double *ath, double *vphi
+) {
+    double sth = sin(th), cth = cos(th);
+    double s2 = sth * sth + S2_EPS;
+    double c2 = cth * cth;
+    double a2 = a * a;
+    double r2 = r * r;
+    double sig = r2 + a2 * c2;
+    double del = r2 - 2.0 * r + a2 + Q2;
+    double sdel = fmax(del, 1e-14);
+    double rpa2 = r2 + a2;
+    double w = 2.0 * r - Q2;
+    double A_ = rpa2 * rpa2 - sdel * a2 * s2;
+    double isig = 1.0 / sig;
+    double SD = sig * sdel;
+    double iSD = 1.0 / SD;
+    double is2 = 1.0 / s2;
+
+    /* Inverse metric components */
+    double grr = sdel * isig;             /* g^rr = ??/?? */
+    double gthth = isig;                  /* g^???? = 1/?? */
+    double gff = (sig - w) * iSD * is2;   /* g^???? */
+    double gtf = -a * w * iSD;            /* g^t?? */
+
+    /* Recover momenta from velocities: p = g_{????} v^?? */
+    double igrr = sig / sdel;             /* 1/g^rr = ??/?? */
+    double igthth = sig;                  /* 1/g^???? = ?? */
+    double pr  = igrr * vr;              /* p_r  = (??/??) v_r */
+    double pth = igthth * vth;           /* p_?? = ?? v_?? */
+
+    /* d??/d?? for ??-tracking */
+    *vphi = gff * b - gtf;
+
+    /* -- ???/???r metric derivatives (identical to geoForce) -- */
+    double dsig_r = 2.0 * r;
+    double ddel_r = 2.0 * r - 2.0;
+    double dA_r = 4.0 * r * rpa2 - ddel_r * a2 * s2;
+    double dSD_r = dsig_r * sdel + sig * ddel_r;
+    double dgtt_r = -(dA_r * SD - A_ * dSD_r) / (SD * SD);
+    double dgtf_r = -a * (2.0 * SD - w * dSD_r) / (SD * SD);
+    double dgrr_r = (ddel_r * sig - sdel * dsig_r) / (sig * sig);
+    double dgthth_r = -dsig_r * isig * isig;
+    double num_ff = sig - w;
+    double den_ff = SD * s2;
+    double dgff_r = ((dsig_r - 2.0) * den_ff - num_ff * dSD_r * s2) / (den_ff * den_ff);
+    double dpr = -0.5 * (dgtt_r - 2.0 * b * dgtf_r + dgrr_r * pr * pr
+                         + dgthth_r * pth * pth + dgff_r * b * b);
+
+    /* -- ???/????? metric derivatives (identical to geoForce) -- */
+    double dsig_th = -2.0 * a2 * sth * cth;
+    double ds2_th = 2.0 * sth * cth;
+    double dA_th = -sdel * a2 * ds2_th;
+    double dSD_th = dsig_th * sdel;
+    double dgtt_th = -(dA_th * SD - A_ * dSD_th) / (SD * SD);
+    double dgtf_th = a * w * dSD_th / (SD * SD);
+    double dgrr_th = -sdel * dsig_th / (sig * sig);
+    double dgthth_th = -dsig_th * isig * isig;
+    double dgff_th = (dsig_th * den_ff - num_ff * (dsig_th * sdel * s2 + SD * ds2_th))
+                     / (den_ff * den_ff);
+    double dpth = -0.5 * (dgtt_th - 2.0 * b * dgtf_th + dgrr_th * pr * pr
+                          + dgthth_th * pth * pth + dgff_th * b * b);
+
+    /* -- Convert force to acceleration --
+     *  a_r  = d(g^rr * p_r)/d?? = ???g^rr/???r * vr * p_r + ???g^rr/????? * vth * p_r + g^rr * dpr
+     *  a_?? = d(g^???? * p_??)/d?? = ???g^????/???r * vr * p_?? + ???g^????/????? * vth * p_?? + g^???? * dpth
+     */
+    *ar  = (dgrr_r * vr + dgrr_th * vth) * pr   + grr   * dpr;
+    *ath = (dgthth_r * vr + dgthth_th * vth) * pth + gthth * dpth;
+}
+
+
 #endif /* GEODESIC_BASE_CU */

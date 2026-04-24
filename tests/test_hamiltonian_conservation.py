@@ -21,7 +21,7 @@ import numpy as np
 SYMPLECTIC_METHODS = ["symplectic8"]
 
 # Non-symplectic integrators (looser conservation expected)
-NONSYMPLECTIC_METHODS = ["rk4", "rkdp8"]
+NONSYMPLECTIC_METHODS = ["rk4", "rkdp8", "verner98", "rkn86"]
 
 ALL_METHODS = NONSYMPLECTIC_METHODS + SYMPLECTIC_METHODS
 
@@ -34,6 +34,8 @@ def test_hamiltonian_conservation(method, cuda_renderer):
     tolerances = {
         "rk4": 1e-2,
         "rkdp8": 1e-4,
+        "verner98": 1e-6,
+        "rkn86": 1e-5,
         "symplectic8": 1e-6,
     }
     tol = tolerances.get(method, 1e-6)
@@ -90,6 +92,8 @@ def test_carter_constant_conservation(method, cuda_renderer):
     carter_tols = {
         "rk4":          5e-1,
         "rkdp8":        1e-1,
+        "verner98":     5e-3,
+        "rkn86":        1e-2,
         "symplectic8":  1e2,
     }
     tol = carter_tols.get(method, 1.0)

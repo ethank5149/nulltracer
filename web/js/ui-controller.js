@@ -28,19 +28,19 @@ function requestRender() {
 
 const presets = {
     low:    {method:'rk4',      steps:80,  stepSize:0.5,  obsDist:30, starLayers:1},
-    medium: {method:'rkdp8',    steps:200, stepSize:0.3,  obsDist:40, starLayers:3},
-    high:   {method:'rkdp8',    steps:180, stepSize:0.40, obsDist:50, starLayers:4},
-    ultra:  {method:'rkdp8',    steps:200, stepSize:0.45, obsDist:60, starLayers:4},
+    medium: {method:'rkn86',    steps:160, stepSize:0.3,  obsDist:40, starLayers:3},
+    high:   {method:'rkn86',    steps:140, stepSize:0.40, obsDist:50, starLayers:4},
+    ultra:  {method:'verner98', steps:120, stepSize:0.45, obsDist:60, starLayers:4},
 };
 
 export function refreshLabels() {
-    const integLabels = {rk4:'Runge-Kutta 4th', rkdp8:'Dormand-Prince RK8', tao_yoshida4:'Tao-Yoshida 4th', tao_yoshida6:'Tao-Yoshida 6th', tao_kahan_li8:'Tao-Kahan-Li 8th'};
+    const integLabels = {rk4:'Runge-Kutta 4th', rkdp8:'Dormand-Prince RK8', verner98:'Verner 9(8)', rkn86:'RKN 8(6) Nyström', tao_yoshida4:'Tao-Yoshida 4th', tao_yoshida6:'Tao-Yoshida 6th', tao_kahan_li8:'Tao-Kahan-Li 8th'};
     document.getElementById('integ-label').textContent = integLabels[stateRef.qMethod] || stateRef.qMethod;
     document.getElementById('steps-val').textContent = stateRef.qSteps;
     document.getElementById('stepsize-val').textContent = stateRef.qStepSize.toFixed(2);
     document.getElementById('obs-val').textContent = stateRef.qObsDist+' M';
     document.getElementById('starlayers-val').textContent = stateRef.qStarLayers;
-    document.getElementById('integrator-warn').style.display = (stateRef.qMethod!=='rkdp8') ? 'inline-block' : 'none';
+    document.getElementById('integrator-warn').style.display = (['rkdp8','verner98','rkn86'].indexOf(stateRef.qMethod)===-1) ? 'inline-block' : 'none';
 }
 
 function applyPreset(name) {

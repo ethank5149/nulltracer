@@ -96,6 +96,9 @@ def auto_steps(
     else:
         h_scaled = step_size * (obs_dist / 30.0) * 1.7
         h_max = 1.4 if method == "rk4" else 3.0
+        if method in ("verner98", "rkn86"):
+            # Higher-order adaptive methods need fewer steps
+            h_max = 4.0
         N = obs_dist / min(h_scaled, h_max) + 60.0 / step_size
         return max(int(N * safety), 200)
 

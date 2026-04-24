@@ -74,6 +74,8 @@ _KERNEL_REGISTRY = {
     "rk4_cks":  ("rk4_cks.cu",  "trace_rk4_cks"),
     "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
     "rkdp8_cks":("rkdp8_cks.cu","trace_rkdp8_cks"),
+    "verner98":    ("verner98.cu",    "trace_verner98"),
+    "rkn86":       ("rkn86.cu",       "trace_rkn86"),
     "symplectic8": ("symplectic8.cu", "trace_symplectic8"),
 }
 
@@ -83,6 +85,8 @@ _RAY_TRACE_REGISTRY = {
     "rk4_cks":      "ray_trace_rk4_cks",
     "rkdp8":        "ray_trace_rkdp8",
     "rkdp8_cks":    "ray_trace_rkdp8_cks",
+    "verner98":     "ray_trace_verner98",
+    "rkn86":        "ray_trace_rkn86",
     "symplectic8":  "ray_trace_symplectic8",
 }
 
@@ -116,9 +120,9 @@ class CudaRenderer:
             cuda_ver = cp.cuda.runtime.runtimeGetVersion()
             logger.info("CUDA runtime version: %d", cuda_ver)
 
-            # Pre-compile the default kernel (rkdp8)
-            self._get_kernel("rkdp8")
-            logger.info("Default kernel (rkdp8) pre-compiled")
+            # Pre-compile the default kernel (rkn86)
+            self._get_kernel("rkn86")
+            logger.info("Default kernel (rkn86) pre-compiled")
 
         except Exception as e:
             logger.error("CUDA initialization failed: %s", e, exc_info=True)
@@ -184,7 +188,7 @@ class CudaRenderer:
         if method in self._kernel_cache:
             return self._kernel_cache[method]
 
-        if method not in ['rk4', 'rkdp8', 'symplectic8']:
+        if method not in ['rk4', 'rkdp8', 'verner98', 'rkn86', 'symplectic8']:
             warnings.warn(
                 f"Integration method '{method}' is not recognized. "
                 "Use 'rk4', 'rkdp8', or 'symplectic8'.",
