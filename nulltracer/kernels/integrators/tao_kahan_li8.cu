@@ -64,20 +64,8 @@ void trace_tao_kahan_li8(const RenderParams *pp, unsigned char *output, const fl
 
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
-            double r_photon_sphere = 3.0;
-            if (a != 0.0) {
-                r_photon_sphere = 2.0 * (1.0 + cos(2.0/3.0 * acos(-a)));
-            }
-            double dist_to_photon_sphere = fabs(r - r_photon_sphere);
-            double adaptive_factor = 1.0;
-            if (dist_to_photon_sphere < 1.0) {
-                adaptive_factor = 0.1 + 0.9 * dist_to_photon_sphere;
-            }
-            double effective_step = p.step_size * adaptive_factor;
-            /* Adaptive step size (shared function) */
-            double he = adaptive_step_tao(r, rp, p.step_size, p.obs_dist);
-            // Cap he if needed
-            if (he > effective_step) he = effective_step;
+        /* Adaptive step size (shared function) */
+        double he = adaptive_step_tao(r, rp, p.step_size, p.obs_dist);
         double oldTh = th, oldR = r, oldPhi = phi;
 
         /* Tao + Kahan-Li 8th-order step (extended phase space) */

@@ -6,24 +6,41 @@ is conserved.
 
 Also verifies conservation of Carter's constant Q and angular momentum Lz.
 
-NOTE: These tests are currently SKIPPED due to CUDA kernel compilation errors
-in the nulltracer codebase (undefined identifiers "a", "b", "Q2" in kernels).
+For null geodesics, H = 0 exactly.  Symplectic integrators with Hamiltonian
+projection (projectHamiltonian / projectHamiltonianKS) algebraically reset
+p_r to enforce H = 0 at each step, so conservation should be near machine
+precision.  Non-symplectic integrators (RK4, RKDP8) will show drift.
 """
 
 import pytest
 import numpy as np
 
 
+# All symplectic integrators that should conserve H well
+SYMPLECTIC_METHODS = ["tao_kahan_li8", "tao_yoshida4", "tao_yoshida6"]
+
+# Non-symplectic integrators (looser conservation expected)
+NONSYMPLECTIC_METHODS = ["rk4", "rkdp8"]
+
+ALL_METHODS = NONSYMPLECTIC_METHODS + SYMPLECTIC_METHODS
+
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("method", ["rk4", "rkdp8", "tao_kahan_li8"])
+@pytest.mark.parametrize("method", ALL_METHODS)
 def test_hamiltonian_conservation(method, cuda_renderer):
     """Hamiltonian is conserved after 1000 steps for multiple rays."""
-    n_rays = 20  # Reduced for test speed; increase for production
+    n_rays = 20
+    # Tolerances reflect the physics of each integrator:
+    #   - Symplectic + Hamiltonian projection: H is algebraically reset
+    #     to 0 every step, so |ΔH| should be near machine epsilon.
+    #   - RKDP8: 8th-order with embedded error control, good conservation.
+    #   - RK4: 4th-order without projection, moderate energy drift expected.
     tolerances = {
-        "rk4": 1e-1,
-        "rkdp8": 1e-3,
-        "tao_kahan_li8": 1e9,
+        "rk4": 1e-2,
+        "rkdp8": 1e-4,
+        "tao_kahan_li8": 1e-6,
+        "tao_yoshida4": 1e-6,
+        "tao_yoshida6": 1e-6,
     }
     tol = tolerances.get(method, 1e-6)
 
@@ -42,7 +59,9 @@ def test_hamiltonian_conservation(method, cuda_renderer):
         )
         H_init = res["initial_state"].get("H", None)
         H_final = res["final_state"].get("H", None)
-        if H_init is not None and H_final is not None and abs(H_init) > 1e-15 and res["termination"]["reason"] not in ["horizon", "nan"]:
+        if (H_init is not None and H_final is not None
+                and abs(H_init) > 1e-15
+                and res["termination"]["reason"] not in ["horizon", "nan"]):
             h_differences.append(abs(H_final - H_init))
 
     if h_differences:
@@ -53,7 +72,7 @@ def test_hamiltonian_conservation(method, cuda_renderer):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("method", ["rk4", "rkdp8"])
+@pytest.mark.parametrize("method", ALL_METHODS)
 def test_carter_constant_conservation(method, cuda_renderer):
     """Carter's constant Q is conserved during integration."""
     from nulltracer.ray import trace_ray
@@ -73,18 +92,19 @@ def test_carter_constant_conservation(method, cuda_renderer):
         )
         Q_init = res["initial_state"].get("Q", None)
         Q_final = res["final_state"].get("Q", None)
-        if Q_init is not None and Q_final is not None and res["termination"]["reason"] not in ["horizon", "nan"]:
+        if (Q_init is not None and Q_final is not None
+                and res["termination"]["reason"] not in ["horizon", "nan"]):
             q_diffs.append(abs(Q_final - Q_init))
 
     if q_diffs:
         max_diff = max(q_diffs)
-        assert max_diff < 10.0, (
+        assert max_diff < 1e-2, (
             f"{method}: Carter constant not conserved. Max |ΔQ| = {max_diff:.2e}"
         )
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("method", ["rk4", "rkdp8"])
+@pytest.mark.parametrize("method", ALL_METHODS)
 def test_angular_momentum_conservation(method, cuda_renderer):
     """Angular momentum Lz is conserved during integration."""
     from nulltracer.ray import trace_ray
@@ -104,25 +124,30 @@ def test_angular_momentum_conservation(method, cuda_renderer):
         )
         Lz_init = res["initial_state"].get("Lz", None)
         Lz_final = res["final_state"].get("Lz", None)
-        if Lz_init is not None and Lz_final is not None and res["termination"]["reason"] not in ["horizon", "nan"]:
+        if (Lz_init is not None and Lz_final is not None
+                and res["termination"]["reason"] not in ["horizon", "nan"]):
             lz_diffs.append(abs(Lz_final - Lz_init))
 
     if lz_diffs:
         max_diff = max(lz_diffs)
-        assert max_diff < 10.0, (
+        assert max_diff < 1e-2, (
             f"{method}: Angular momentum not conserved. Max |ΔLz| = {max_diff:.2e}"
         )
 
 
 @pytest.mark.gpu
 def test_symplectic_conservation_tight(cuda_renderer):
-    """Symplectic integrator (tao_kahan_li8) has excellent conservation."""
+    """Symplectic integrator (tao_kahan_li8) has excellent conservation.
+
+    With Hamiltonian projection enforcing H = 0 at each step, the
+    relative Hamiltonian error should be near machine precision.
+    """
     from nulltracer.ray import trace_ray
     res = trace_ray(
         method="tao_kahan_li8",
         steps=2000,
         step_size=0.1,
-            mode="impact_parameter",
+        mode="impact_parameter",
         alpha=0.0,
         beta=5.0,
     )
@@ -131,6 +156,6 @@ def test_symplectic_conservation_tight(cuda_renderer):
 
     if H_init and H_final and abs(H_init) > 1e-15:
         relative_diff = abs(H_final / H_init - 1)
-        assert relative_diff < 1e-3, (
-            f"Symplectic integrator: |ΔH/H| = {relative_diff:.2e}, expected < 1e-12"
+        assert relative_diff < 1e-6, (
+            f"Symplectic integrator: |ΔH/H| = {relative_diff:.2e}, expected < 1e-6"
         )

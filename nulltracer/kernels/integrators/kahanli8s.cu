@@ -203,20 +203,6 @@ void trace_kahanli8s(const RenderParams *pp, unsigned char *output, const float 
 
     for (int i = 0; i < STEPS; i++) {
         if (done) break;
-            double r_photon_sphere = 3.0;
-            if (a != 0.0) {
-                r_photon_sphere = 2.0 * (1.0 + cos(2.0/3.0 * acos(-a)));
-            }
-            double dist_to_photon_sphere = fabs(r - r_photon_sphere);
-            double adaptive_factor = 1.0;
-            if (dist_to_photon_sphere < 1.0) {
-                adaptive_factor = 0.1 + 0.9 * dist_to_photon_sphere;
-            }
-            double effective_step = p.step_size * adaptive_factor;
-            /* Adaptive step size (shared function) */
-            double he = phi_var_physical_step(h_phi, Phi, r, th, pth, a, p.obs_dist);
-            // Cap he if needed
-            if (he > effective_step) he = effective_step;
 
         /* Save state for disk crossing interpolation */
         double oldR = r, oldTh = th, oldPhi = phi;

@@ -68,6 +68,9 @@ nulltracer = ["kernels/*.cu", "kernels/integrators/*.cu"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "gpu: marks tests requiring a CUDA GPU (deselect with '-m \"not gpu\"')",
+]
 
 [tool.ruff]
 line-length = 120
