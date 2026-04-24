@@ -10,13 +10,13 @@ import logging
 import math
 import os
 import time as _time
+import warnings
 from pathlib import Path
 from typing import Optional
 
 import cupy as cp
 import numpy as np
 
-from .bloom import apply_bloom
 from .isco import isco
 from ._params import RenderParams
 from ._kernel_utils import resolve_includes
@@ -192,6 +192,14 @@ class CudaRenderer:
         if method in self._kernel_cache:
             return self._kernel_cache[method]
 
+        if method not in ['rk4', 'rkdp8']:
+            warnings.warn(
+                f"Integration method '{method}' is deprecated and may be removed in a future version. "
+                "Use 'rk4' or 'rkdp8' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+
         logger.info("Compiling CUDA kernel for method: %s", method)
         source, entry_point = self._load_kernel_source(method)
 
@@ -284,7 +292,6 @@ class CudaRenderer:
             disk_alpha=float(params.get("disk_alpha", 0.95)),
             disk_max_crossings=float(params.get("disk_max_crossings", 5)),
             disk_mode=float(params.get("disk_mode", 1)),
-            bloom_enabled=1.0 if params.get("bloom_enabled", False) else 0.0,
             aa_samples=float(params.get("aa_samples", 1)),
             debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
             sky_width=0.0,
@@ -334,15 +341,7 @@ class CudaRenderer:
         pixel_array = h_output.reshape(height, width, 3)
         pixel_array = np.flipud(pixel_array)
 
-        # Apply bloom post-processing if enabled
-        if params.get("bloom_enabled", False):
-            pixel_array = apply_bloom(
-                pixel_array,
-                fov=float(params.get("fov", 8.0)),
-                bloom_radius=float(params.get("bloom_radius", 1.0)),
-                width=width,
-                obs_dist=obs_dist,
-            )
+
 
         t_wall_end = _time.monotonic()
         total_ms = (t_wall_end - t_wall_start) * 1000.0
@@ -514,7 +513,6 @@ class CudaRenderer:
             disk_alpha=float(params.get("disk_alpha", 0.95)),
             disk_max_crossings=float(params.get("disk_max_crossings", 5)),
             disk_mode=float(params.get("disk_mode", 1)),
-            bloom_enabled=0.0,  # Not used for single-ray tracing
             debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
             sky_width=0.0,
             sky_height=0.0,

@@ -60,8 +60,6 @@ class RenderRequest(BaseModel):
     disk_max_crossings: int = 8
     disk_outer: float = 50.0
     aa_samples: int = 1
-    bloom_enabled: bool = False
-    bloom_radius: float = 1.0
     qed_coupling: float = 0.0
     hawking_boost: float = 0.0
     format: str = "jpeg" # "jpeg" or "webp"

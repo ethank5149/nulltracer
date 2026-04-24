@@ -62,7 +62,6 @@ struct RenderParams {
     double disk_alpha;          /* base opacity per disk crossing (0.0???1.0) */
     double disk_max_crossings;  /* max disk crossings to accumulate (as double, cast to int) */
     double disk_mode;           /* 1=Thin Novikov-Thorne, 2=Thick RIAF */
-    double bloom_enabled;       /* 1.0 = output float32 linear for bloom, 0.0 = normal uint8 sRGB */
     double debug_trace;         /* debug tracing enabled flag */
     double aa_samples;          /* stochastic multi-sample anti-aliasing count */
 

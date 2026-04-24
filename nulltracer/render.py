@@ -14,6 +14,7 @@ Both dispatch to the same production CUDA kernels in ``kernels/``.
 from __future__ import annotations
 
 import math
+import warnings
 import time as _time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -23,7 +24,6 @@ import numpy as np
 
 from ._kernel_utils import KernelCache
 from ._params import RenderParams
-from .bloom import apply_bloom
 from .isco import isco, isco_kerr
 from .skymap import get_skymap
 
@@ -137,8 +137,6 @@ def render_frame(
     disk_max_crossings: int = 5,
     disk_outer: float = 50.0,
     aa_samples: int = 1,
-    bloom_enabled: bool = False,
-    bloom_radius: float = 1.0,
 ) -> tuple[np.ndarray, RenderInfo]:
     """Render a black-hole image using the production visual pipeline.
 
@@ -163,7 +161,7 @@ def render_frame(
     step_size : float
         Base affine-parameter step size.
     method : str
-        Integration method (see :func:`available_methods`).
+        Integration method (see :func:`available_methods`). Note: methods other than 'rk4' and 'rkdp8' are deprecated.
     show_disk : bool
         Render the accretion disk.
     bg_mode : int
@@ -192,10 +190,7 @@ def render_frame(
         jitters within the pixel and averages the result. 4-8 samples remove
         the visible staircase on lensed arcs at the cost of a proportional
         linear slow-down.
-    bloom_enabled : bool
-        Apply Airy-disk bloom post-processing.
-    bloom_radius : float
-        Bloom radius multiplier.
+
 
     Returns
     -------
@@ -203,6 +198,14 @@ def render_frame(
         ``image`` is an ``(H, W, 3)`` uint8 sRGB NumPy array.
         ``info`` is a :class:`RenderInfo` dataclass.
     """
+    if method not in ['rk4', 'rkdp8']:
+        warnings.warn(
+            f"Integration method '{method}' is deprecated and may be removed in a future version. "
+            "Use 'rk4' or 'rkdp8' instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
     params = {
         "spin": spin, "charge": charge, "inclination": inclination_deg,
         "width": width, "height": height, "fov": fov, "obs_dist": obs_dist,
@@ -211,8 +214,7 @@ def render_frame(
         "disk_temp": disk_temp, "doppler_boost": doppler_boost, "phi0": phi0,
         "srgb_output": srgb_output, "disk_alpha": disk_alpha,
         "disk_max_crossings": disk_max_crossings, "disk_outer": disk_outer,
-        "aa_samples": aa_samples, "bloom_enabled": bloom_enabled,
-        "bloom_radius": bloom_radius
+        "aa_samples": aa_samples,
     }
     
     from .renderer import CudaRenderer

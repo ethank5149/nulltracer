@@ -15,7 +15,6 @@ from .isco import isco_kerr, isco_kn, isco
 
 
 _LAZY_IMPORTS = {
-    "apply_bloom": ".bloom",
     "extract_shadow_metrics": ".eht_validation",
     "CudaRenderer": ".renderer",
     "RenderParams": ".renderer",
@@ -52,7 +51,6 @@ __all__ = [
     "isco_kerr",
     "isco_kn",
     "isco",
-    "apply_bloom",
     "extract_shadow_metrics",
     "CudaRenderer",
     "RenderParams",
