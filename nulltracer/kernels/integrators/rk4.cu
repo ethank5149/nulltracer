@@ -16,7 +16,7 @@
 
 
 extern "C" __global__
-void trace_rk4(const RenderParams *pp, unsigned char *output, const float *skymap) {
+void trace_rk4(const RenderParams *pp, unsigned char *output, const float *skymap, unsigned int *progress_counter) {
     const RenderParams &p = *pp;
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -27,9 +27,12 @@ void trace_rk4(const RenderParams *pp, unsigned char *output, const float *skyma
     float alpha, beta;
     if (!initRay(ix, iy, p, &r, &th, &phi, &pr, &pth, &b, &rp, &alpha, &beta)) {
         int idx = (iy * W + ix) * 3;
-        output[idx + 0] = 0;
-        output[idx + 1] = 0;
-        output[idx + 2] = 0;
+        if (idx < W * H * 3) {
+            output[idx + 0] = 0;
+            output[idx + 1] = 0;
+            output[idx + 2] = 0;
+        }
+        atomicAdd(progress_counter, 1);
         return;
     }
 
@@ -159,4 +162,5 @@ void trace_rk4(const RenderParams *pp, unsigned char *output, const float *skyma
     output[idx + 0] = (unsigned char)(fminf(fmaxf(cr * 255.0f, 0.0f), 255.0f));
     output[idx + 1] = (unsigned char)(fminf(fmaxf(cg * 255.0f, 0.0f), 255.0f));
     output[idx + 2] = (unsigned char)(fminf(fmaxf(cb * 255.0f, 0.0f), 255.0f));
+    atomicAdd(progress_counter, 1);
 }

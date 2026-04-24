@@ -6,7 +6,7 @@
 #include "../disk.cu"
 
 extern "C" __global__
-void trace_rkdp8_cks(const RenderParams *pp, unsigned char *output, const float *skymap) {
+void trace_rkdp8_cks(const RenderParams *pp, unsigned char *output, const float *skymap, unsigned int *progress_counter) {
     const RenderParams &p = *pp;
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -21,6 +21,7 @@ void trace_rkdp8_cks(const RenderParams *pp, unsigned char *output, const float 
     output[idx + 0] = (unsigned char)255;
     output[idx + 1] = (unsigned char)0;
     output[idx + 2] = (unsigned char)0;
+    atomicAdd(progress_counter, 1);
 }
 
 extern "C" __global__

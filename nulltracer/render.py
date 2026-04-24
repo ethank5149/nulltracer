@@ -21,6 +21,7 @@ from typing import Optional
 
 import cupy as cp
 import numpy as np
+import tqdm
 
 from ._kernel_utils import KernelCache
 from ._params import RenderParams
@@ -220,8 +221,14 @@ def render_frame(
     from .renderer import CudaRenderer
     renderer = CudaRenderer()
     renderer.initialize()
-    
-    res = renderer.render_frame_timed(params)
+
+    total_pixels = width * height
+    with tqdm.tqdm(total=total_pixels, desc="Rendering frame", unit="px", unit_scale=True) as pbar:
+        def progress_update(pixels_done):
+            pbar.update(pixels_done)
+        
+        res = renderer.render_frame_timed(params, progress_callback=progress_update)
+
     img = np.frombuffer(res["raw_rgb"], dtype=np.uint8).reshape((height, width, 3))
     
     info = RenderInfo(

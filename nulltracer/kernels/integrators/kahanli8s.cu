@@ -108,7 +108,7 @@ __device__ __forceinline__ void kahan_add(
 /* -- Main kernel entry point -------------------------------- */
 
 extern "C" __global__
-void trace_kahanli8s(const RenderParams *pp, unsigned char *output, const float *skymap) {
+void trace_kahanli8s(const RenderParams *pp, unsigned char *output, const float *skymap, unsigned int *progress_counter) {
     const RenderParams &p = *pp;
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -443,4 +443,5 @@ void trace_kahanli8s(const RenderParams *pp, unsigned char *output, const float 
     output[idx + 0] = (unsigned char)(fminf(fmaxf(cr * 255.0f, 0.0f), 255.0f));
     output[idx + 1] = (unsigned char)(fminf(fmaxf(cg * 255.0f, 0.0f), 255.0f));
     output[idx + 2] = (unsigned char)(fminf(fmaxf(cb * 255.0f, 0.0f), 255.0f));
+    atomicAdd(progress_counter, 1);
 }

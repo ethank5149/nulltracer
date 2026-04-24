@@ -229,7 +229,7 @@ class CudaRenderer:
         """
         return self.render_frame_timed(params)["raw_rgb"]
 
-    def render_frame_timed(self, params: dict) -> dict:
+    def render_frame_timed(self, params: dict, progress_callback=None) -> dict:
         """Render a single frame with precise CUDA event timing.
 
         Like render_frame() but returns a dict with raw RGB bytes and
@@ -312,26 +312,45 @@ class CudaRenderer:
         # Track GPU memory allocated for this render
         gpu_mem_alloc = len(params_bytes) + output_size
 
-        # Launch kernel with CUDA event timing
+        # Launch kernel with CUDA event timing on a non-blocking stream
         block_size = (16, 16)
         grid_size = (
             (width + block_size[0] - 1) // block_size[0],
             (height + block_size[1] - 1) // block_size[1],
         )
 
+        d_progress_counter = cp.zeros(1, dtype=cp.uint32)
+        stream = cp.cuda.Stream(non_blocking=True)
         start_event = cp.cuda.Event()
         end_event = cp.cuda.Event()
 
-        start_event.record()
-        d_skymap = cp.zeros(1, dtype=cp.float32)
-        kernel(
-            grid_size,
-            block_size,
-            (d_params, d_output, d_skymap),
-        )
-        end_event.record()
-        end_event.synchronize()
+        start_event.record()  # on default stream
+        with stream:
+            d_skymap = cp.zeros(1, dtype=cp.float32)
+            kernel(
+                grid_size,
+                block_size,
+                (d_params, d_output, d_skymap, d_progress_counter),
+            )
+        end_event.record(stream)
 
+        if progress_callback:
+            total_pixels = width * height
+            last_reported_progress = 0
+            while not stream.done:
+                current_progress = d_progress_counter.get().item()
+                if current_progress > last_reported_progress:
+                    progress_callback(current_progress - last_reported_progress)
+                    last_reported_progress = current_progress
+                _time.sleep(0.01)  # poll every 10ms
+            
+            # Final update to ensure 100% completion
+            stream.synchronize()
+            final_progress = d_progress_counter.get().item()
+            if final_progress > last_reported_progress:
+                progress_callback(final_progress - last_reported_progress)
+
+        end_event.synchronize()
         kernel_ms = cp.cuda.get_elapsed_time(start_event, end_event)
 
         # Copy to host
