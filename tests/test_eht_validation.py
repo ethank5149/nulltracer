@@ -101,10 +101,10 @@ def test_schwarzschild_render_structure():
     metrics = extract_shadow_metrics(gray, fov_deg=12.0, threshold=0.3)
 
     if "error" not in metrics:
-        # Check that we get a reasonable diameter (between 8 and 30 M)
+        # Check that we get a reasonable diameter (Schwarzschild should be 2*3*sqrt(3) ~= 10.39 M)
         diameter = metrics.get("diameter_M", 0)
-        assert 8.0 < diameter < 30.0, (
-            f"Shadow diameter {diameter:.2f} outside expected range"
+        assert abs(diameter - 10.39) < 2.0, (
+            f"Shadow diameter {diameter:.2f} M outside expected range around 10.39 M"
         )
         # Should be nearly circular (circularity < 0.2)
         assert metrics.get("circularity", 1.0) < 0.2, (

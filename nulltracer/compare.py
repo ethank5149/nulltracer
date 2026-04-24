@@ -203,9 +203,13 @@ def fit_ellipse_to_shadow(
             "centroid_offset_M": 0.0,
         }
 
-    # Convert to impact-parameter space (centred on image)
-    cx = (xs - img_size / 2.0) * scale
-    cy = (ys - img_size / 2.0) * scale
+    # The shadow mask is boolean: True for shadow, False otherwise.
+    # The kernel Maps ux in [-1, 1] to impact parameter alpha = ux * fov * aspect
+    # Here the img_size is assumed square, so aspect = 1.
+    # Thus the field of view mapping is from -fov to +fov in M.
+    # Since we want impact parameter, cx = (xs - img_size / 2.0) / (img_size / 2.0) * fov
+    cx = (xs - img_size / 2.0) / (img_size / 2.0) * fov
+    cy = (ys - img_size / 2.0) / (img_size / 2.0) * fov
 
     x_extent = cx.max() - cx.min()
     y_extent = cy.max() - cy.min()
