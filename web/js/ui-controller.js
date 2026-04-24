@@ -80,6 +80,8 @@ export function initUI(state) {
     });
     document.getElementById('incl').addEventListener('input', function(){ stateRef.incl=+this.value; document.getElementById('incl-val').innerHTML='&theta; = '+stateRef.incl.toFixed(1)+'&deg;'; requestRender(); });
     document.getElementById('temp').addEventListener('input', function(){ stateRef.diskTemp=+this.value; document.getElementById('temp-val').textContent=stateRef.diskTemp.toFixed(2); requestRender(); });
+    document.getElementById('qed-coupling').addEventListener('input', function(){ stateRef.qedCoupling=+this.value; document.getElementById('qed-val').textContent=stateRef.qedCoupling.toFixed(2); requestRender(); });
+    document.getElementById('hawking-boost').addEventListener('input', function(){ stateRef.hawkingBoost=+this.value; document.getElementById('hawking-val').textContent=stateRef.hawkingBoost; requestRender(); });
     document.getElementById('disk-alpha').addEventListener('input', function(){ stateRef.diskAlpha=+this.value; document.getElementById('disk-alpha-val').textContent=stateRef.diskAlpha.toFixed(2); requestRender(); });
     document.getElementById('disk-max-crossings').addEventListener('input', function(){ stateRef.diskMaxCrossings=+this.value; document.getElementById('disk-max-crossings-val').textContent=stateRef.diskMaxCrossings; requestRender(); });
     document.getElementById('btn-disk').addEventListener('click', function(){ stateRef.showDisk=stateRef.showDisk>0.5?0:1; this.classList.toggle('active',stateRef.showDisk>0.5); requestRender(); });
@@ -234,6 +236,8 @@ const SCENE_PARAM_MAP = {
     disk_temp:          { state: 'diskTemp',         slider: 'temp',              label: 'temp-val',              fmt: v => v.toFixed(2) },
     disk_alpha:         { state: 'diskAlpha',        slider: 'disk-alpha',        label: 'disk-alpha-val',        fmt: v => v.toFixed(2) },
     disk_max_crossings: { state: 'diskMaxCrossings', slider: 'disk-max-crossings',label: 'disk-max-crossings-val',fmt: v => '' + v },
+    qed_coupling:       { state: 'qedCoupling',      slider: 'qed-coupling',      label: 'qed-val',               fmt: v => v.toFixed(2) },
+    hawking_boost:      { state: 'hawkingBoost',     slider: 'hawking-boost',     label: 'hawking-val',           fmt: v => '' + v },
     srgb_output:        { state: 'srgbOutput',       toggle: 'btn-srgb' },
     bloom_enabled:      { state: 'bloomEnabled',     toggle: 'btn-bloom' },
     bloom_radius:       { state: 'bloomRadius',      slider: 'bloom-radius',      label: 'bloom-radius-val',      fmt: v => v.toFixed(1) },
@@ -339,6 +343,8 @@ async function saveScene(name) {
         srgb_output: !!stateRef.srgbOutput,
         disk_alpha: stateRef.diskAlpha,
         disk_max_crossings: stateRef.diskMaxCrossings,
+        qed_coupling: stateRef.qedCoupling,
+        hawking_boost: stateRef.hawkingBoost,
         bloom_enabled: !!stateRef.bloomEnabled,
         bloom_radius: stateRef.bloomRadius,
     };

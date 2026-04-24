@@ -47,7 +47,7 @@ def resolve_includes(source: str, base_dir: Path) -> str:
             raise FileNotFoundError(
                 f"Include not found: {rel} (resolved to {absp})"
             )
-        text = absp.read_text()
+        text = absp.read_text(encoding='utf-8')
         return _INCLUDE_RE.sub(lambda m: _replace(m, absp.parent), text)
 
     return _INCLUDE_RE.sub(lambda m: _replace(m, base_dir), source)

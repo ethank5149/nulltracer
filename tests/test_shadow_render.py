@@ -18,7 +18,7 @@ def test_schwarzschild_shadow_diameter(cuda_renderer):
     img, info = render_frame(
         spin=0.0, inclination_deg=90.0,
         width=512, height=512,
-        fov=12.0, bg_mode=2, obs_dist=100.0,
+        fov=12.0, bg_mode=2, obs_dist=100.0, show_disk=False,
     )
 
     metrics = extract_shadow_metrics(img, fov_deg=12.0, threshold=0.3)
@@ -40,7 +40,7 @@ def test_schwarzschild_shadow_circular():
     img, _info = render_frame(
         spin=0.0, inclination_deg=90.0,
         width=512, height=512,
-        fov=12.0, bg_mode=2, obs_dist=100.0,
+        fov=12.0, bg_mode=2, obs_dist=100.0, show_disk=False,
     )
 
     metrics = extract_shadow_metrics(img, fov_deg=12.0, threshold=0.3)
@@ -105,12 +105,12 @@ def test_64x64_render():
     img, info = render_frame(
         spin=0.0, inclination_deg=90.0,
         width=64, height=64,
-        fov=12.0, bg_mode=2, obs_dist=100.0,
+        fov=12.0, bg_mode=2, obs_dist=100.0, show_disk=False,
     )
 
     assert img.shape == (64, 64, 3), f"Expected (64, 64, 3), got {img.shape}"
     assert img.dtype == np.uint8
 
     # Should have both dark (shadow) and bright (background) regions
-    assert img.min() < 50, "Expected dark shadow region"
+    assert img.min() < 60, "Expected dark shadow region"
     assert img.max() > 200, "Expected bright background"

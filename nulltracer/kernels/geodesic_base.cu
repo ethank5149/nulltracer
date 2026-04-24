@@ -69,8 +69,33 @@ struct RenderParams {
     /* Skymap texture (equirectangular projection) */
     double sky_width;           /* skymap pixel width (0 = no skymap, use procedural) */
     double sky_height;          /* skymap pixel height */
+    double qed_coupling;      /* QED vacuum polarization strength (0 = off, physical  5.2e-5) */
+    double hawking_boost;     /* Hawking radiation visual amplification (0 = off) */
 };
 
+/* ============================================================
+ * QED vacuum polarization correction to photon effective potential
+ *
+ * Modifies the effective potential V_eff(r) for null geodesics
+ * by the Drummond-Hathrell (1980) one-loop correction.
+ *
+ * qed_coupling: dimensionless parameter controlling the strength
+ *   of the correction. Physical value  /(45)  5.2e-5 but
+ *   can be amplified for visualization. Set to 0 to disable.
+ * ============================================================ */
+
+__device__ double qed_potential_correction(double r, double a, double qed_coupling) {
+    if (qed_coupling < 1e-15) return 0.0;
+    
+    // Kretschner scalar for Kerr at equator: K = 48M/r  (1 - 15acos/r)
+    // At  = /2 (equator): K = 48/r (in M=1 units)
+    double r6 = r * r * r * r * r * r;
+    double K = 48.0 / r6;
+    
+    // Correction to effective potential: V = qed_coupling  K  r
+    // This shifts the unstable circular orbit inward slightly
+    return qed_coupling * K * r * r;
+}
 
 /* -- Kerr-Newman geodesic RHS (double precision) ------------ */
 

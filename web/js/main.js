@@ -34,6 +34,8 @@ const state = {
     diskMaxCrossings: 5,
     bloomEnabled: false,
     bloomRadius: 1.0,
+    qedCoupling: 0.0,
+    hawkingBoost: 0.0,
 };
 
 // ============================================================

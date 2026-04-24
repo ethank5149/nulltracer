@@ -45,8 +45,8 @@ class RenderRequest(BaseModel):
     width: int = 1280
     height: int = 720
     method: str = "rkdp8"
-    steps: Optional[int] = None
-    step_size: float = 0.30
+    steps: Optional[int] = 2000
+    step_size: float = 0.08
     bg_mode: int = 1
     show_disk: bool = True
     disk_mode: int = 1
@@ -57,11 +57,13 @@ class RenderRequest(BaseModel):
     phi0: float = 0.0
     srgb_output: bool = True
     disk_alpha: float = 0.95
-    disk_max_crossings: int = 5
+    disk_max_crossings: int = 8
     disk_outer: float = 50.0
     aa_samples: int = 1
     bloom_enabled: bool = False
     bloom_radius: float = 1.0
+    qed_coupling: float = 0.0
+    hawking_boost: float = 0.0
     format: str = "jpeg" # "jpeg" or "webp"
 
 class RayRequest(BaseModel):
@@ -71,8 +73,8 @@ class RayRequest(BaseModel):
     fov: float = 8.0
     obs_dist: float = 40.0
     method: str = "rkdp8"
-    steps: Optional[int] = None
-    step_size: float = 0.30
+    steps: Optional[int] = 2000
+    step_size: float = 0.08
     mode: str = "pixel"
     ix: Optional[int] = None
     iy: Optional[int] = None

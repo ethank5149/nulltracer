@@ -259,10 +259,7 @@ class CudaRenderer:
         obs_dist = float(params.get("obs_dist", 40))
         step_size = float(params.get("step_size", 0.30))
         inclination_deg = _resolve_inclination(params)
-        steps = _resolve_steps(
-            params, spin=spin, charge=charge, method=method,
-            obs_dist=obs_dist, step_size=step_size,
-        )
+        steps = int(params.get("steps", 2000))
         rp = RenderParams(
             width=width,
             height=height,
@@ -276,7 +273,7 @@ class CudaRenderer:
             obs_dist=obs_dist,
             esc_radius=obs_dist + 12.0,
             disk_outer=50.0,
-            step_size=step_size,
+            step_size=float(params.get("step_size", 0.08)),
             bg_mode=int(params.get("bg_mode", 1)),
             star_layers=int(params.get("star_layers", 3)),
             show_disk=1 if params.get("show_disk", True) else 0,
@@ -292,6 +289,8 @@ class CudaRenderer:
             debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
             sky_width=0.0,
             sky_height=0.0,
+            qed_coupling=float(params.get("qed_coupling", 0.0)),
+            hawking_boost=float(params.get("hawking_boost", 0.0)),
         )
 
         # Copy params struct to GPU as a byte array
@@ -489,10 +488,7 @@ class CudaRenderer:
         width = params.get("width", 320)
         height = params.get("height", 180)
         inclination_deg = _resolve_inclination(params)
-        steps = _resolve_steps(
-            params, spin=spin, charge=charge, method=method,
-            obs_dist=obs_dist, step_size=step_size,
-        )
+        steps = int(params.get("steps", 2000))
 
         rp = RenderParams(
             width=width,
@@ -507,7 +503,7 @@ class CudaRenderer:
             obs_dist=obs_dist,
             esc_radius=obs_dist + 12.0,
             disk_outer=50.0,
-            step_size=step_size,
+            step_size=float(params.get("step_size", 0.08)),
             bg_mode=0,  # Not used for ray tracing
             star_layers=1,  # Not used for ray tracing
             show_disk=1,  # Always detect disk crossings
@@ -522,6 +518,8 @@ class CudaRenderer:
             debug_trace=1.0 if params.get("debug_trace", False) else 0.0,
             sky_width=0.0,
             sky_height=0.0,
+            qed_coupling=float(params.get("qed_coupling", 0.0)),
+            hawking_boost=float(params.get("hawking_boost", 0.0)),
         )
 
         # Copy params struct to GPU

@@ -92,7 +92,7 @@ def test_schwarzschild_render_structure():
         fov=12.0, obs_dist=100,
         step_size=0.3, method="rkdp8",
         aa_samples=1,
-        bg_mode=2, star_layers=0,
+        bg_mode=2, star_layers=0, show_disk=False,
     )
 
     gray = img.mean(axis=2).astype(np.float32) / 255.0
@@ -124,7 +124,7 @@ def test_kerr_render_asymmetry():
         fov=10.0, obs_dist=100,
         step_size=0.25, method="rkdp8",
         aa_samples=1,
-        bg_mode=2, star_layers=0,
+        bg_mode=2, star_layers=0, show_disk=False,
     )
 
     gray = img.mean(axis=2).astype(np.float32) / 255.0

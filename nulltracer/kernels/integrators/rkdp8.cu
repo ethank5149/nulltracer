@@ -68,6 +68,19 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
 
         for (int i = 0; i < STEPS; i++) {
             if (done) break;
+            double r_photon_sphere = 3.0;
+            if (a != 0.0) {
+                r_photon_sphere = 2.0 * (1.0 + cos(2.0/3.0 * acos(-a)));
+            }
+            double dist_to_photon_sphere = fabs(r - r_photon_sphere);
+            double adaptive_factor = 1.0;
+            if (dist_to_photon_sphere < 1.0) {
+                adaptive_factor = 0.1 + 0.9 * dist_to_photon_sphere;
+            }
+            double effective_step = p.step_size * adaptive_factor;
+            // Cap he if needed
+            if (he > effective_step) he = effective_step;
+    
 
             double oldTh = th, oldR = r, oldPhi = phi;
             double oldPr = pr, oldPth = pth;
@@ -185,10 +198,17 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
                                            &acc_r, &acc_g, &acc_b, &acc_a);
             }
 
+            
             if (r <= rp * 1.01) {
+                float hr, hg, hb;
+                hawking_glow_color(r, a, Q2, p.hawking_boost, &hr, &hg, &hb);
+                if (hr > 0 || hg > 0 || hb > 0) {
+                    blendColor(hr, hg, hb, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);
+                }
                 blendColor(0.0f, 0.0f, 0.0f, 1.0f, &acc_r, &acc_g, &acc_b, &acc_a);
                 done = true; break;
             }
+
 
             if (show_disk && acc_a < 0.99f) {
                 double cross = (oldTh - PI * 0.5) * (th - PI * 0.5);
@@ -227,13 +247,30 @@ void trace_rkdp8(const RenderParams *pp, unsigned char *output, const float *sky
                     float dr_f = (float)r_hit;
                     float dphi_f = (float)(oldPhi + t * (phi - oldPhi));
 
-                    float g = compute_g_factor_extended(r_hit, a, Q2, b, (double)p.isco);
+                    float g = (float)kerr_g_factor(r_hit, a, Q2, b, (double)p.isco);
                     float dcr, dcg, dcb;
                     diskColor(dr_f, dphi_f, (float)a, (float)Q2,
                              (float)p.isco, (float)p.disk_outer, (float)p.disk_temp,
                              g, (int)p.doppler_boost, F_peak,
                              &dcr, &dcg, &dcb);
-                    float crossing_alpha = base_alpha;
+                    
+                    double p_total = sqrt(pr * pr + pth * pth + b * b);
+                    float cos_em = (float)(fabs(pth) / fmax(p_total, 1e-15));
+                    float limb = limb_darkening(cos_em);
+                    dcr *= limb;
+                    dcg *= limb;
+                    dcb *= limb;
+
+                    float crossing_alpha;
+                    if (disk_crossings == 0) {
+                        crossing_alpha = base_alpha;
+                    } else if (disk_crossings == 1) {
+                        crossing_alpha = base_alpha * 0.85f;
+                    } else {
+                        float ring_brightness_boost = powf(2.71828f, (float)(disk_crossings - 1) * 0.5f);
+                        crossing_alpha = fminf(base_alpha * ring_brightness_boost, 1.0f);
+                    }
+
                     blendColor(dcr, dcg, dcb, crossing_alpha, &acc_r, &acc_g, &acc_b, &acc_a);
                     disk_crossings++;
                 }

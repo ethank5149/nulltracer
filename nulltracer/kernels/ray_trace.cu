@@ -219,7 +219,7 @@ __device__ void record_crossing(
     double direction = (oldTh > PI * 0.5) ? 1.0 : -1.0;
 
     /* Compute disk physics at crossing point */
-    float g = compute_g_factor(r_hit, a, Q2, b);
+    float g = kerr_g_factor(r_hit, a, Q2, b, isco);
     double F_norm = normalized_nt_flux(r_hit, a, isco);
 
     /* Temperature from flux: T ??? F^{1/4} */
