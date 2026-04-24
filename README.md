@@ -83,7 +83,6 @@ See `DEPLOYMENT.md` for the current deployment story (Caddy reverse-proxy + Dock
 
 ### Known Limitations
 
-- **Pole Reflection:** The `S2_EPS` regularization provides an accuracy-preserving transition near the poles, but orbits crossing precisely $\theta = 0$ may still experience minor unphysical drifts of $\approx 0.3^\circ$.
 - **Plunging Region:** The disk emission interior to the ISCO (the plunging region) uses a phenomenological quadratic falloff matched to the ISCO flux, not the full Cunningham (1975) plunging geodesic calculations.
 - **Single-Crossing Default:** By default only the first equatorial crossing is recorded per ray; `disk_max_crossings > 1` is required to build up the photon-ring sub-images.
 
@@ -251,6 +250,7 @@ nulltracer/
 | v0.8 | 2026-02-17 | Kerr-Newman extension (electric-charge parameter) |
 | v0.9 | 2026-02-17 | Polished Kerr-Newman release |
 | — | 2026-04-22 | P1-P7 publication-readiness series: API-contract fixes, hero-notebook rebuild, K-N shadow analytic, tests |
+| — | 2026-04-24 | Exact polar force derivatives, strict pole reflection logic, and robust shadow contour extraction |
 
 ## Requirements
 
