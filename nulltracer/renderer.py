@@ -174,7 +174,7 @@ class CudaRenderer:
             raise FileNotFoundError(f"Kernel source not found: {source_path}")
 
         # Read the kernel source
-        source = source_path.read_text()
+        source = source_path.read_text(encoding="utf-8")
 
         # CuPy RawKernel doesn't support #include, so we need to
         # inline the included files. Replace #include directives
@@ -424,7 +424,7 @@ class CudaRenderer:
         if not source_path.exists():
             raise FileNotFoundError(f"Ray trace kernel not found: {source_path}")
 
-        source = source_path.read_text()
+        source = source_path.read_text(encoding="utf-8")
         source = resolve_includes(source, source_path.parent)
 
         kernel = cp.RawKernel(
