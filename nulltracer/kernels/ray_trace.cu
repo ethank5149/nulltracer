@@ -665,6 +665,10 @@ void ray_trace_kahanli8s_ks(const RenderParams *pp, double *output) {
     /* Transform p_r from BL to KS coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
 
+    /* Recompute H_init in KS coordinates (ray_init computed it in BL,
+     * which gives a different numerical value after the p_r transform). */
+    output[17] = computeHamiltonianKS(r, th, pr, pth, a, b, Q2);
+
     int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
@@ -805,6 +809,10 @@ void ray_trace_tao_yoshida4(const RenderParams *pp, double *output) {
     /* Transform p_r from BL to Kerr coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
 
+    /* Recompute H_init in KS coordinates (ray_init computed it in BL,
+     * which gives a different numerical value after the p_r transform). */
+    output[17] = computeHamiltonianKS(r, th, pr, pth, a, b, Q2);
+
     double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
     int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
@@ -889,6 +897,10 @@ void ray_trace_tao_yoshida6(const RenderParams *pp, double *output) {
     /* Transform p_r from BL to Kerr coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
 
+    /* Recompute H_init in KS coordinates (ray_init computed it in BL,
+     * which gives a different numerical value after the p_r transform). */
+    output[17] = computeHamiltonianKS(r, th, pr, pth, a, b, Q2);
+
     double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
     int traj_base = 24;
     int crossing_base = traj_base + max_traj * 4;
@@ -972,6 +984,10 @@ void ray_trace_tao_kahan_li8(const RenderParams *pp, double *output) {
 
     /* Transform p_r from BL to Kerr coordinates */
     transformBLtoKS(r, a, b, Q2, &pr);
+
+    /* Recompute H_init in KS coordinates (ray_init computed it in BL,
+     * which gives a different numerical value after the p_r transform). */
+    output[17] = computeHamiltonianKS(r, th, pr, pth, a, b, Q2);
 
     double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
     int traj_base = 24;
