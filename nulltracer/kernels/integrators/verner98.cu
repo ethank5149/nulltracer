@@ -1,5 +1,5 @@
 /* ============================================================
- *  VERNER 9(8) — "Most Efficient" 9th-order Runge-Kutta
+ *  VERNER 9(8) - "Most Efficient" 9th-order Runge-Kutta
  *  with ADAPTIVE STEP SIZE CONTROL
  *
  *  16 stages per step with Verner (2010) coefficients.
@@ -14,13 +14,13 @@
  *
  *  Reference: J.H. Verner (2010), "Numerically optimal
  *  Runge-Kutta pairs with interpolants," Numerical Algorithms
- *  53, 383–396.  Coefficients: Table 12 ("most efficient"
+ *  53, 383396.  Coefficients: Table 12 ("most efficient"
  *  9th-order pair with 8th-order embedding).
  *
  *  CUDA optimizations:
  *    - FSAL saves 1 geoRHS per accepted step
  *    - Scoped stage variables allow register reuse
- *    - φ excluded from error norm (b is conserved)
+ *    -  excluded from error norm (b is conserved)
  *    - Step factor clamped to [0.1, 5.0] for stability
  *    - Exponent -1/9 for 9th-order optimal step control
  * ============================================================ */
@@ -63,7 +63,7 @@
  *  as compile-time constants.
  *
  *  The method is applied to the 5-component state
- *  y = (r, θ, φ, pr, pth) with RHS = geoRHS().
+ *  y = (r, , , pr, pth) with RHS = geoRHS().
  * ============================================================ */
 
 extern "C" __global__
@@ -341,7 +341,7 @@ void trace_verner98(const RenderParams *pp, unsigned char *output, const float *
                 double dpr9  = he*(b9_1*kpr1 + b9_8*kpr8 + b9_9*kpr9 + b9_10*kpr10 + b9_12*kpr12 + b9_13*kpr13 + b9_15*kpr15 + b9_16*kpr16);
                 double dpth9 = he*(b9_1*kpth1 + b9_8*kpth8 + b9_9*kpth9 + b9_10*kpth10 + b9_12*kpth12 + b9_13*kpth13 + b9_15*kpth15 + b9_16*kpth16);
 
-                /* ---- Error estimate: (b9 - b8) · k ----
+                /* ---- Error estimate: (b9 - b8)  k ----
                  * The error coefficients e[i] = b9[i] - b8[i]. */
                 double e1  =  0.00130288967723760;
                 double e8  = -0.00887264545482580;
@@ -359,7 +359,7 @@ void trace_verner98(const RenderParams *pp, unsigned char *output, const float *
                 double err_pr  = he*(e1*kpr1 + e8*kpr8 + e9*kpr9 + e10*kpr10 + e12*kpr12 + e13*kpr13 + e14*kpr14 + e15*kpr15 + e16*kpr16);
                 double err_pth = he*(e1*kpth1 + e8*kpth8 + e9*kpth9 + e10*kpth10 + e12*kpth12 + e13*kpth13 + e14*kpth14 + e15*kpth15 + e16*kpth16);
 
-                /* Scaled error norm (exclude cyclic φ) */
+                /* Scaled error norm (exclude cyclic ) */
                 double sc_r   = atol + rtol * fmax(fabs(r),   fabs(r   + dr9));
                 double sc_th  = atol + rtol * fmax(fabs(th),  fabs(th  + dth9));
                 double sc_pr  = atol + rtol * fmax(fabs(pr),  fabs(pr  + dpr9));

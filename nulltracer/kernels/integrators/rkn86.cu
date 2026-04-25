@@ -1,29 +1,29 @@
 /* ============================================================
- *  RKN 8(6) — Runge-Kutta-Nyström 8th-order integrator
+ *  RKN 8(6) - Runge-Kutta-Nystrm 8th-order integrator
  *  with ADAPTIVE STEP SIZE CONTROL
  *
- *  Uses the second-order Nyström formulation for the geodesic
+ *  Uses the second-order Nystrm formulation for the geodesic
  *  equations:
  *    q'' = a(q, q')
  *
- *  where q = (r, θ) are non-cyclic coordinates and q' are
+ *  where q = (r, ) are non-cyclic coordinates and q' are
  *  their affine-parameter velocities.  The cyclic coordinate
- *  φ is integrated from accumulated velocity stages.
+ *   is integrated from accumulated velocity stages.
  *
  *  11 acceleration evaluations per step (via geoAccel), with
- *  embedded 6th-order error estimate.  The Nyström structure
- *  gives O(h²) position accuracy per force evaluation,
+ *  embedded 6th-order error estimate.  The Nystrm structure
+ *  gives O(h) position accuracy per force evaluation,
  *  achieving 8th order with fewer evaluations than a first-
  *  order RK method of equal order.
  *
  *  Reference: J.R. Dormand, M.E.A. El-Mikkawy, P.J. Prince
- *  (1987), "High-Order Embedded Runge-Kutta-Nyström Formulae,"
- *  IMA J. Numer. Anal. 7, 423–430.
+ *  (1987), "High-Order Embedded Runge-Kutta-Nystrm Formulae,"
+ *  IMA J. Numer. Anal. 7, 423430.
  *
  *  Tableau adapted for y'' = f(y, y') by tracking velocity
  *  stages alongside position stages:
- *    Q_i  = q + c_i h v + h² Σ ā_{ij} f_j    (positions)
- *    V_i  = v + h Σ a_{ij} f_j                (velocities)
+ *    Q_i  = q + c_i h v + h  _{ij} f_j    (positions)
+ *    V_i  = v + h  a_{ij} f_j                (velocities)
  *    f_i  = geoAccel(Q_i, V_i)                (accelerations)
  *
  *  CUDA optimizations:
@@ -31,9 +31,9 @@
  *      as geoForce but skips the separate velocity evaluation,
  *      saving ~15 FLOPs per evaluation vs geoRHS
  *    - 11 evaluations vs 13 for RKDP8 (15% fewer per step)
- *    - φ accumulated from velocity stages only; excluded from
+ *    -  accumulated from velocity stages only; excluded from
  *      error norm (b is conserved)
- *    - Velocity-conversion (v→p) done only inside geoAccel;
+ *    - Velocity-conversion (vp) done only inside geoAccel;
  *      the main loop works entirely in (q, v) space
  *    - Error exponent -1/8 for 8th-order optimal step control
  * ============================================================ */
@@ -87,7 +87,7 @@ void trace_rkn86(const RenderParams *pp, unsigned char *output, const float *sky
         int max_reject = 4;
         double he = adaptive_step_rkn86_initial(rr, rp, p.step_size, p.obs_dist, h_min, h_max);
 
-        /* Convert initial momenta to velocities for Nyström formulation */
+        /* Convert initial momenta to velocities for Nystrm formulation */
         {
             double sth = sin(th), cth = cos(th);
             double s2 = sth * sth + S2_EPS;
@@ -95,9 +95,9 @@ void trace_rkn86(const RenderParams *pp, unsigned char *output, const float *sky
             double sig = r2 + a2 * cth * cth;
             double del = r2 - 2.0 * rr + a2 + Q2;
             double sdel = fmax(del, 1e-14);
-            /* vr = g^rr * pr = (Δ/Σ) * pr */
+            /* vr = g^rr * pr = (/) * pr */
             double vr  = (sdel / sig) * pr;
-            /* vth = g^θθ * pθ = (1/Σ) * pθ */
+            /* vth = g^ * p = (1/) * p */
             double vth = pth / sig;
             pr = vr;   /* reuse pr/pth as velocity storage */
             pth = vth;
@@ -115,15 +115,15 @@ void trace_rkn86(const RenderParams *pp, unsigned char *output, const float *sky
             while (!accepted) {
                 double h2 = he * he;
 
-                /* DEP RKN 8(6) — 11 stages
+                /* DEP RKN 8(6) - 11 stages
                  *
                  * Nodes c[i]:
                  *   c1=0, c2=1/20, c3=1/10, c4=3/20, c5=297/1000,
                  *   c6=594/1000, c7=891/1000, c8=1, c9=1,
                  *   c10=297/1000, c11=594/1000
                  *
-                 * Position: Q_i = q + c_i*h*v + h² Σ ā_{ij} f_j
-                 * Velocity: V_i = v + h Σ a_{ij} f_j
+                 * Position: Q_i = q + c_i*h*v + h  _{ij} f_j
+                 * Velocity: V_i = v + h  a_{ij} f_j
                  * f_i = geoAccel(Q_i, V_i)
                  */
 
@@ -315,7 +315,7 @@ void trace_rkn86(const RenderParams *pp, unsigned char *output, const float *sky
                 }
 
                 /* ---- 8th-order position and velocity update ---- */
-                /* Position weights b̄[i] (O(h²) Nyström structure) */
+                /* Position weights b[i] (O(h) Nystrm structure) */
                 double bbar1 = 23.0/320.0;
                 double bbar5 = 11.0/320.0;
                 double bbar6 = 297.0/1600.0;
@@ -335,7 +335,7 @@ void trace_rkn86(const RenderParams *pp, unsigned char *output, const float *sky
                 double dvr8  = he * (bv1*fr1 + bv5*fr5 + bv6*fr6 + bv7*fr7);
                 double dvth8 = he * (bv1*fth1 + bv5*fth5 + bv6*fth6 + bv7*fth7);
 
-                /* Accumulate φ from velocity stages */
+                /* Accumulate  from velocity stages */
                 double dphi8 = he * (bv1*vphi1 + bv5*vphi5 + bv6*vphi6 + bv7*vphi7);
 
                 /* ---- 6th-order embedded velocity (for error) ---- */
@@ -346,7 +346,7 @@ void trace_rkn86(const RenderParams *pp, unsigned char *output, const float *sky
                 double bvhat8 = -1.0/3360.0;
                 /* bvhat9..bvhat11 have nonzero contribution through stages 10,11 */
 
-                /* Error on velocity: (b8 - b6) · f */
+                /* Error on velocity: (b8 - b6)  f */
                 double evr  = he * ((bv1-bvhat1)*fr1 + (bv5-bvhat5)*fr5 + (bv6-bvhat6)*fr6 + (bv7-bvhat7)*fr7 - bvhat8*fr8);
                 double evth = he * ((bv1-bvhat1)*fth1 + (bv5-bvhat5)*fth5 + (bv6-bvhat6)*fth6 + (bv7-bvhat7)*fth7 - bvhat8*fth8);
 
@@ -403,8 +403,8 @@ void trace_rkn86(const RenderParams *pp, unsigned char *output, const float *sky
                 double sig = r2 + a2 * cth * cth;
                 double del = r2 - 2.0 * rr + a2 + Q2;
                 double sdel = fmax(del, 1e-14);
-                mom_pr  = (sig / sdel) * pr;   /* p_r = (Σ/Δ) * vr */
-                mom_pth = sig * pth;            /* p_θ = Σ * vθ */
+                mom_pr  = (sig / sdel) * pr;   /* p_r = (/) * vr */
+                mom_pth = sig * pth;            /* p_ =  * v */
             }
 
             /* Volumetric emission */

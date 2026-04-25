@@ -1,5 +1,7 @@
 # Nulltracer
 
+[![Tests](assets/tests.svg)](tests/)
+
 **GPU-accelerated ray tracing through curved spacetimes**
 
 Nulltracer is a CUDA-powered ray tracer that visualises black holes by tracing null geodesics through Kerr-Newman spacetime. It renders photon rings, gravitational lensing, accretion-disk Doppler effects, and frame-dragging with `float64` precision. The repository offers a Python package (`nulltracer/`) exposing `render_frame()`, `shadow_boundary()`, `trace_ray()`, `extract_shadow_metrics()`, and related utilities for analysis, notebooks, and batch scripts.

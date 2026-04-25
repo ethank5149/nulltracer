@@ -31,7 +31,7 @@ def pytest_collection_modifyitems(config, items):
     if "not gpu" in str(marker_expr):
         if gpu_tests:
             warnings.warn(
-                f"\n⚠ Skipping {len(gpu_tests)} GPU tests "
+                f"\nSkipping {len(gpu_tests)} GPU tests "
                 f"(running {len(non_gpu_tests)} CPU-only tests). "
                 f"Run without '-m \"not gpu\"' to include physics validation tests.",
                 stacklevel=1,

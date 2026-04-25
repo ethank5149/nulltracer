@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="84" time="37.267" timestamp="2026-04-24T20:11:46.248905-05:00" hostname="f9ca7bc55d60"><testcase classname="tests.test_doppler_asymmetry" name="test_kerr_disk_doppler_asymmetry" time="1.640" /><testcase classname="tests.test_doppler_asymmetry" name="test_doppler_g_factor_direction" time="1.614" /><testcase classname="tests.test_doppler_asymmetry" name="test_doppler_receding_side_dimmer" time="0.470" /><testcase classname="tests.test_doppler_asymmetry" name="test_schwarzschild_disk_is_approximately_symmetric" time="1.588" /><testcase classname="tests.test_eht_validation" name="test_uas_per_M_m87" time="0.000" /><testcase classname="tests.test_eht_validation" name="test_uas_per_M_sgra" time="0.000" /><testcase classname="tests.test_eht_validation" name="test_M_to_uas_schwarzschild_m87" time="0.000" /><testcase classname="tests.test_eht_validation" name="test_M_to_uas_schwarzschild_sgra" time="0.000" /><testcase classname="tests.test_eht_validation" name="test_fit_circle_synthetic" time="0.003" /><testcase classname="tests.test_eht_validation" name="test_extract_metrics_synthetic_ring" time="0.003" /><testcase classname="tests.test_eht_validation" name="test_diameter_beta_M_symmetric" time="0.003" /><testcase classname="tests.test_eht_validation" name="test_brightness_asymmetry_direction" time="0.003" /><testcase classname="tests.test_eht_validation" name="test_ring_peak_synthetic" time="0.005" /><testcase classname="tests.test_eht_validation" name="test_render_mse_against_reference" time="0.063" /><testcase classname="tests.test_eht_validation" name="test_schwarzschild_render_structure" time="0.065" /><testcase classname="tests.test_eht_validation" name="test_kerr_render_asymmetry" time="0.064" /><testcase classname="tests.test_hamiltonian_conservation" name="test_hamiltonian_conservation[rk4]" time="0.521" /><testcase classname="tests.test_hamiltonian_conservation" name="test_hamiltonian_conservation[rkdp8]" time="0.458" /><testcase classname="tests.test_hamiltonian_conservation" name="test_hamiltonian_conservation[verner98]" time="1.578"><failure message="AssertionError: verner98: Hamiltonian not conserved. Max |dH| = 2.78e-06, tol = 1.00e-06&#10;assert 2.78404051633831e-06 &lt; 1e-06">method = 'verner98'
+cuda_renderer = &lt;nulltracer.renderer.CudaRenderer object at 0x14c670177320&gt;
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("method", ALL_METHODS)
+    def test_hamiltonian_conservation(method, cuda_renderer):
+        """Hamiltonian is conserved after 1000 steps for multiple rays."""
+        n_rays = 20
+        tolerances = {
+            "rk4": 1e-2,
+            "rkdp8": 1e-4,
+            "verner98": 1e-6,
+            "rkn86": 1e-5,
+            "symplectic8": 1e-6,
+        }
+        tol = tolerances.get(method, 1e-6)
+    
+        from nulltracer.ray import trace_ray
+        h_differences = []
+        for _ in range(n_rays):
+            alpha = np.random.uniform(-2.0, 2.0)
+            beta = np.random.uniform(3.0, 8.0)
+            res = trace_ray(
+                method=method,
+                steps=1000,
+                step_size=0.1,
+                mode="impact_parameter",
+                alpha=alpha,
+                beta=beta,
+            )
+            H_init = res["initial_state"].get("H", None)
+            H_final = res["final_state"].get("H", None)
+            if (H_init is not None and H_final is not None
+                    and abs(H_init) &gt; 1e-15
+                    and res["termination"]["reason"] not in ["horizon", "nan"]):
+                h_differences.append(abs(H_final - H_init))
+    
+        if h_differences:
+            max_diff = max(h_differences)
+&gt;           assert max_diff &lt; tol, (
+                f"{method}: Hamiltonian not conserved. Max |dH| = {max_diff:.2e}, tol = {tol:.2e}"
+            )
+E           AssertionError: verner98: Hamiltonian not conserved. Max |dH| = 2.78e-06, tol = 1.00e-06
+E           assert 2.78404051633831e-06 &lt; 1e-06
+
+tests/test_hamiltonian_conservation.py:65: AssertionError</failure></testcase><testcase classname="tests.test_hamiltonian_conservation" name="test_hamiltonian_conservation[rkn86]" time="4.047" /><testcase classname="tests.test_hamiltonian_conservation" name="test_hamiltonian_conservation[symplectic8]" time="1.587" /><testcase classname="tests.test_hamiltonian_conservation" name="test_carter_constant_conservation[rk4]" time="0.265" /><testcase classname="tests.test_hamiltonian_conservation" name="test_carter_constant_conservation[rkdp8]" time="0.249" /><testcase classname="tests.test_hamiltonian_conservation" name="test_carter_constant_conservation[verner98]" time="0.482" /><testcase classname="tests.test_hamiltonian_conservation" name="test_carter_constant_conservation[rkn86]" time="1.104" /><testcase classname="tests.test_hamiltonian_conservation" name="test_carter_constant_conservation[symplectic8]" time="0.663"><failure message="AssertionError: symplectic8: Carter constant not conserved. Max |dQ| = 4.40e+03, tol = 1.00e+02&#10;assert 4396.143390725085 &lt; 100.0">method = 'symplectic8'
+cuda_renderer = &lt;nulltracer.renderer.CudaRenderer object at 0x14c670177320&gt;
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("method", ALL_METHODS)
+    def test_carter_constant_conservation(method, cuda_renderer):
+        """Carter's constant Q is conserved during integration.
+    
+        Uses rays with beta &gt; 6 to avoid the photon sphere (r ~ 3M for
+        Schwarzschild), where pole reflections and large gravitational
+        deflections degrade conservation for lower-order integrators.
+    
+        Tolerances are per-method because:
+          - RK4:  4th-order truncation error accumulates over 500 steps.
+          - RKDP8: 8th-order, much tighter, but the adaptive stepper's
+                   error control targets H (not Q), so Q drifts slightly.
+          - symplectic8: the Tao extended phase-space coupling between
+                   real and shadow variables introduces errors in Q even
+                   when H is projected to zero.  The Wisdom corrector and
+                   ASPhi stepping improve this, but Q conservation is still
+                   looser than H conservation.
+        """
+        from nulltracer.ray import trace_ray
+        n_rays = 10
+    
+        carter_tols = {
+            "rk4":          5e-1,
+            "rkdp8":        1e-1,
+            "verner98":     5e-3,
+            "rkn86":        1e-2,
+            "symplectic8":  1e2,
+        }
+        tol = carter_tols.get(method, 1.0)
+    
+        q_diffs = []
+    
+        for _ in range(n_rays):
+            alpha = np.random.uniform(-1.5, 1.5)
+            beta = np.random.uniform(6.0, 8.0)
+            res = trace_ray(
+                method=method,
+                steps=500,
+                step_size=0.1,
+                mode="impact_parameter",
+                alpha=alpha,
+                beta=beta,
+            )
+            Q_init = res["initial_state"].get("Q", None)
+            Q_final = res["final_state"].get("Q", None)
+            if (Q_init is not None and Q_final is not None
+                    and res["termination"]["reason"] not in ["horizon", "nan"]):
+                q_diffs.append(abs(Q_final - Q_init))
+    
+        if q_diffs:
+            max_diff = max(q_diffs)
+&gt;           assert max_diff &lt; tol, (
+                f"{method}: Carter constant not conserved. Max |dQ| = {max_diff:.2e}, tol = {tol:.2e}"
+            )
+E           AssertionError: symplectic8: Carter constant not conserved. Max |dQ| = 4.40e+03, tol = 1.00e+02
+E           assert 4396.143390725085 &lt; 100.0
+
+tests/test_hamiltonian_conservation.py:122: AssertionError</failure></testcase><testcase classname="tests.test_hamiltonian_conservation" name="test_angular_momentum_conservation[rk4]" time="0.266" /><testcase classname="tests.test_hamiltonian_conservation" name="test_angular_momentum_conservation[rkdp8]" time="0.242" /><testcase classname="tests.test_hamiltonian_conservation" name="test_angular_momentum_conservation[verner98]" time="0.489" /><testcase classname="tests.test_hamiltonian_conservation" name="test_angular_momentum_conservation[rkn86]" time="1.093" /><testcase classname="tests.test_hamiltonian_conservation" name="test_angular_momentum_conservation[symplectic8]" time="0.905" /><testcase classname="tests.test_hamiltonian_conservation" name="test_symplectic_conservation_tight" time="0.072" /><testcase classname="tests.test_isco" name="test_isco_kerr[0.0-6.0-1e-10]" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kerr[0.5-4.233-0.001]" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kerr[0.9-2.321-0.001]" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kerr[0.998-1.237-0.01]" time="0.000" /><testcase classname="tests.test_isco" name="test_schwarzschild_isco_exact" time="0.000" /><testcase classname="tests.test_isco" name="test_extreme_kerr_isco[0.999-1.0-1.5]" time="0.000" /><testcase classname="tests.test_isco" name="test_extreme_kerr_isco[-0.999-1.0-1.5]" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_monotonically_decreasing" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kn_reduces_to_kerr" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kerr_newman[0.0-0.5-5.0-7.0]" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kerr_newman[0.5-0.3-3.0-5.0]" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kerr_newman_charge_increases_isco_for_retrograde" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kerr_newman_monotonic_in_spin[0.0]" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kerr_newman_monotonic_in_spin[0.3]" time="0.000" /><testcase classname="tests.test_isco" name="test_isco_kerr_newman_monotonic_in_spin[0.6]" time="0.000" /><testcase classname="tests.test_renderer_params" name="test_resolve_inclination_accepts_canonical_key" time="0.000" /><testcase classname="tests.test_renderer_params" name="test_resolve_inclination_accepts_incl_alias" time="0.000" /><testcase classname="tests.test_renderer_params" name="test_resolve_inclination_canonical_wins_over_alias" time="0.000" /><testcase classname="tests.test_renderer_params" name="test_resolve_inclination_default" time="0.000" /><testcase classname="tests.test_renderer_params" name="test_resolve_steps_respects_explicit_steps" time="0.000" /><testcase classname="tests.test_renderer_params" name="test_resolve_steps_respects_explicit_max_steps" time="0.000" /><testcase classname="tests.test_renderer_params" name="test_resolve_steps_falls_back_to_auto" time="0.000" /><testcase classname="tests.test_renderer_params" name="test_invalid_spin_too_high_rejected" time="0.000" /><testcase classname="tests.test_renderer_params" name="test_valid_spin_range" time="1.065" /><testcase classname="tests.test_renderer_params" name="test_fov_zero_invalid" time="0.035" /><testcase classname="tests.test_renderer_params" name="test_negative_obs_dist_invalid" time="0.020" /><testcase classname="tests.test_shadow" name="test_schwarzschild_shadow_radius" time="0.000" /><testcase classname="tests.test_shadow" name="test_schwarzschild_shadow_diameter" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_schwarzschild_circular_shadow" time="0.001" /><testcase classname="tests.test_shadow_boundary" name="test_reissner_nordstrom_radius[0.0-3.0]" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_reissner_nordstrom_radius[0.3-2.938749]" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_reissner_nordstrom_radius[0.6-2.736932]" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_reissner_nordstrom_radius[0.9-2.293725]" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_rn_shadow_decreases_with_charge" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_kerr_reduces_to_bardeen" time="0.001" /><testcase classname="tests.test_shadow_boundary" name="test_kerr_asymmetry" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_kerr_099_shadow_asymmetry" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_kerr_newman_intermediate_case" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_hyperextremal_raises" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_kerr_contour_is_closed" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_pole_on_shadow_circular" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_shadow_observables_schwarzschild" time="0.000" /><testcase classname="tests.test_shadow_boundary" name="test_shadow_observables_m87_within_eht" time="0.001" /><testcase classname="tests.test_shadow_render" name="test_schwarzschild_shadow_diameter" time="0.445" /><testcase classname="tests.test_shadow_render" name="test_schwarzschild_shadow_circular" time="0.447" /><testcase classname="tests.test_shadow_render" name="test_kerr_shadow_asymmetric" time="1.075" /><testcase classname="tests.test_shadow_render" name="test_pole_on_shadow_circular" time="1.414" /><testcase classname="tests.test_shadow_render" name="test_64x64_render" time="0.062" /><testcase classname="tests.test_struct_sync.TestStructSync" name="test_render_params_size" time="0.000" /><testcase classname="tests.test_struct_sync.TestStructSync" name="test_render_params_fields" time="0.000" /><testcase classname="tests.test_struct_sync.TestStructSync" name="test_struct_round_trip" time="0.001" /><testcase classname="tests.test_struct_sync.TestStructSync" name="test_multiple_structs_sync" time="0.000" /></testsuite></testsuites>

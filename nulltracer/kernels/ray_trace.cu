@@ -32,7 +32,7 @@
  *        [crossing_base + 1 + j*8 + 0] = step index
  *        [crossing_base + 1 + j*8 + 1] = r at crossing
  *        [crossing_base + 1 + j*8 + 2] = phi at crossing
- *        [crossing_base + 1 + j*8 + 3] = direction (1.0=N???S, -1.0=S???N)
+ *        [crossing_base + 1 + j*8 + 3] = direction (1.0=N->S, -1.0=S->N)
  *        [crossing_base + 1 + j*8 + 4] = g-factor
  *        [crossing_base + 1 + j*8 + 5] = Novikov-Thorne flux (normalized)
  *        [crossing_base + 1 + j*8 + 6] = T_emit (K)
@@ -267,9 +267,9 @@ __device__ void ray_finalize(
 }
 
 
-/* ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+/* ----------------------------------------------------------------------------
  *  RK4 RAY TRACE
- * ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????? */
+ * ---------------------------------------------------------------------------- */
 
 extern "C" __global__
 void ray_trace_rk4(const RenderParams *pp, double *output) {
@@ -345,9 +345,9 @@ void ray_trace_rk4(const RenderParams *pp, double *output) {
 }
 
 
-/* ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+/* ----------------------------------------------------------------------------
  *  RKDP8 RAY TRACE (Dormand-Prince 8th-order with adaptive step)
- * ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????? */
+ * ---------------------------------------------------------------------------- */
 
 extern "C" __global__
 void ray_trace_rkdp8(const RenderParams *pp, double *output) {
@@ -501,17 +501,17 @@ void ray_trace_rkdp8(const RenderParams *pp, double *output) {
 }
 
 
-/* ════════════════════════════════════════════════════════════════
+/* ================================================================
  *  SYMPLECTIC8 RAY TRACE
- *  Unified 8th–10th order symplectic integrator combining:
+ *  Unified 8th-10th order symplectic integrator combining:
  *    - Tao extended phase space (non-separable splitting)
  *    - Kahan-Li s15odr8 8th-order composition (15 palindromic stages)
- *    - Kerr-Schild coordinates (no Δ=0 singularity)
- *    - ASΦ adaptive stepping (Wu et al. 2024 / Preto & Saha 2009)
- *    - Compensated (Kahan) summation (~2× machine precision)
- *    - Wisdom symplectic corrector (raises order 8→~10)
+ *    - Kerr-Schild coordinates (no Delta=0 singularity)
+ *    - AS-Phi adaptive stepping (Wu et al. 2024 / Preto & Saha 2009)
+ *    - Compensated (Kahan) summation (~2x machine precision)
+ *    - Wisdom symplectic corrector (raises order 8->~10)
  *    - Hamiltonian projection (algebraic H=0 constraint)
- * ════════════════════════════════════════════════════════════════ */
+ * ================================================================ */
 
 extern "C" __global__
 void ray_trace_symplectic8(const RenderParams *pp, double *output) {
@@ -543,15 +543,15 @@ void ray_trace_symplectic8(const RenderParams *pp, double *output) {
     int crossing_base = traj_base + max_traj * 4;
     int num_crossings = 0;
 
-    /* 4× step multiplier (matching render kernel) */
+    /* 4 step multiplier (matching render kernel) */
     int STEPS = (int)p.steps * 4;
     int term_reason = 0, steps_used = 0;
 
-    /* Compensated summation accumulators (real variables + Φ) */
+    /* Compensated summation accumulators (real variables + ) */
     double r_comp = 0.0, th_comp = 0.0, phi_comp = 0.0;
     double pr_comp = 0.0, pth_comp = 0.0;
 
-    /* ASΦ: Sundman/Mino time base step + Φ variable */
+    /* AS: Sundman/Mino time base step +  variable */
     double dtau = sundman_dtau(a, Q2, rp, p.step_size, p.esc_radius, STEPS);
     double Phi = p.obs_dist / r;
     double Phi_comp = 0.0;
@@ -562,13 +562,13 @@ void ray_trace_symplectic8(const RenderParams *pp, double *output) {
 
         double oldR = r, oldTh = th, oldPhi = phi;
 
-        /* ─── ASΦ Step 1: Half-step Φ update (KS) ──────────── */
+        /*  AS Step 1: Half-step  update (KS)  */
         double g_sun = phi_var_sundman_g(r, th, a);
         double dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
         rt_kahan_add(&Phi, &Phi_comp, dPhi);
         if (Phi < 0.01) Phi = 0.01;
 
-        /* ─── ASΦ Step 3: Compute physical step h/Φ ────────── */
+        /*  AS Step 3: Compute physical step h/  */
         double he = phi_var_physical_step(h_phi, Phi, r, th, pth, a, p.obs_dist);
 
         if (i < max_traj) {
@@ -577,12 +577,12 @@ void ray_trace_symplectic8(const RenderParams *pp, double *output) {
             output[off + 2] = phi; output[off + 3] = he;
         }
 
-        /* ─── Tao + Kahan-Li 8th-order step ────────────────── */
+        /*  Tao + Kahan-Li 8th-order step  */
         tao_kahan_li8_step(&r, &th, &phi, &pr, &pth,
                            &rs, &ths, &phis, &prs, &pths,
                            a, b, Q2, he);
 
-        /* ─── Wisdom symplectic corrector (KS, real + shadow) ─ */
+        /*  Wisdom symplectic corrector (KS, real + shadow)  */
         {
             double corr_eps = he * he / 24.0;
 
@@ -609,17 +609,17 @@ void ray_trace_symplectic8(const RenderParams *pp, double *output) {
             phis += corr_eps * v_phi;
         }
 
-        /* ─── Hamiltonian projection (KS) ──────────────────── */
+        /*  Hamiltonian projection (KS)  */
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
         pr_comp = 0.0;
 
-        /* ─── ASΦ Step 5: Second half-step Φ update ────────── */
+        /*  AS Step 5: Second half-step  update  */
         g_sun = phi_var_sundman_g(r, th, a);
         dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
         rt_kahan_add(&Phi, &Phi_comp, dPhi);
         if (Phi < 0.01) Phi = 0.01;
 
-        /* ─── Pole reflection (real + shadow) ─────────────── */
+        /*  Pole reflection (real + shadow)  */
         if (th < 0.0) {
             th = -th; pth = -pth; phi += PI;
         } else if (th > PI) {
@@ -648,11 +648,11 @@ void ray_trace_symplectic8(const RenderParams *pp, double *output) {
 }
 
 
-/* ════════════════════════════════════════════════════════════════
+/* ================================================================
  *  VERNER 9(8) RAY TRACE
  *  16-stage adaptive with FSAL, embedded 8th-order error estimate.
  *  See integrators/verner98.cu for coefficients and method details.
- * ════════════════════════════════════════════════════════════════ */
+ * ================================================================ */
 
 extern "C" __global__
 void ray_trace_verner98(const RenderParams *pp, double *output) {
@@ -706,7 +706,7 @@ void ray_trace_verner98(const RenderParams *pp, double *output) {
             }
 
             /* Stages 2-16: reuse same coefficient structure as verner98.cu
-             * (abbreviated for the single-ray path — same math, no rendering) */
+             * (abbreviated for the single-ray path - same math, no rendering) */
             double kr2,kth2,kphi2,kpr2,kpth2;
             geoRHS(r+he*0.03462105947808740*kr1, th+he*0.03462105947808740*kth1,
                    pr+he*0.03462105947808740*kpr1, pth+he*0.03462105947808740*kpth1,
@@ -862,13 +862,13 @@ void ray_trace_verner98(const RenderParams *pp, double *output) {
 }
 
 
-/* ════════════════════════════════════════════════════════════════
+/* ================================================================
  *  RKN 8(6) RAY TRACE
- *  Runge-Kutta-Nyström second-order formulation.
+ *  Runge-Kutta-Nystrm second-order formulation.
  *  Stub: dispatches through first-order geoRHS for the single-ray
- *  path (full Nyström only in the render kernel where it matters
+ *  path (full Nystrm only in the render kernel where it matters
  *  for throughput).  Same error control as rkn86.cu.
- * ════════════════════════════════════════════════════════════════ */
+ * ================================================================ */
 
 extern "C" __global__
 void ray_trace_rkn86(const RenderParams *pp, double *output) {
@@ -892,7 +892,7 @@ void ray_trace_rkn86(const RenderParams *pp, double *output) {
     int term_reason = 0, steps_used = 0;
 
     /* For the single-ray diagnostic path, use the RKDP8 integrator
-     * with rkn86-tuned tolerances.  The full Nyström formulation is
+     * with rkn86-tuned tolerances.  The full Nystrm formulation is
      * only used in the render kernel (trace_rkn86) where per-pixel
      * throughput justifies the dedicated geoAccel codepath. */
     double atol=1.0e-9, rtol=1.0e-9, safety=0.9, h_min=0.0005, h_max=2.5;

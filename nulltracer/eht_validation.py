@@ -304,7 +304,7 @@ def extract_ring_diameter(
 
     Unlike :func:`extract_shadow_metrics` which measures the *dark*
     interior boundary, this function finds the *peak* of the bright
-    ring — the quantity the EHT actually measures.
+    ring - the quantity the EHT actually measures.
 
     The algorithm:
       1. Compute the azimuthally averaged radial intensity profile I(r)

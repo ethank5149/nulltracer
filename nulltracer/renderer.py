@@ -75,6 +75,7 @@ _KERNEL_REGISTRY = {
     "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
     "rkdp8_cks":("rkdp8_cks.cu","trace_rkdp8_cks"),
     "verner98":    ("verner98.cu",    "trace_verner98"),
+    "verner98":    ("verner98.cu",    "trace_verner98"),
     "rkn86":       ("rkn86.cu",       "trace_rkn86"),
     "symplectic8": ("symplectic8.cu", "trace_symplectic8"),
 }
@@ -85,6 +86,7 @@ _RAY_TRACE_REGISTRY = {
     "rk4_cks":      "ray_trace_rk4_cks",
     "rkdp8":        "ray_trace_rkdp8",
     "rkdp8_cks":    "ray_trace_rkdp8_cks",
+    "verner98":     "ray_trace_verner98",
     "verner98":     "ray_trace_verner98",
     "rkn86":        "ray_trace_rkn86",
     "symplectic8":  "ray_trace_symplectic8",

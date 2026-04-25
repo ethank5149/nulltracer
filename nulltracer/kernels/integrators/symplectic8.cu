@@ -1,46 +1,46 @@
 /* ============================================================
- *  SYMPLECTIC8 — UNIFIED 8th–10th ORDER SYMPLECTIC INTEGRATOR
+ *  SYMPLECTIC8 - UNIFIED 8th-10th ORDER SYMPLECTIC INTEGRATOR
  *
  *  Combines every available symplecticity-preserving technique
  *  into a single, production-quality CUDA kernel:
  *
  *  1. TAO EXTENDED PHASE SPACE (Tao 2016)
- *     The Kerr(–Newman) Hamiltonian is non-separable:
- *       H = ½ g^μν(q) p_μ p_ν
- *     Tao's method doubles the phase space (q,p) → (q,p,x,y)
- *     with extended Hamiltonian H_ext = H_A(q,y) + H_B(x,p) + ω H_C,
+ *     The Kerr(-Newman) Hamiltonian is non-separable:
+ *       H = 1/2 g^(q) p_ p_
+ *     Tao's method doubles the phase space (q,p)  (q,p,x,y)
+ *     with extended Hamiltonian H_ext = H_A(q,y) + H_B(x,p) + omega H_C,
  *     where each sub-flow is exactly integrable.  This makes the
  *     non-separable system amenable to true symplectic splitting.
  *
  *  2. KAHAN-LI s15odr8 8th-ORDER COMPOSITION (Kahan & Li 1997)
  *     15-stage palindromic composition of the Strang base step
- *     with optimal coefficients (max|Wᵢ| = 0.797), yielding
+ *     with optimal coefficients (max|W| = 0.797), yielding
  *     true 8th-order accuracy.
- *     Cost: 15 × (4 geoRHS + 1 rotation) = 60 geoRHS per step.
+ *     Cost: 15 x (4 geoRHS + 1 rotation) = 60 geoRHS per step.
  *
  *  3. KERR-SCHILD (INGOING KERR) COORDINATES
  *     Eliminate the Boyer-Lindquist coordinate singularity at
- *     Δ = 0 (event horizon).  This prevents catastrophic force
+ *     Delta = 0 (event horizon).  This prevents catastrophic force
  *     blowups when negative Kahan-Li substeps temporarily push
  *     r below the horizon.
  *
- *  4. ASΦ ADAPTIVE STEPPING (Wu et al. 2024 / Preto & Saha 2009)
- *     The Φ-variable method wraps the integrator with leapfrog
- *     half-steps that evolve an auxiliary variable Φ, providing
+ *  4. AS ADAPTIVE STEPPING (Wu et al. 2024 / Preto & Saha 2009)
+ *     The -variable method wraps the integrator with leapfrog
+ *     half-steps that evolve an auxiliary variable , providing
  *     adaptive time stepping that rigorously preserves the
  *     symplectic structure.  Unlike naive adaptive step sizing
  *     (Ge & Marsden 1988), this is a canonical transformation.
  *
  *  5. COMPENSATED (KAHAN) SUMMATION (Kahan 1965)
  *     Tracks floating-point round-off on real phase-space
- *     variables (r, θ, φ, p_r, p_θ) and the auxiliary Φ,
- *     giving ~2× machine precision (~32 digits effective).
+ *     variables (r, th, phi, p_r, p_th) and the auxiliary ,
+ *     giving ~2x machine precision (~32 digits effective).
  *
  *  6. WISDOM SYMPLECTIC CORRECTOR (Wisdom 2006)
- *     Near-identity canonical transformation C = exp(ε{·,V}) ∘
- *     exp(ε{·,T}) with ε = h²/24 that cancels the leading
+ *     Near-identity canonical transformation C = exp(epsilon{,V}) +
+ *     exp(epsilon{,T}) with epsilon = h2/24 that cancels the leading
  *     error term of the 8th-order method, raising effective
- *     accuracy from O(h⁸) to O(h¹⁰).  Applied using
+ *     accuracy from O(h) to O(h).  Applied using
  *     Kerr-Schild force/velocity functions to both real and
  *     shadow variables for extended-phase-space consistency.
  *
@@ -60,7 +60,7 @@
  *    [1] M. Tao, "Explicit symplectic approximation of
  *        nonseparable Hamiltonians," Phys. Rev. E 94, 2016.
  *    [2] W. Kahan & R.-C. Li, "Composition constants for raising
- *        the orders," Math. Comp. 66:1089–1099, 1997.
+ *        the orders," Math. Comp. 66:10891099, 1997.
  *    [3] X. Wu et al., "Explicit symplectic methods in black hole
  *        spacetimes," Astrophys. J. 2024.
  *    [4] M. Preto & S. Saha, "On post-Newtonian orbits,"
@@ -70,9 +70,9 @@
  *    [6] W. Kahan, "Pracniques: further remarks on reducing
  *        truncation errors," Comm. ACM 8(1):40, 1965.
  *    [7] Z. Ge & J.E. Marsden, "Lie-Poisson Hamilton-Jacobi
- *        theory," Phys. Lett. A 133:134–139, 1988.
+ *        theory," Phys. Lett. A 133:134139, 1988.
  *    [8] E. Hairer, R.I. McLachlan & A. Razakarivony,
- *        "Achieving Brouwer's law," BIT 48:231–243, 2008.
+ *        "Achieving Brouwer's law," BIT 48:231243, 2008.
  * ============================================================ */
 
 #include "../geodesic_base.cu"
@@ -85,10 +85,10 @@
 /* -- Compensated summation helper ----------------------------- */
 
 /* Kahan compensated addition: accumulates delta into *sum with
- * round-off tracked in *comp.  Gives ~2× machine precision.
+ * round-off tracked in *comp.  Gives ~2x machine precision.
  *
  * Reference: W. Kahan, Comm. ACM 8(1):40, 1965.
- *            E. Hairer et al., BIT 48:231–243, 2008. */
+ *            E. Hairer et al., BIT 48:231243, 2008. */
 __device__ __forceinline__ void sym8_kahan_add(
     double *sum, double *comp, double delta
 ) {
@@ -124,11 +124,11 @@ void trace_symplectic8(const RenderParams *pp, unsigned char *output, const floa
     /* -- Initialize shadow variables (Tao doubled phase space) - */
     double rs = r, ths = th, phis = phi, prs = pr, pths = pth;
 
-    /* -- Step budget: 4× multiplier for user-facing semantics -- */
+     /* -- Step budget: 4x multiplier for user-facing semantics -- */
     /* The 15-substep Kahan-Li composition is expensive per step.
-     * The 4× multiplier gives comparable user-facing step counts
+     * The 4x multiplier gives comparable user-facing step counts
      * to simpler methods while providing sufficient affine
-     * parameter budget for the ASΦ stepping. */
+     * parameter budget for the AS stepping. */
     int STEPS = (int)p.steps * 4;
     int show_disk = (int)p.show_disk;
     int bg_mode = (int)p.bg_mode;
@@ -140,21 +140,21 @@ void trace_symplectic8(const RenderParams *pp, unsigned char *output, const floa
     float base_alpha = (float)p.disk_alpha;
     bool done = false;
 
-    /* -- Compensated summation accumulators (real vars + Φ) ---- */
+    /* -- Compensated summation accumulators (real vars + ) ---- */
     double r_comp = 0.0, th_comp = 0.0, phi_comp = 0.0;
     double pr_comp = 0.0, pth_comp = 0.0;
 
-    /* -- ASΦ: Sundman/Mino time base step + Φ variable -------- */
-    /* Sundman (Mino time) transformation: dλ = dτ/Σ.
-     * Fixed steps in Mino time τ give physical steps Δλ = Σ·Δτ
-     * that automatically shrink near the horizon (small Σ) and
-     * grow far away (large Σ).  The Φ variable (Wu et al. 2024)
+    /* -- AS: Sundman/Mino time base step +  variable -------- */
+    /* Sundman (Mino time) transformation: d = d/.
+     * Fixed steps in Mino time  give physical steps Delta = Delta
+     * that automatically shrink near the horizon (small ) and
+     * grow far away (large ).  The  variable (Wu et al. 2024)
      * then modulates this into a fully adaptive, symplecticity-
      * preserving step. */
     double dtau = sundman_dtau(a, Q2, rp, p.step_size, p.esc_radius, STEPS);
-    double Phi = p.obs_dist / r;             /* Φ₀ = j/r₀ */
-    double Phi_comp = 0.0;                   /* Kahan compensator for Φ */
-    double h_phi = dtau * p.obs_dist * p.obs_dist;  /* Fixed new-time step h = dτ·r²ₒᵦₛ */
+    double Phi = p.obs_dist / r;             /*  = j/r */
+    double Phi_comp = 0.0;                   /* Kahan compensator for  */
+    double h_phi = dtau * p.obs_dist * p.obs_dist;  /* Fixed new-time step h = dr2 */
 
     /* -- Integration loop ------------------------------------- */
 
@@ -164,30 +164,30 @@ void trace_symplectic8(const RenderParams *pp, unsigned char *output, const floa
         /* Save state for disk crossing interpolation */
         double oldR = r, oldTh = th, oldPhi = phi;
 
-        /* ─── ASΦ Step 1: Half-step Φ update ────────────────── */
-        /* Uses KS-coordinate Φ increment since p_r is in KS. */
+        /*  AS Step 1: Half-step  update  */
+        /* Uses KS-coordinate  increment since p_r is in KS. */
         double g_sun = phi_var_sundman_g(r, th, a);
         double dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
         sym8_kahan_add(&Phi, &Phi_comp, dPhi);
         if (Phi < 0.01) Phi = 0.01;  /* Safety floor */
 
-        /* ─── ASΦ Step 3: Compute physical step h/Φ ─────────── */
+        /*  AS Step 3: Compute physical step h/  */
         double he = phi_var_physical_step(h_phi, Phi, r, th, pth, a, p.obs_dist);
 
-        /* ─── Tao + Kahan-Li 8th-order step ─────────────────── */
+        /*  Tao + Kahan-Li 8th-order step  */
         /* 15 Strang base steps in extended phase space.
-         * Each base step: Φ_A^{δ/2} ∘ Φ_B^{δ/2} ∘ Φ_C^δ ∘ Φ_B^{δ/2} ∘ Φ_A^{δ/2}
-         * where Φ_A updates (p,x), Φ_B updates (q,y), and Φ_C
-         * performs the harmonic rotation coupling q↔x, p↔y. */
+         * Each base step: _A^{/2} + _B^{/2} + _C^ + _B^{/2} + _A^{/2}
+         * where _A updates (p,x), _B updates (q,y), and _C
+         * performs the harmonic rotation coupling qx, py. */
         tao_kahan_li8_step(&r, &th, &phi, &pr, &pth,
                            &rs, &ths, &phis, &prs, &pths,
                            a, b, Q2, he);
 
-        /* ─── Wisdom symplectic corrector (KS coordinates) ──── */
+        /*  Wisdom symplectic corrector (KS coordinates)  */
         /* Near-identity canonical transformation:
-         *   C = exp(ε{·,V}) ∘ exp(ε{·,T})
-         * where ε = h²/24.  Cancels leading O(h⁸) error term,
-         * raising effective accuracy to O(h¹⁰).
+         *   C = exp(epsilon{,V}) + exp(epsilon{,T})
+         * where epsilon = h2/24.  Cancels leading O(h) error term,
+         * raising effective accuracy to O(h).
          *
          * Applied to both real AND shadow variables for extended-
          * phase-space consistency.  Uses KS-coordinate force/velocity
@@ -221,22 +221,22 @@ void trace_symplectic8(const RenderParams *pp, unsigned char *output, const floa
             phis += corr_eps * v_phi;
         }
 
-        /* ─── Hamiltonian projection (KS coordinates) ───────── */
+        /*  Hamiltonian projection (KS coordinates)  */
         /* Algebraic solve for p_r onto null constraint H = 0.
-         * This is exact and does not break symplecticity — it is
+         * This is exact and does not break symplecticity - it is
          * a constraint projection, not an approximate correction.
          * Reset Kahan compensator since p_r is algebraically
          * recomputed (accumulated round-off is irrelevant). */
         projectHamiltonianKS(r, th, &pr, pth, a, b, Q2);
         pr_comp = 0.0;
 
-        /* ─── ASΦ Step 5: Second half-step Φ update ─────────── */
+        /*  AS Step 5: Second half-step  update  */
         g_sun = phi_var_sundman_g(r, th, a);
         dPhi = phi_var_dphi_KS(r, th, pr, a, Q2, g_sun, h_phi);
         sym8_kahan_add(&Phi, &Phi_comp, dPhi);
         if (Phi < 0.01) Phi = 0.01;
 
-        /* ─── Pole reflection (real + shadow) ─────────────────  */
+        /*  Pole reflection (real + shadow)   */
         if (th < 0.0) {
             th = -th; pth = -pth; phi += PI;
         } else if (th > PI) {
@@ -248,13 +248,13 @@ void trace_symplectic8(const RenderParams *pp, unsigned char *output, const floa
             ths = 2.0 * PI - ths; pths = -pths; phis += PI;
         }
 
-        /* ─── Volumetric emission ──────────────────────────── */
+        /*  Volumetric emission  */
         if (acc_a < 0.99f) {
             accumulate_volume_emission(r, th, he, a, Q2, (double)p.isco, p.disk_outer,
                                        &acc_r, &acc_g, &acc_b, &acc_a);
         }
 
-        /* ─── Termination: horizon capture ──────────────────── */
+        /*  Termination: horizon capture  */
         /* KS coordinates are regular at the horizon, so we can
          * detect capture cleanly without coordinate artifacts. */
         if (r <= rp * 0.5) {
@@ -262,7 +262,7 @@ void trace_symplectic8(const RenderParams *pp, unsigned char *output, const floa
             done = true; break;
         }
 
-        /* ─── Disk crossing detection ──────────────────────── */
+        /*  Disk crossing detection  */
         if (show_disk && acc_a < 0.99f) {
             double cross = (oldTh - PI * 0.5) * (th - PI * 0.5);
             if (cross < 0.0 && disk_crossings < max_crossings) {
@@ -302,7 +302,7 @@ void trace_symplectic8(const RenderParams *pp, unsigned char *output, const floa
             }
         }
 
-        /* ─── Escape to background ─────────────────────────── */
+        /*  Escape to background  */
         if (r > p.esc_radius) {
             double frac = fmin(fmax((p.esc_radius - oldR) /
                           fmax(r - oldR, 1e-14), 0.0), 1.0);

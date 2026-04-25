@@ -330,7 +330,8 @@ def compare_integrators(
     width: int = 512,
     height: int = 512,
     fov: float = 7.0,
-    methods: list[str] | None = None,
+    title: Optional[str] = None,
+    methods: Optional[list[str]] = None,
     **render_kwargs,
 ):
     """Render with multiple integrators for visual + timing comparison.
@@ -392,17 +393,17 @@ def compare_integrators(
             }
         )
 
-    fig.suptitle(
-        f"Integrator Comparison ??? $a={spin}$, "
-        rf"$\theta={inclination_deg}??$, "
-        rf"$r{{\rm obs}}={obs_dist}\,M$",
-        fontsize=13,
-        y=1.02,
-    )
+    if title is None:
+        title = (
+            f"Integrator Comparison・$a={spin}$, "
+            rf"$\theta={inclination_deg:.0f}^\circ$, "
+            rf"$r_{{\rm obs}}={obs_dist}\,M$"
+        )
+    fig.suptitle(title, fontsize=13, y=1.02)
     plt.tight_layout()
 
     print(f"\n{'Method':<40} {'Time':>8} {'Steps':>7}")
-    print("???" * 60)
+    print("─" * 60)
     for r in results:
         print(f"{r['label']:<40} {r['render_ms']:>7.0f}ms {r['max_steps']:>7d}")
 
