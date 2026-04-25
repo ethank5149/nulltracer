@@ -6,6 +6,10 @@ dist/
 build/
 *.egg
 
+
+.kilo/
+
+
 # Jupyter
 .ipynb_checkpoints/
 

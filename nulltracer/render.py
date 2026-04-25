@@ -56,51 +56,8 @@ def available_methods() -> list[str]:
 # ---- Step-budget heuristic ----
 
 
-def auto_steps(
-    obs_dist: float,
-    step_size: float = 0.3,
-    *,
-    spin: float = 0.0,
-    charge: float = 0.0,
-    method: str = "rk4",
-    safety: float = 3.0,
-) -> int:
-    """Estimate the number of integration steps needed.
-
-    Accounts for observer distance, step size, and integrator type.
-    Symplectic methods use a fixed-step budget; adaptive methods
-    scale with an approximate path-length estimate.
-
-    Parameters
-    ----------
-    obs_dist : float
-        Observer distance in M.
-    step_size : float
-        Base affine-parameter step size.
-    spin, charge : float
-        Black-hole parameters (used for horizon radius estimate).
-    method : str
-        Integrator name.
-    safety : float
-        Multiplicative safety factor.
-    """
-    rp = 1.0 + math.sqrt(max(1.0 - spin**2 - charge**2, 0.0))
-    is_symp = method.startswith("tao") or method.startswith("kahan")
-
-    if method == "_classify":
-        N_near = 20.0 / step_size
-        N_far = (2 * rp / step_size) * math.log(max(obs_dist / rp, 2.0))
-        return max(int((N_near + N_far) * safety), 400)
-    elif is_symp:
-        return max(int((obs_dist + 200.0 / step_size) * safety), 400)
-    else:
-        h_scaled = step_size * (obs_dist / 30.0) * 1.7
-        h_max = 1.4 if method == "rk4" else 3.0
-        if method in ("verner98", "rkn86"):
-            # Higher-order adaptive methods need fewer steps
-            h_max = 4.0
-        N = obs_dist / min(h_scaled, h_max) + 60.0 / step_size
-        return max(int(N * safety), 200)
+# Import shared utilities
+from ._physics_utils import auto_steps
 
 
 # ---- Render (full visual pipeline) ----
@@ -129,7 +86,7 @@ def render_frame(
     obs_dist: float = 40.0,
     max_steps: int | None = None,
     step_size: float = 0.3,
-    method: str = "rkdp8",
+    method: str = "rkn86",
     show_disk: bool = True,
     bg_mode: int = 0,
     star_layers: int = 3,
@@ -165,7 +122,7 @@ def render_frame(
     step_size : float
         Base affine-parameter step size.
     method : str
-        Integration method (see :func:`available_methods`). Note: methods other than 'rk4' and 'rkdp8' are deprecated.
+        Integration method (see :func:`available_methods`). Note: 'rkn86' is recommended for best performance and accuracy; 'tkl108' for long-term stability and photon rings.
     show_disk : bool
         Render the accretion disk.
     bg_mode : int
@@ -202,11 +159,11 @@ def render_frame(
         ``image`` is an ``(H, W, 3)`` uint8 sRGB NumPy array.
         ``info`` is a :class:`RenderInfo` dataclass.
     """
-    if method not in ['rk4', 'rkdp8']:
+    if method not in ['rkn86', 'verner98', 'tkl108']:
         warnings.warn(
-            f"Integration method '{method}' is deprecated and may be removed in a future version. "
-            "Use 'rk4' or 'rkdp8' instead.",
-            DeprecationWarning,
+            f"Integration method '{method}' is not recognized. "
+            "Use 'rkn86' (default), 'tkl108' (symplectic), or 'verner98' (highest accuracy).",
+            UserWarning,
             stacklevel=2
         )
 

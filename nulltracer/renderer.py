@@ -5,12 +5,14 @@ Replaces the EGL/OpenGL renderer with direct CUDA compute kernels.
 All geodesic integration uses float64 for maximum accuracy.
 """
 
+import asyncio
 import ctypes
 import logging
 import math
 import os
 import time as _time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +22,7 @@ import numpy as np
 from .isco import isco
 from ._params import RenderParams
 from ._kernel_utils import resolve_includes
+from ._physics_utils import auto_steps
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +50,11 @@ def _resolve_inclination(params: dict) -> float:
 
 
 def _resolve_steps(params: dict, *, spin: float, charge: float, method: str,
-                   obs_dist: float, step_size: float) -> int:
+                    obs_dist: float, step_size: float) -> int:
     """Return the integration step budget.
 
     Uses an explicit ``steps`` / ``max_steps`` value if supplied, otherwise
-    calls :func:`nulltracer.render.auto_steps` ??? matching the behaviour of
+    calls :func:`nulltracer._physics_utils.auto_steps` ??? matching the behaviour of
     the free ``nulltracer.render_frame`` entry point. Without this, dict-based
     renders at large ``obs_dist`` would terminate before reaching the black
     hole (the default of 200 steps ?? 0.15 step_size = 30 M of affine length).
@@ -60,8 +63,6 @@ def _resolve_steps(params: dict, *, spin: float, charge: float, method: str,
         return int(params["steps"])
     if "max_steps" in params and params["max_steps"] is not None:
         return int(params["max_steps"])
-    # Lazy import to avoid circular dependency (render.py imports from renderer.py via __init__).
-    from .render import auto_steps
     return auto_steps(obs_dist, step_size, spin=spin, charge=charge, method=method)
 
 # Path to kernel source files
@@ -70,26 +71,16 @@ _INTEGRATOR_DIR = _KERNEL_DIR / "integrators"
 
 # Map method names to kernel source files and entry point names
 _KERNEL_REGISTRY = {
-    "rk4":      ("rk4.cu",      "trace_rk4"),
-    "rk4_cks":  ("rk4_cks.cu",  "trace_rk4_cks"),
-    "rkdp8":    ("rkdp8.cu",    "trace_rkdp8"),
-    "rkdp8_cks":("rkdp8_cks.cu","trace_rkdp8_cks"),
-    "verner98":    ("verner98.cu",    "trace_verner98"),
-    "verner98":    ("verner98.cu",    "trace_verner98"),
-    "rkn86":       ("rkn86.cu",       "trace_rkn86"),
-    "symplectic8": ("symplectic8.cu", "trace_symplectic8"),
+    "verner98": ("verner98.cu", "trace_verner98"),
+    "rkn86":    ("rkn86.cu",    "trace_rkn86"),
+    "tkl108":   ("symplectic8.cu", "trace_symplectic8"),
 }
 
 # Map method names to single-ray trace kernel entry points.
 _RAY_TRACE_REGISTRY = {
-    "rk4":          "ray_trace_rk4",
-    "rk4_cks":      "ray_trace_rk4_cks",
-    "rkdp8":        "ray_trace_rkdp8",
-    "rkdp8_cks":    "ray_trace_rkdp8_cks",
-    "verner98":     "ray_trace_verner98",
-    "verner98":     "ray_trace_verner98",
-    "rkn86":        "ray_trace_rkn86",
-    "symplectic8":  "ray_trace_symplectic8",
+    "verner98": "ray_trace_verner98",
+    "rkn86":    "ray_trace_rkn86",
+    "tkl108":   "ray_trace_tkl108",
 }
 
 
@@ -190,10 +181,10 @@ class CudaRenderer:
         if method in self._kernel_cache:
             return self._kernel_cache[method]
 
-        if method not in ['rk4', 'rkdp8', 'verner98', 'rkn86', 'symplectic8']:
+        if method not in ['verner98', 'rkn86', 'tkl108']:
             warnings.warn(
                 f"Integration method '{method}' is not recognized. "
-                "Use 'rk4', 'rkdp8', or 'symplectic8'.",
+                "Use 'rkn86' (default), 'tkl108' (symplectic), or 'verner98' (highest accuracy).",
                 UserWarning,
                 stacklevel=2
             )
@@ -251,7 +242,7 @@ class CudaRenderer:
 
         width = params.get("width", 1280)
         height = params.get("height", 720)
-        method = params.get("method", "rkdp8")
+        method = params.get("method", "rkn86")
 
         # Get compiled kernel
         kernel = self._get_kernel(method)
@@ -371,6 +362,48 @@ class CudaRenderer:
             "max_steps": steps,
         }
 
+    async def render_frame_async(self, params: dict, progress_callback=None) -> dict:
+        """Async version of render_frame_timed for non-blocking FastAPI endpoints.
+
+        Uses a thread pool to run CUDA operations without blocking the event loop.
+        Progress callbacks are handled asynchronously.
+
+        Args:
+            params: dict with all render parameters (same as render_frame_timed).
+            progress_callback: optional async callable for progress updates.
+
+        Returns:
+            Same dict as render_frame_timed.
+        """
+        if not self._initialized:
+            raise RuntimeError("Renderer not initialized. Call initialize() first.")
+
+        # Use thread pool for CUDA operations
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            # Run the synchronous render in a thread
+            render_future = loop.run_in_executor(
+                executor, self.render_frame_timed, params, None
+            )
+
+            # Poll for completion without blocking
+            while not render_future.done():
+                await asyncio.sleep(0.01)  # Non-blocking sleep
+
+                # If progress callback provided, we can't easily poll GPU progress
+                # from async context, so we skip intermediate progress updates
+                # The final result will still be correct
+
+            # Get the result
+            result = await render_future
+
+            # If progress callback provided, call it once with final progress
+            if progress_callback:
+                total_pixels = params.get("width", 1280) * params.get("height", 720)
+                await progress_callback(total_pixels)
+
+            return result
+
     @property
     def available_methods(self) -> list[str]:
         """Return list of all available integration method names."""
@@ -398,27 +431,23 @@ class CudaRenderer:
         """Get or compile a single-ray trace CUDA kernel for the given method.
 
         The ray_trace.cu kernel provides per-integrator entry points.
-        Methods not in _RAY_TRACE_REGISTRY fall back to rkdp8.
+        Methods not in _RAY_TRACE_REGISTRY raise NotImplementedError.
         """
+        if method not in _RAY_TRACE_REGISTRY:
+            raise NotImplementedError(
+                f"Method '{method}' lacks a native ray trace kernel. "
+                f"Available: {list(_RAY_TRACE_REGISTRY.keys())}"
+            )
+
         cache_key = f"ray_trace_{method}"
         if cache_key in self._kernel_cache:
             return self._kernel_cache[cache_key]
 
-        # Determine entry point (fall back to rkdp8 for unsupported methods)
-        effective_method = method if method in _RAY_TRACE_REGISTRY else "rkdp8"
-        entry_point = _RAY_TRACE_REGISTRY[effective_method]
-
-        if effective_method != method:
-            logger.warning(
-                "RAY TRACE FALLBACK: method '%s' has no native ray trace kernel ??? "
-                "falling back to '%s'. Results will NOT match /bench output for this method! "
-                "Native ray trace methods: %s",
-                method, effective_method, list(_RAY_TRACE_REGISTRY.keys()),
-            )
+        entry_point = _RAY_TRACE_REGISTRY[method]
 
         logger.info(
-            "Compiling ray trace kernel for method: %s (entry: %s, effective: %s)",
-            method, entry_point, effective_method,
+            "Compiling ray trace kernel for method: %s (entry: %s)",
+            method, entry_point,
         )
 
         # Load ray_trace.cu source and resolve includes
@@ -476,11 +505,11 @@ class CudaRenderer:
 
         t_wall_start = _time.monotonic()
 
-        method = params.get("method", "rkdp8")
+        method = params.get("method", "rkn86")
         max_traj = min(params.get("max_trajectory_points", 200), 500)
 
         # Diagnostic: log method coverage gap
-        effective_method = method if method in _RAY_TRACE_REGISTRY else "rkdp8"
+        effective_method = method if method in _RAY_TRACE_REGISTRY else "rkn86"
         if effective_method != method:
             logger.warning(
                 "DISCREPANCY ALERT: /ray requested method='%s' but will use '%s'. "
@@ -591,7 +620,7 @@ class CudaRenderer:
         }
 
         # Effective method (may differ from requested if no native kernel)
-        effective_method = method if method in _RAY_TRACE_REGISTRY else "rkdp8"
+        effective_method = method if method in _RAY_TRACE_REGISTRY else "rkn86"
 
         # Build ray specification
         ray_info = {"mode": mode}

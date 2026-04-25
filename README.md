@@ -22,13 +22,9 @@ where $\beta=2r-Q^2$, $\Sigma = r^2 + a^2 \cos^2\theta$, and $\Delta = r^2 - 2r 
 
 Seven integrators are available via `method=...`:
 
-- `rk4` — classical 4th-order Runge-Kutta; robust and fast for moderate accuracy.
-- `rkdp8` — adaptive 8th-order Runge-Kutta-Dormand-Prince; automatically adjusts step size.
-- `kahanli8s` — 8th-order symplectic with Kahan-Li composition and Sundman time transformation; the default for high-quality long-orbit renders.
-- `kahanli8s_ks` — variant in Kerr-Schild coordinates for improved near-horizon behaviour.
-- `tao_yoshida4` — 4th-order symplectic Tao-Yoshida in extended phase space.
-- `tao_yoshida6` — 6th-order Tao-Yoshida.
-- `tao_kahan_li8` — 8th-order combining Tao's extended phase space with a Kahan-Li corrector.
+- `rkn86` — **DEFAULT**: adaptive 8th-order Runge-Kutta-Nyström; uses the second-order formulation for improved efficiency and accuracy.
+- `verner98` — adaptive 9th-order Verner method with FSAL; highest accuracy for short trajectories.
+- `tkl108` — **SYMPLECTIC**: Tao-Kahan-Li 10(8) unified symplectic integrator combining extended phase space, composition methods, adaptive stepping, Wisdom corrector, and Hamiltonian projection; superior for photon ring renders requiring long-term stability.
 
 The Sundman time transformation concentrates steps near the black hole, which combined with symplecticity is important for capturing sub-leading photon-ring sub-images ($n \ge 1$).
 
@@ -142,7 +138,7 @@ POST /render
   "fov": 8.0,
   "width": 1280,
   "height": 720,
-  "method": "rkdp8",
+  "method": "rkn86",
   "step_size": 0.3,
   "obs_dist": 40,
   "bg_mode": 1,
@@ -170,7 +166,7 @@ The `inclination` key also accepts the shorthand alias `incl`. If `steps` is omi
 - **Inclination (θ)** — observer viewing angle relative to the spin axis.
 - **Disk Temperature** — colour-temperature multiplier for the accretion disk.
 - **Quality Preset** — Low / Medium / High / Ultra.
-- **Integration Method** — `rk4`, `rkdp8`, `kahanli8s`, `kahanli8s_ks`, `tao_yoshida4/6`, `tao_kahan_li8`.
+- **Integration Method** — `rkn86` (default), `verner98` (highest accuracy), `tkl108` (symplectic).
 - **Integration Steps** — ray-tracing budget (auto-sized by `auto_steps` when unspecified).
 - **Step Size** — base affine-parameter step.
 - **Observer Distance** — distance from the black hole in $M$.
@@ -198,13 +194,9 @@ nulltracer/
 │       ├── disk.cu              # Novikov-Thorne emission, Planck LUT, Doppler
 │       ├── ray_trace.cu         # Single-ray trajectory kernels
 │       └── integrators/
-│           ├── rk4.cu
-│           ├── rkdp8.cu
-│           ├── kahanli8s.cu
-│           ├── kahanli8s_ks.cu
-│           ├── tao_yoshida4.cu
-│           ├── tao_yoshida6.cu
-│           ├── tao_kahan_li8.cu
+│           ├── rkn86.cu                # DEFAULT: Runge-Kutta-Nyström 8(6)
+│           ├── verner98.cu             # HIGHEST ACCURACY: Verner 9(8)
+│           ├── symplectic8.cu          # SYMPLECTIC: Tao-Kahan-Li 10(8)
 │           ├── adaptive_step.cu
 │           └── steps.cu
 ├── notebooks/
